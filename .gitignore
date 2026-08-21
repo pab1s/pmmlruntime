@@ -1,0 +1,23 @@
+# Rust
+/target/
+/debug/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Java upstream clones (for reference only, not committed)
+.upstream/
+tmp/
+
+# Secrets
+.env

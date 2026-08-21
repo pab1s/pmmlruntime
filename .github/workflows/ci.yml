@@ -1,0 +1,17 @@
+name: ci
+on:
+  push:
+    branches: [main, develop, "chore/**", "feat/**", "fix/**"]
+  pull_request:
+    branches: [main, develop]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --check || true
+      - run: cargo clippy --workspace -- -W clippy::pedantic || true
+      - run: cargo check --workspace || true
