@@ -1,0 +1,7 @@
+struct	field	type	java_owner	rust_owner	notes
+PMML	dataDictionary	DataDictionary	single	Arc<DataDictionary>	root owns
+PMML	models	List<Model>	single	Vec<Arc<dyn Model>>	root owns
+ModelEvaluator	pmml	PMML	single	Arc<PMML>	builder copy-on-build, not alias
+ModelEvaluator	pmmlBuilder	ModelEvaluatorBuilder	single	Arc<PMML>	see ModelEvaluatorBuilder#pmml field
+FieldValue	value	Object	shared	Enum Value	never null
+ModelManager	cache	LoadingCache	single	moka::sync::Cache	lazy per PMML
