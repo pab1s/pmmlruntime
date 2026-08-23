@@ -249,7 +249,10 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
     for (name, fid) in &field_name_to_id {
         field_names.insert(*fid, name.clone());
     }
-    let symbol_names: HashMap<SymbolId, String> = HashMap::new(); // v1: empty, reverse resolve not needed for scoring
+    let mut symbol_names: HashMap<SymbolId, String> = HashMap::new();
+    for (s, id) in interner.symbol_map() {
+        symbol_names.insert(*id, s.clone());
+    }
 
     Ok(Ir {
         data_dictionary,

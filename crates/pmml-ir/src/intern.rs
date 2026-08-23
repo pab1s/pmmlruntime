@@ -73,6 +73,10 @@ impl Interner {
     pub fn field_map(&self) -> &HashMap<String, FieldId> {
         &self.field_map
     }
+
+    pub fn symbol_map(&self) -> &HashMap<String, SymbolId> {
+        &self.symbol_map
+    }
 }
 
 // Unused Spur helper
