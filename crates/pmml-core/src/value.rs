@@ -41,7 +41,9 @@ impl Value {
     pub fn approx_eq(self, other: Self, eps: f64) -> bool {
         match (self, other) {
             (Value::Missing, Value::Missing) => true,
-            (Value::Continuous(a), Value::Continuous(b)) => (a - b).abs() <= eps || (a.is_nan() && b.is_nan()),
+            (Value::Continuous(a), Value::Continuous(b)) => {
+                (a - b).abs() <= eps || (a.is_nan() && b.is_nan())
+            }
             (Value::Discrete(a), Value::Discrete(b)) => a == b,
             _ => false,
         }

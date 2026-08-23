@@ -28,7 +28,11 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
         match op {
             Op::PushField(fid) => {
                 let idx = fid.as_usize();
-                let v = if idx < values.len() { values[idx] } else { Value::Missing };
+                let v = if idx < values.len() {
+                    values[idx]
+                } else {
+                    Value::Missing
+                };
                 stack.push(v);
             }
             Op::PushConst(c) => {
@@ -50,7 +54,9 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
             }
             Op::JumpIfMissing { .. } => {}
             Op::MapValues { .. } => {
-                if stack.is_empty() { stack.push(Value::Missing); }
+                if stack.is_empty() {
+                    stack.push(Value::Missing);
+                }
             }
         }
     }

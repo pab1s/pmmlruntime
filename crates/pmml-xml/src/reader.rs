@@ -1,7 +1,7 @@
 //! Hardened XML reader — mirrors Java `SAXUtil` security.
 
-use pmml_core::Result;
 use pmml_core::error::PmmlError;
+use pmml_core::Result;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 

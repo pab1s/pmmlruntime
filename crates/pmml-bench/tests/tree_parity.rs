@@ -11,7 +11,11 @@ fn score_tree_pmml(path: &str) -> anyhow::Result<()> {
     // For other trees, we try to discover required fields via IR but for parity we just try missing -> should not panic
     // We'll try an empty input (all missing) — should return Missing or lastPrediction
     let out = sess.run(HashMap::new())?;
-    assert!(out.contains_key("predictedValue"), "missing predictedValue for {}", path);
+    assert!(
+        out.contains_key("predictedValue"),
+        "missing predictedValue for {}",
+        path
+    );
     // Also try a synthetic numeric input for first active field
     if sess.num_active_fields() > 0 {
         let mut m = HashMap::new();
@@ -19,10 +23,16 @@ fn score_tree_pmml(path: &str) -> anyhow::Result<()> {
         for (fid, name) in &sess.ir.field_names {
             let v = Value::Continuous(1.0);
             m.insert(name.clone(), v);
-            if m.len() >= 2 { break; }
+            if m.len() >= 2 {
+                break;
+            }
         }
         let out2 = sess.run(m)?;
-        assert!(out2.contains_key("predictedValue"), "second run missing predictedValue for {}", path);
+        assert!(
+            out2.contains_key("predictedValue"),
+            "second run missing predictedValue for {}",
+            path
+        );
     }
     Ok(())
 }
@@ -45,7 +55,11 @@ fn tree_fixtures_parity() {
             }
         }
     }
-    assert!(!tree_files.is_empty(), "no tree fixtures found in {:?}", bench_dir);
+    assert!(
+        !tree_files.is_empty(),
+        "no tree fixtures found in {:?}",
+        bench_dir
+    );
     println!("Found {} tree fixtures", tree_files.len());
     let mut tested = 0usize;
     for f in &tree_files {
@@ -56,7 +70,10 @@ fn tree_fixtures_parity() {
             Err(e) => {
                 let msg = e.to_string();
                 // MiningModel fixtures not supported in v1 — skip
-                if msg.contains("no TreeModel") || msg.contains("MiningModel") || msg.contains("missing field") {
+                if msg.contains("no TreeModel")
+                    || msg.contains("MiningModel")
+                    || msg.contains("missing field")
+                {
                     println!("  -> SKIP (v1 Tree only): {msg}");
                     continue;
                 }
@@ -64,7 +81,10 @@ fn tree_fixtures_parity() {
             }
         }
     }
-    assert!(tested >= 5, "expected at least 5 tree fixtures tested, got {tested}");
+    assert!(
+        tested >= 5,
+        "expected at least 5 tree fixtures tested, got {tested}"
+    );
     println!("Tested {tested} tree fixtures successfully");
 }
 

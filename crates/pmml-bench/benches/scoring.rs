@@ -16,7 +16,10 @@ fn bench_single(c: &mut Criterion) {
     c.bench_function("tree_iris_single", |b| {
         b.iter(|| {
             let mut m = HashMap::new();
-            m.insert("Petal.Length".to_string(), Value::Continuous(black_box(1.4)));
+            m.insert(
+                "Petal.Length".to_string(),
+                Value::Continuous(black_box(1.4)),
+            );
             m.insert("Petal.Width".to_string(), Value::Continuous(black_box(0.2)));
             let out = sess.run(m).unwrap();
             black_box(out);

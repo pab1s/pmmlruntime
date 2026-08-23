@@ -18,7 +18,11 @@ impl ExecutionProvider for CpuSerialProvider {
         // 2. Model
         let predicted = match &ir.model {
             ModelIr::Tree(tree) => pmml_evaluator::models::evaluate_tree(tree, values),
-            _ => return Err(pmml_core::error::PmmlError::UnsupportedMarkup("only TreeModel supported in v1".into())),
+            _ => {
+                return Err(pmml_core::error::PmmlError::UnsupportedMarkup(
+                    "only TreeModel supported in v1".into(),
+                ))
+            }
         };
         Ok(predicted)
     }

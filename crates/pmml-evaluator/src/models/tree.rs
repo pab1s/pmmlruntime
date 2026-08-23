@@ -2,13 +2,22 @@
 
 use pmml_core::{FieldId, SymbolId, Value};
 use pmml_ir::ir::{
-    CompoundOperator, MissingValueStrategy, NoTrueChildStrategy, NodeIr, PredicateIr, SimpleOperator,
-    TreeIr,
+    CompoundOperator, MissingValueStrategy, NoTrueChildStrategy, NodeIr, PredicateIr,
+    SimpleOperator, TreeIr,
 };
 
-fn eval_simple(field: FieldId, operator: SimpleOperator, value: &pmml_ir::ir::SymbolIdOrContinuous, values: &[Value]) -> bool {
+fn eval_simple(
+    field: FieldId,
+    operator: SimpleOperator,
+    value: &pmml_ir::ir::SymbolIdOrContinuous,
+    values: &[Value],
+) -> bool {
     let idx = field.as_usize();
-    let actual = if idx < values.len() { values[idx] } else { Value::Missing };
+    let actual = if idx < values.len() {
+        values[idx]
+    } else {
+        Value::Missing
+    };
     match operator {
         SimpleOperator::IsMissing => actual.is_missing(),
         SimpleOperator::IsNotMissing => !actual.is_missing(),
@@ -17,20 +26,24 @@ fn eval_simple(field: FieldId, operator: SimpleOperator, value: &pmml_ir::ir::Sy
                 return false; // missing fails for other operators unless isMissing
             }
             match (actual, value) {
-                (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Continuous(b)) => match operator {
-                    SimpleOperator::Equal => (a - b).abs() < 1e-9,
-                    SimpleOperator::NotEqual => (a - b).abs() >= 1e-9,
-                    SimpleOperator::LessThan => a < *b,
-                    SimpleOperator::LessOrEqual => a <= *b,
-                    SimpleOperator::GreaterThan => a > *b,
-                    SimpleOperator::GreaterOrEqual => a >= *b,
-                    _ => false,
-                },
-                (Value::Discrete(sid), pmml_ir::ir::SymbolIdOrContinuous::Symbol(s)) => match operator {
-                    SimpleOperator::Equal => sid == *s,
-                    SimpleOperator::NotEqual => sid != *s,
-                    _ => false, // for discrete, only equal/notEqual make sense; treat others as false
-                },
+                (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Continuous(b)) => {
+                    match operator {
+                        SimpleOperator::Equal => (a - b).abs() < 1e-9,
+                        SimpleOperator::NotEqual => (a - b).abs() >= 1e-9,
+                        SimpleOperator::LessThan => a < *b,
+                        SimpleOperator::LessOrEqual => a <= *b,
+                        SimpleOperator::GreaterThan => a > *b,
+                        SimpleOperator::GreaterOrEqual => a >= *b,
+                        _ => false,
+                    }
+                }
+                (Value::Discrete(sid), pmml_ir::ir::SymbolIdOrContinuous::Symbol(s)) => {
+                    match operator {
+                        SimpleOperator::Equal => sid == *s,
+                        SimpleOperator::NotEqual => sid != *s,
+                        _ => false, // for discrete, only equal/notEqual make sense; treat others as false
+                    }
+                }
                 (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Symbol(_)) => {
                     // type mismatch: try interpret symbol as f64? For now false
                     let _ = a;
@@ -46,18 +59,34 @@ fn eval_simple(field: FieldId, operator: SimpleOperator, value: &pmml_ir::ir::Sy
 fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
     match pred {
         PredicateIr::True => true,
-        PredicateIr::Simple { field, operator, value } => eval_simple(*field, *operator, value, values),
-        PredicateIr::SimpleSet { field, is_in, array } => {
+        PredicateIr::Simple {
+            field,
+            operator,
+            value,
+        } => eval_simple(*field, *operator, value, values),
+        PredicateIr::SimpleSet {
+            field,
+            is_in,
+            array,
+        } => {
             let idx = field.as_usize();
-            let actual = if idx < values.len() { values[idx] } else { Value::Missing };
+            let actual = if idx < values.len() {
+                values[idx]
+            } else {
+                Value::Missing
+            };
             if actual.is_missing() {
                 return false;
             }
             let mut found = false;
             for v in array {
                 let matches = match (actual, v) {
-                    (Value::Discrete(sid), pmml_ir::ir::SymbolIdOrContinuous::Symbol(s)) => sid == *s,
-                    (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Continuous(b)) => (a - b).abs() < 1e-9,
+                    (Value::Discrete(sid), pmml_ir::ir::SymbolIdOrContinuous::Symbol(s)) => {
+                        sid == *s
+                    }
+                    (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Continuous(b)) => {
+                        (a - b).abs() < 1e-9
+                    }
                     _ => false,
                 };
                 if matches {
@@ -65,9 +94,16 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
                     break;
                 }
             }
-            if *is_in { found } else { !found }
+            if *is_in {
+                found
+            } else {
+                !found
+            }
         }
-        PredicateIr::Compound { operator, predicates } => match operator {
+        PredicateIr::Compound {
+            operator,
+            predicates,
+        } => match operator {
             CompoundOperator::And => predicates.iter().all(|p| eval_predicate(p, values)),
             CompoundOperator::Or => predicates.iter().any(|p| eval_predicate(p, values)),
             CompoundOperator::Xor => {
@@ -152,7 +188,9 @@ fn evaluate_node(idx: usize, tree: &TreeIr, values: &[Value], last_score: Option
         if !node.children.is_empty() {
             // has children but none matched
             match tree.no_true_child_strategy {
-                NoTrueChildStrategy::ReturnLastPrediction => current_score.unwrap_or(Value::Missing),
+                NoTrueChildStrategy::ReturnLastPrediction => {
+                    current_score.unwrap_or(Value::Missing)
+                }
                 NoTrueChildStrategy::ReturnNullPrediction => Value::Missing,
             }
         } else {

@@ -51,10 +51,18 @@ impl Session {
         }
         // Also include derived fields names (if any) — already in field_names if lower populated correctly
         // Determine max field id for values vec
-        let max_field_id = name_to_id.values().map(|fid| fid.as_usize()).max().unwrap_or(0) + 1;
+        let max_field_id = name_to_id
+            .values()
+            .map(|fid| fid.as_usize())
+            .max()
+            .unwrap_or(0)
+            + 1;
         // Extract target name from model if classification
         let target_name = match &ir.model {
-            pmml_ir::ir::ModelIr::Tree(t) => t.mining_schema.target_field.and_then(|fid| ir.field_names.get(&fid).cloned()),
+            pmml_ir::ir::ModelIr::Tree(t) => t
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
             _ => None,
         };
 
@@ -96,7 +104,9 @@ impl Session {
         // Targets (none v1)
         // Build output
         let output = match &self.ir.model {
-            pmml_ir::ir::ModelIr::Tree(tree) => pmml_evaluator::output::build_output(&tree.output, predicted, &HashMap::new()),
+            pmml_ir::ir::ModelIr::Tree(tree) => {
+                pmml_evaluator::output::build_output(&tree.output, predicted, &HashMap::new())
+            }
             _ => {
                 let mut m = HashMap::new();
                 m.insert("predictedValue".to_string(), predicted);
@@ -110,13 +120,18 @@ impl Session {
             final_out.entry(tname.clone()).or_insert(predicted);
         }
         // Ensure predictedValue always present
-        final_out.entry("predictedValue".to_string()).or_insert(predicted);
+        final_out
+            .entry("predictedValue".to_string())
+            .or_insert(predicted);
 
         Ok(final_out)
     }
 
     /// Convenience: run with string values (coerced). Useful for CSV.
-    pub fn run_from_strings(&self, input: HashMap<String, String>) -> Result<HashMap<String, Value>> {
+    pub fn run_from_strings(
+        &self,
+        input: HashMap<String, String>,
+    ) -> Result<HashMap<String, Value>> {
         let mut map: HashMap<String, Value> = HashMap::new();
         for (k, v) in input {
             // Try parse as f64 continuous, else discrete symbol

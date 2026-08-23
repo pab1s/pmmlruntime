@@ -9,10 +9,16 @@ use pmml_xml::{RawPmml, RawPredicate};
 use std::collections::HashMap;
 
 fn parse_data_type(s: &str) -> Result<DataType> {
-    s.parse::<DataType>().map_err(|e| PmmlError::ParseError { context: "DataType".into(), message: e })
+    s.parse::<DataType>().map_err(|e| PmmlError::ParseError {
+        context: "DataType".into(),
+        message: e,
+    })
 }
 fn parse_op_type(s: &str) -> Result<OpType> {
-    s.parse::<OpType>().map_err(|e| PmmlError::ParseError { context: "OpType".into(), message: e })
+    s.parse::<OpType>().map_err(|e| PmmlError::ParseError {
+        context: "OpType".into(),
+        message: e,
+    })
 }
 
 fn parse_missing_strategy(s: Option<&str>) -> MissingValueStrategy {
@@ -41,7 +47,12 @@ fn parse_simple_operator(op: &str) -> Result<SimpleOperator> {
         "greaterOrEqual" => SimpleOperator::GreaterOrEqual,
         "isMissing" => SimpleOperator::IsMissing,
         "isNotMissing" => SimpleOperator::IsNotMissing,
-        _ => return Err(PmmlError::ParseError { context: "SimplePredicate".into(), message: format!("unknown operator {op}") }),
+        _ => {
+            return Err(PmmlError::ParseError {
+                context: "SimplePredicate".into(),
+                message: format!("unknown operator {op}"),
+            })
+        }
     })
 }
 
@@ -79,43 +90,82 @@ fn lower_predicate(
 ) -> Result<PredicateIr> {
     match raw {
         RawPredicate::True => Ok(PredicateIr::True),
-        RawPredicate::Simple { field, operator, value } => {
-            let fid = *field_name_to_id.get(field).ok_or_else(|| PmmlError::MissingField(field.clone()))?;
-            let meta = field_meta_map.get(&fid).ok_or_else(|| PmmlError::MissingField(field.clone()))?;
+        RawPredicate::Simple {
+            field,
+            operator,
+            value,
+        } => {
+            let fid = *field_name_to_id
+                .get(field)
+                .ok_or_else(|| PmmlError::MissingField(field.clone()))?;
+            let meta = field_meta_map
+                .get(&fid)
+                .ok_or_else(|| PmmlError::MissingField(field.clone()))?;
             let op = parse_simple_operator(operator)?;
             let val = if matches!(op, SimpleOperator::IsMissing | SimpleOperator::IsNotMissing) {
                 SymbolIdOrContinuous::Missing
             } else {
                 value_to_symbol_or_continuous(value, meta.data_type, interner)
             };
-            Ok(PredicateIr::Simple { field: fid, operator: op, value: val })
+            Ok(PredicateIr::Simple {
+                field: fid,
+                operator: op,
+                value: val,
+            })
         }
-        RawPredicate::SimpleSet { field, boolean_operator, array } => {
-            let fid = *field_name_to_id.get(field).ok_or_else(|| PmmlError::MissingField(field.clone()))?;
-            let meta = field_meta_map.get(&fid).cloned().unwrap_or_else(|| FieldMeta {
-                field_id: fid,
-                name: field.clone(),
-                data_type: DataType::String,
-                op_type: OpType::Categorical,
-                values: vec![],
-            });
+        RawPredicate::SimpleSet {
+            field,
+            boolean_operator,
+            array,
+        } => {
+            let fid = *field_name_to_id
+                .get(field)
+                .ok_or_else(|| PmmlError::MissingField(field.clone()))?;
+            let meta = field_meta_map
+                .get(&fid)
+                .cloned()
+                .unwrap_or_else(|| FieldMeta {
+                    field_id: fid,
+                    name: field.clone(),
+                    data_type: DataType::String,
+                    op_type: OpType::Categorical,
+                    values: vec![],
+                });
             let is_in = boolean_operator == "isIn";
             let vals: Vec<SymbolIdOrContinuous> = array
                 .split_whitespace()
                 .map(|v| value_to_symbol_or_continuous(v, meta.data_type, interner))
                 .collect();
-            Ok(PredicateIr::SimpleSet { field: fid, is_in, array: vals })
+            Ok(PredicateIr::SimpleSet {
+                field: fid,
+                is_in,
+                array: vals,
+            })
         }
-        RawPredicate::Compound { boolean_operator, predicates } => {
+        RawPredicate::Compound {
+            boolean_operator,
+            predicates,
+        } => {
             let op = match boolean_operator.as_str() {
                 "and" => CompoundOperator::And,
                 "or" => CompoundOperator::Or,
                 "xor" => CompoundOperator::Xor,
                 "surrogate" => CompoundOperator::Surrogate,
-                _ => return Err(PmmlError::ParseError { context: "CompoundPredicate".into(), message: format!("unknown operator {boolean_operator}") }),
+                _ => {
+                    return Err(PmmlError::ParseError {
+                        context: "CompoundPredicate".into(),
+                        message: format!("unknown operator {boolean_operator}"),
+                    })
+                }
             };
-            let preds = predicates.iter().map(|p| lower_predicate(p, interner, field_meta_map, field_name_to_id)).collect::<Result<Vec<_>>>()?;
-            Ok(PredicateIr::Compound { operator: op, predicates: preds })
+            let preds = predicates
+                .iter()
+                .map(|p| lower_predicate(p, interner, field_meta_map, field_name_to_id))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(PredicateIr::Compound {
+                operator: op,
+                predicates: preds,
+            })
         }
     }
 }
@@ -150,9 +200,14 @@ fn flatten_node(
         }
     });
 
-    let sds = raw.score_distributions.iter().map(|sd| {
-        ScoreDistributionIr { value: interner.intern_symbol(&sd.value), record_count: sd.record_count }
-    }).collect();
+    let sds = raw
+        .score_distributions
+        .iter()
+        .map(|sd| ScoreDistributionIr {
+            value: interner.intern_symbol(&sd.value),
+            record_count: sd.record_count,
+        })
+        .collect();
 
     // children indices
     let mut child_indices = Vec::new();
@@ -183,11 +238,24 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         field_name_to_id.insert(df.name.clone(), fid);
         let dt = parse_data_type(&df.data_type)?;
         if dt.is_unsupported() {
-            return Err(PmmlError::UnsupportedMarkup(format!("unsupported DATATYPE {}", df.data_type)));
+            return Err(PmmlError::UnsupportedMarkup(format!(
+                "unsupported DATATYPE {}",
+                df.data_type
+            )));
         }
         let ot = parse_op_type(&df.op_type)?;
-        let vals: Vec<SymbolId> = df.values.iter().map(|v| interner.intern_symbol(v)).collect();
-        let meta = FieldMeta { field_id: fid, name: df.name.clone(), data_type: dt, op_type: ot, values: vals.clone() };
+        let vals: Vec<SymbolId> = df
+            .values
+            .iter()
+            .map(|v| interner.intern_symbol(v))
+            .collect();
+        let meta = FieldMeta {
+            field_id: fid,
+            name: df.name.clone(),
+            data_type: dt,
+            op_type: ot,
+            values: vals.clone(),
+        };
         field_meta_map.insert(fid, meta.clone());
         data_dictionary.push(meta);
     }
@@ -199,8 +267,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         let mut target_field: Option<FieldId> = None;
         let mut mining_field_metas: Vec<FieldMeta> = Vec::new();
         for mf in &tm.mining_schema {
-            let fid = *field_name_to_id.get(&mf.name).ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
-            let meta = field_meta_map.get(&fid).cloned().ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
+            let fid = *field_name_to_id
+                .get(&mf.name)
+                .ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
+            let meta = field_meta_map
+                .get(&fid)
+                .cloned()
+                .ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
             match mf.usage_type.as_deref() {
                 Some("target") => target_field = Some(fid),
                 _ => active_fields.push(fid),
@@ -217,17 +290,41 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         };
 
         // output
-        let output_ir: Vec<OutputFieldIr> = tm.output.iter().map(|of| {
-            let feature = of.feature.as_deref().unwrap_or("predictedValue").parse::<pmml_core::field::ResultFeature>().unwrap_or(pmml_core::field::ResultFeature::PredictedValue);
-            let val = of.value.as_ref().map(|v| interner.intern_symbol(v));
-            let field = of.name.parse::<String>().ok().and_then(|n| field_name_to_id.get(&n).copied());
-            // Actually output field name is not necessarily data field; keep None for field
-            OutputFieldIr { name: of.name.clone(), feature, value: val, field }
-        }).collect();
+        let output_ir: Vec<OutputFieldIr> = tm
+            .output
+            .iter()
+            .map(|of| {
+                let feature = of
+                    .feature
+                    .as_deref()
+                    .unwrap_or("predictedValue")
+                    .parse::<pmml_core::field::ResultFeature>()
+                    .unwrap_or(pmml_core::field::ResultFeature::PredictedValue);
+                let val = of.value.as_ref().map(|v| interner.intern_symbol(v));
+                let field = of
+                    .name
+                    .parse::<String>()
+                    .ok()
+                    .and_then(|n| field_name_to_id.get(&n).copied());
+                // Actually output field name is not necessarily data field; keep None for field
+                OutputFieldIr {
+                    name: of.name.clone(),
+                    feature,
+                    value: val,
+                    field,
+                }
+            })
+            .collect();
 
         // flatten tree
         let mut nodes: Vec<NodeIr> = Vec::new();
-        flatten_node(&tm.root, &mut interner, &field_meta_map, &field_name_to_id, &mut nodes)?;
+        flatten_node(
+            &tm.root,
+            &mut interner,
+            &field_meta_map,
+            &field_name_to_id,
+            &mut nodes,
+        )?;
 
         let tree_ir = TreeIr {
             function_name: tm.function_name.clone(),
@@ -241,7 +338,9 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
 
         (ModelIr::Tree(tree_ir), vec![])
     } else {
-        return Err(PmmlError::UnsupportedMarkup("no TreeModel found — only TreeModel supported in v1".into()));
+        return Err(PmmlError::UnsupportedMarkup(
+            "no TreeModel found — only TreeModel supported in v1".into(),
+        ));
     };
 
     // Build field_names / symbol_names snapshot

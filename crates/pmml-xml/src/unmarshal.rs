@@ -113,10 +113,17 @@ fn parse_simple_predicate(e: &BytesStart) -> Result<RawPredicate> {
     let operator = attr_required(e, "operator", "SimplePredicate")?;
     // value may be missing for isMissing/isNotMissing operators
     let value = attr(e, "value").unwrap_or_default();
-    Ok(RawPredicate::Simple { field, operator, value })
+    Ok(RawPredicate::Simple {
+        field,
+        operator,
+        value,
+    })
 }
 
-fn parse_simple_set_predicate(e: &BytesStart, reader: &mut quick_xml::Reader<&[u8]>) -> Result<RawPredicate> {
+fn parse_simple_set_predicate(
+    e: &BytesStart,
+    reader: &mut quick_xml::Reader<&[u8]>,
+) -> Result<RawPredicate> {
     let field = attr_required(e, "field", "SimpleSetPredicate")?;
     let boolean_operator = attr_required(e, "booleanOperator", "SimpleSetPredicate")?;
     // Expect <Array> child
@@ -130,9 +137,14 @@ fn parse_simple_set_predicate(e: &BytesStart, reader: &mut quick_xml::Reader<&[u
                 loop {
                     match reader.read_event_into(&mut inner_buf) {
                         Ok(Event::Text(t)) => {
-                            array_content = t.unescape().map(|c| c.into_owned()).unwrap_or_default();
+                            array_content =
+                                t.unescape().map(|c| c.into_owned()).unwrap_or_default();
                         }
-                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Array" => break,
+                        Ok(Event::End(end))
+                            if String::from_utf8_lossy(end.name().as_ref()) == "Array" =>
+                        {
+                            break
+                        }
                         Ok(Event::Eof) => break,
                         _ => {}
                     }
@@ -140,13 +152,21 @@ fn parse_simple_set_predicate(e: &BytesStart, reader: &mut quick_xml::Reader<&[u
                 }
             }
             Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "SimpleSetPredicate" => break,
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "SimpleSetPredicate" =>
+            {
+                break
+            }
             Ok(Event::Eof) => break,
             _ => {}
         }
         buf.clear();
     }
-    Ok(RawPredicate::SimpleSet { field, boolean_operator, array: array_content })
+    Ok(RawPredicate::SimpleSet {
+        field,
+        boolean_operator,
+        array: array_content,
+    })
 }
 
 // ---------- Node parsing ----------
@@ -174,7 +194,11 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
                         let mut inner = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner) {
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "True" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "True" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Eof) => break,
                                 _ => {}
                             }
@@ -189,9 +213,16 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
                         let mut inner = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner) {
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "SimplePredicate" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "SimplePredicate" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Empty(_)) => break,
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Node" => {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Node" =>
+                                {
                                     // shouldn't happen, but break
                                     break;
                                 }
@@ -207,7 +238,8 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
                         predicate_set = true;
                     }
                     "CompoundPredicate" => {
-                        let boolean_operator = attr_required(&e, "booleanOperator", "CompoundPredicate")?;
+                        let boolean_operator =
+                            attr_required(&e, "booleanOperator", "CompoundPredicate")?;
                         let mut preds = Vec::new();
                         let mut inner = Vec::new();
                         loop {
@@ -215,8 +247,11 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
                                 Ok(Event::Start(inner_e)) => {
                                     let itag = tag_name(&inner_e);
                                     match itag.as_str() {
-                                        "SimplePredicate" => preds.push(parse_simple_predicate(&inner_e)?),
-                                        "SimpleSetPredicate" => preds.push(parse_simple_set_predicate(&inner_e, reader)?),
+                                        "SimplePredicate" => {
+                                            preds.push(parse_simple_predicate(&inner_e)?)
+                                        }
+                                        "SimpleSetPredicate" => preds
+                                            .push(parse_simple_set_predicate(&inner_e, reader)?),
                                         "True" => preds.push(RawPredicate::True),
                                         _ => {}
                                     }
@@ -229,24 +264,42 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
                                         preds.push(RawPredicate::True);
                                     }
                                 }
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "CompoundPredicate" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "CompoundPredicate" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Eof) => break,
                                 _ => {}
                             }
                             inner.clear();
                         }
-                        predicate = RawPredicate::Compound { boolean_operator, predicates: preds };
+                        predicate = RawPredicate::Compound {
+                            boolean_operator,
+                            predicates: preds,
+                        };
                         predicate_set = true;
                     }
                     "ScoreDistribution" => {
                         let value = attr_required(&e, "value", "ScoreDistribution")?;
-                        let rc = attr(&e, "recordCount").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                        score_distributions.push(RawScoreDistribution { value, record_count: rc });
+                        let rc = attr(&e, "recordCount")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        score_distributions.push(RawScoreDistribution {
+                            value,
+                            record_count: rc,
+                        });
                         // consume end
                         let mut inner = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner) {
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "ScoreDistribution" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ScoreDistribution" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Eof) => break,
                                 Ok(Event::Empty(_)) => break,
                                 _ => {}
@@ -279,14 +332,24 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
                     "SimpleSetPredicate" => {
                         // SimpleSet empty not typical, treat as isIn with empty array
                         let field = attr_required(&e, "field", "SimpleSetPredicate")?;
-                        let boolean_operator = attr_required(&e, "booleanOperator", "SimpleSetPredicate")?;
-                        predicate = RawPredicate::SimpleSet { field, boolean_operator, array: String::new() };
+                        let boolean_operator =
+                            attr_required(&e, "booleanOperator", "SimpleSetPredicate")?;
+                        predicate = RawPredicate::SimpleSet {
+                            field,
+                            boolean_operator,
+                            array: String::new(),
+                        };
                         predicate_set = true;
                     }
                     "ScoreDistribution" => {
                         let value = attr_required(&e, "value", "ScoreDistribution")?;
-                        let rc = attr(&e, "recordCount").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                        score_distributions.push(RawScoreDistribution { value, record_count: rc });
+                        let rc = attr(&e, "recordCount")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        score_distributions.push(RawScoreDistribution {
+                            value,
+                            record_count: rc,
+                        });
                     }
                     _ => {}
                 }
@@ -305,12 +368,22 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
         predicate = RawPredicate::True;
     }
 
-    Ok(RawNode { id, score, record_count, predicate, score_distributions, children })
+    Ok(RawNode {
+        id,
+        score,
+        record_count,
+        predicate,
+        score_distributions,
+        children,
+    })
 }
 
 // ---------- TreeModel parsing ----------
 
-fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawTreeModel> {
+fn parse_tree_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTreeModel> {
     let function_name = attr_required(start, "functionName", "TreeModel")?;
     let missing_value_strategy = attr(start, "missingValueStrategy");
     let no_true_child_strategy = attr(start, "noTrueChildStrategy");
@@ -328,16 +401,28 @@ fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                         let mut inner = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "MiningField" => {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
                                     let name = attr_required(&inner_e, "name", "MiningField")?;
                                     let usage_type = attr(&inner_e, "usageType");
-                                    let importance = attr(&inner_e, "importance").and_then(|s| s.parse::<f64>().ok());
-                                    mining_schema.push(RawMiningField { name, usage_type, importance });
+                                    let importance = attr(&inner_e, "importance")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type,
+                                        importance,
+                                    });
                                     // consume end
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
-                                            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "MiningField" => break,
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
                                             Ok(Event::Empty(_)) => break,
                                             Ok(Event::Eof) => break,
                                             _ => {}
@@ -346,13 +431,25 @@ fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                                         break;
                                     }
                                 }
-                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "MiningField" => {
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
                                     let name = attr_required(&inner_e, "name", "MiningField")?;
                                     let usage_type = attr(&inner_e, "usageType");
-                                    let importance = attr(&inner_e, "importance").and_then(|s| s.parse::<f64>().ok());
-                                    mining_schema.push(RawMiningField { name, usage_type, importance });
+                                    let importance = attr(&inner_e, "importance")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type,
+                                        importance,
+                                    });
                                 }
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "MiningSchema" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Eof) => break,
                                 _ => {}
                             }
@@ -363,15 +460,26 @@ fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                         let mut inner = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "OutputField" => {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
                                     let name = attr_required(&inner_e, "name", "OutputField")?;
                                     let feature = attr(&inner_e, "feature");
                                     let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField { name, feature, value });
+                                    output.push(RawOutputField {
+                                        name,
+                                        feature,
+                                        value,
+                                    });
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
-                                            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "OutputField" => break,
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
                                             Ok(Event::Empty(_)) => break,
                                             Ok(Event::Eof) => break,
                                             _ => {}
@@ -380,13 +488,23 @@ fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                                         break;
                                     }
                                 }
-                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "OutputField" => {
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
                                     let name = attr_required(&inner_e, "name", "OutputField")?;
                                     let feature = attr(&inner_e, "feature");
                                     let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField { name, feature, value });
+                                    output.push(RawOutputField {
+                                        name,
+                                        feature,
+                                        value,
+                                    });
                                 }
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Output" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Eof) => break,
                                 _ => {}
                             }
@@ -400,7 +518,11 @@ fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                     _ => {
                         // skip LocalTransformations, ModelStats, Targets, Extension, etc for v1
                         // Need to consume subtree if it's Start
-                        if tag == "LocalTransformations" || tag == "Targets" || tag == "ModelStats" || tag == "ModelExplanation" {
+                        if tag == "LocalTransformations"
+                            || tag == "Targets"
+                            || tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                        {
                             let mut depth = 1usize;
                             let mut inner = Vec::new();
                             loop {
@@ -408,7 +530,9 @@ fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                                     Ok(Event::Start(_)) => depth += 1,
                                     Ok(Event::End(end)) => {
                                         depth -= 1;
-                                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag {
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
                                             break;
                                         }
                                     }
@@ -436,7 +560,14 @@ fn parse_tree_model(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
         context: "TreeModel".into(),
         message: "missing root Node".into(),
     })?;
-    Ok(RawTreeModel { function_name, missing_value_strategy, no_true_child_strategy, mining_schema, output, root })
+    Ok(RawTreeModel {
+        function_name,
+        missing_value_strategy,
+        no_true_child_strategy,
+        mining_schema,
+        output,
+        root,
+    })
 }
 
 // ---------- Top-level ----------
@@ -458,8 +589,10 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                             match reader.read_event_into(&mut inner) {
                                 Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "DataField" => {
                                     let name = attr_required(&inner_e, "name", "DataField")?;
-                                    let data_type = attr(&inner_e, "dataType").unwrap_or_else(|| "string".into());
-                                    let op_type = attr(&inner_e, "optype").unwrap_or_else(|| "categorical".into());
+                                    let data_type = attr(&inner_e, "dataType")
+                                        .unwrap_or_else(|| "string".into());
+                                    let op_type = attr(&inner_e, "optype")
+                                        .unwrap_or_else(|| "categorical".into());
                                     let mut values = Vec::new();
                                     let mut inner2 = Vec::new();
                                     loop {
@@ -471,11 +604,18 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                                                 let mut skip = Vec::new();
                                                 loop {
                                                     match reader.read_event_into(&mut skip) {
-                                                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Value" => break,
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Value" =>
+                                                        {
+                                                            break
+                                                        }
                                                         Ok(Event::Empty(_)) => break,
                                                         _ => {}
                                                     }
-                                                    skip.clear(); break;
+                                                    skip.clear();
+                                                    break;
                                                 }
                                             }
                                             Ok(Event::Empty(v)) if tag_name(&v) == "Value" => {
@@ -483,21 +623,43 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                                                     values.push(val);
                                                 }
                                             }
-                                            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DataField" => break,
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "DataField" =>
+                                            {
+                                                break
+                                            }
                                             Ok(Event::Eof) => break,
                                             _ => {}
                                         }
                                         inner2.clear();
                                     }
-                                    data_dictionary.push(RawDataField { name, data_type, op_type, values });
+                                    data_dictionary.push(RawDataField {
+                                        name,
+                                        data_type,
+                                        op_type,
+                                        values,
+                                    });
                                 }
                                 Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "DataField" => {
                                     let name = attr_required(&inner_e, "name", "DataField")?;
-                                    let data_type = attr(&inner_e, "dataType").unwrap_or_else(|| "string".into());
-                                    let op_type = attr(&inner_e, "optype").unwrap_or_else(|| "categorical".into());
-                                    data_dictionary.push(RawDataField { name, data_type, op_type, values: vec![] });
+                                    let data_type = attr(&inner_e, "dataType")
+                                        .unwrap_or_else(|| "string".into());
+                                    let op_type = attr(&inner_e, "optype")
+                                        .unwrap_or_else(|| "categorical".into());
+                                    data_dictionary.push(RawDataField {
+                                        name,
+                                        data_type,
+                                        op_type,
+                                        values: vec![],
+                                    });
                                 }
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DataDictionary" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "DataDictionary" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Eof) => break,
                                 _ => {}
                             }
@@ -523,14 +685,20 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(PmmlError::ParseError { context: "xml".into(), message: e.to_string() });
+                return Err(PmmlError::ParseError {
+                    context: "xml".into(),
+                    message: e.to_string(),
+                });
             }
             _ => {}
         }
         buf.clear();
     }
 
-    Ok(RawPmml { data_dictionary, tree_model })
+    Ok(RawPmml {
+        data_dictionary,
+        tree_model,
+    })
 }
 
 #[cfg(test)]
