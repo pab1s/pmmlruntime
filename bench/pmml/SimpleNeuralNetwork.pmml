@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PMML xmlns="http://www.dmg.org/PMML-4_4" version="4.4">
+  <Header/>
+  <DataDictionary>
+    <DataField name="x1" optype="continuous" dataType="double"/>
+    <DataField name="x2" optype="continuous" dataType="double"/>
+    <DataField name="y" optype="continuous" dataType="double"/>
+  </DataDictionary>
+  <NeuralNetwork functionName="regression" modelName="SimpleNN" activationFunction="logistic" normalizationMethod="none" numberOfLayers="2">
+    <MiningSchema>
+      <MiningField name="x1"/>
+      <MiningField name="x2"/>
+      <MiningField name="y" usageType="predicted"/>
+    </MiningSchema>
+    <NeuralInputs numberOfInputs="2">
+      <NeuralInput id="0">
+        <DerivedField>
+          <FieldRef field="x1"/>
+        </DerivedField>
+      </NeuralInput>
+      <NeuralInput id="1">
+        <DerivedField>
+          <FieldRef field="x2"/>
+        </DerivedField>
+      </NeuralInput>
+    </NeuralInputs>
+    <NeuralLayer numberOfNeurons="2" activationFunction="logistic">
+      <Neuron id="hidden1" bias="0.0">
+        <Con from="0" weight="1.0"/>
+        <Con from="1" weight="1.0"/>
+      </Neuron>
+      <Neuron id="hidden2" bias="0.0">
+        <Con from="0" weight="0.5"/>
+        <Con from="1" weight="0.5"/>
+      </Neuron>
+    </NeuralLayer>
+    <NeuralLayer numberOfNeurons="1" activationFunction="identity">
+      <Neuron id="output" bias="0.0">
+        <Con from="hidden1" weight="1.0"/>
+        <Con from="hidden2" weight="1.0"/>
+      </Neuron>
+    </NeuralLayer>
+    <Targets>
+      <Target field="y" rescaleConstant="0" rescaleFactor="1"/>
+    </Targets>
+  </NeuralNetwork>
+</PMML>

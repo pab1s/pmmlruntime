@@ -103,7 +103,10 @@ impl Session {
                 .mining_schema
                 .target_field
                 .and_then(|fid| ir.field_names.get(&fid).cloned()),
-            _ => None,
+            pmml_ir::ir::ModelIr::NeuralNetwork(n) => n
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
         };
 
         Ok(Self {
@@ -177,10 +180,8 @@ impl Session {
             pmml_ir::ir::ModelIr::RuleSet(r) => {
                 pmml_evaluator::output::build_output(&r.output, predicted, &HashMap::new())
             }
-            _ => {
-                let mut m = HashMap::new();
-                m.insert("predictedValue".to_string(), predicted);
-                m
+            pmml_ir::ir::ModelIr::NeuralNetwork(nn) => {
+                pmml_evaluator::output::build_output(&nn.output, predicted, &HashMap::new())
             }
         };
 
@@ -242,7 +243,7 @@ impl Session {
             pmml_ir::ir::ModelIr::GeneralRegression(g) => g.mining_schema.active_fields.len(),
             pmml_ir::ir::ModelIr::Association(a) => a.mining_schema.active_fields.len(),
             pmml_ir::ir::ModelIr::RuleSet(r) => r.mining_schema.active_fields.len(),
-            _ => 0,
+            pmml_ir::ir::ModelIr::NeuralNetwork(n) => n.mining_schema.active_fields.len(),
         }
     }
 }
