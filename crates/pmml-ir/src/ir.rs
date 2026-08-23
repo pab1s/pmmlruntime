@@ -67,13 +67,104 @@ pub enum BuiltinId {
     Unknown,
 }
 
-/// Model IR — single variant for v1 (Tree).
+/// Model IR — Tree, Regression, Mining (ensemble).
 #[derive(Debug, Clone)]
 pub enum ModelIr {
     Tree(TreeIr),
-    // stubs for future
-    Regression,
-    Mining,
+    Regression(RegressionIr),
+    Mining(MiningIr),
+}
+
+#[derive(Debug, Clone)]
+pub struct RegressionIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub regression_tables: Vec<RegressionTableIr>,
+    pub normalization_method: RegressionNormalizationMethod,
+    pub targets: Vec<TargetIr>,
+    pub output: Vec<OutputFieldIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegressionTableIr {
+    pub intercept: f64,
+    pub target_category: Option<SymbolId>,
+    pub numeric_predictors: Vec<NumericPredictorIr>,
+    pub categorical_predictors: Vec<CategoricalPredictorIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NumericPredictorIr {
+    pub field: FieldId,
+    pub coefficient: f64,
+    pub exponent: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CategoricalPredictorIr {
+    pub field: FieldId,
+    pub value: SymbolId,
+    pub coefficient: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegressionNormalizationMethod {
+    None,
+    SimpleMax,
+    Softmax,
+    Logit,
+    Probit,
+    ClogLog,
+    Exp,
+    Loglog,
+    Cauchit,
+}
+
+#[derive(Debug, Clone)]
+pub struct MiningIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub segmentation: SegmentationIr,
+    pub targets: Vec<TargetIr>,
+    pub output: Vec<OutputFieldIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SegmentationIr {
+    pub multiple_model_method: MultipleModelMethod,
+    pub missing_prediction_treatment: MissingPredictionTreatment,
+    pub segments: Vec<SegmentIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SegmentIr {
+    pub id: Option<String>,
+    pub predicate: PredicateIr,
+    pub weight: f64,
+    pub model: Box<ModelIr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultipleModelMethod {
+    MajorityVote,
+    WeightedMajorityVote,
+    Average,
+    WeightedAverage,
+    Median,
+    WeightedMedian,
+    Max,
+    Sum,
+    WeightedSum,
+    SelectFirst,
+    SelectAll,
+    ModelChain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingPredictionTreatment {
+    ReturnMissing,
+    SkipSegment,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
