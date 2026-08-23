@@ -187,7 +187,10 @@ pub struct RawSupportVectorMachineModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
-    pub support_vectors: Vec<Vec<f64>>,
+    pub vector_fields: Vec<RawVectorField>,
+    pub vector_instances: Vec<RawVectorInstance>,
+    pub support_vector_machine: Option<RawSupportVectorMachine>,
+    pub kernel_gamma: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,11 +202,72 @@ pub struct RawNeuralNetwork {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawParameter {
+    pub name: String,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawFactor {
+    pub name: String,
+    pub categories: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawPPCell {
+    pub value: String,
+    pub predictor_name: String,
+    pub parameter_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawPCell {
+    pub target_category: Option<String>,
+    pub parameter_name: String,
+    pub beta: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct RawGeneralRegressionModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
     pub model_type: Option<String>,
+    pub target_variable_name: Option<String>,
+    pub target_reference_category: Option<String>,
+    pub parameters: Vec<RawParameter>,
+    pub factors: Vec<RawFactor>,
+    pub covariates: Vec<String>,
+    pub pp_matrix: Vec<RawPPCell>,
+    pub param_matrix: Vec<RawPCell>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawSupportVector {
+    pub vector_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawCoefficient {
+    pub value: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawSupportVectorMachine {
+    pub support_vectors: Vec<RawSupportVector>,
+    pub coefficients: Vec<RawCoefficient>,
+    pub absolute_value: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawVectorField {
+    pub field: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawVectorInstance {
+    pub id: String,
+    pub array: Vec<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -2376,6 +2440,821 @@ fn parse_nearest_neighbor_model(
     })
 }
 
+fn parse_general_regression_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawGeneralRegressionModel> {
+    let function_name = attr_required(start, "functionName", "GeneralRegressionModel")?;
+    let model_type = attr(start, "modelType");
+    let target_variable_name = attr(start, "targetVariableName");
+    let target_reference_category = attr(start, "targetReferenceCategory");
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut parameters = Vec::new();
+    let mut factors = Vec::new();
+    let mut covariates = Vec::new();
+    let mut pp_matrix = Vec::new();
+    let mut param_matrix = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "ParameterList" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Parameter" => {
+                                    let name = attr_required(&inner_e, "name", "Parameter")?;
+                                    let label = attr(&inner_e, "label");
+                                    parameters.push(RawParameter { name, label });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Parameter" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Parameter" => {
+                                    let name = attr_required(&inner_e, "name", "Parameter")?;
+                                    let label = attr(&inner_e, "label");
+                                    parameters.push(RawParameter { name, label });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ParameterList" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "FactorList" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Predictor" => {
+                                    let name = attr_required(&inner_e, "name", "Predictor")?;
+                                    let mut cats = Vec::new();
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(c_e))
+                                                if tag_name(&c_e) == "Categories" =>
+                                            {
+                                                let mut inner3 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(cat_e))
+                                                            if tag_name(&cat_e) == "Category" =>
+                                                        {
+                                                            if let Some(v) = attr(&cat_e, "value") {
+                                                                cats.push(v);
+                                                            }
+                                                            let mut skip = Vec::new();
+                                                            loop {
+                                                                match reader
+                                                                    .read_event_into(&mut skip)
+                                                                {
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "Category" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    Ok(Event::Empty(_)) => break,
+                                                                    _ => {}
+                                                                }
+                                                                skip.clear();
+                                                                break;
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Categories" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Predictor" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                    factors.push(RawFactor {
+                                        name,
+                                        categories: cats,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "FactorList" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "CovariateList" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Predictor" => {
+                                    let name = attr_required(&inner_e, "name", "Predictor")?;
+                                    covariates.push(name);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Predictor" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Predictor" => {
+                                    let name = attr_required(&inner_e, "name", "Predictor")?;
+                                    covariates.push(name);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "CovariateList" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "PPMatrix" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "PPCell" => {
+                                    let value = attr_required(&inner_e, "value", "PPCell")?;
+                                    let predictor_name =
+                                        attr_required(&inner_e, "predictorName", "PPCell")?;
+                                    let parameter_name =
+                                        attr_required(&inner_e, "parameterName", "PPCell")?;
+                                    pp_matrix.push(RawPPCell {
+                                        value,
+                                        predictor_name,
+                                        parameter_name,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "PPCell" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "PPCell" => {
+                                    let value = attr_required(&inner_e, "value", "PPCell")?;
+                                    let predictor_name =
+                                        attr_required(&inner_e, "predictorName", "PPCell")?;
+                                    let parameter_name =
+                                        attr_required(&inner_e, "parameterName", "PPCell")?;
+                                    pp_matrix.push(RawPPCell {
+                                        value,
+                                        predictor_name,
+                                        parameter_name,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "PPMatrix" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "ParamMatrix" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "PCell" => {
+                                    let target_category = attr(&inner_e, "targetCategory");
+                                    let parameter_name =
+                                        attr_required(&inner_e, "parameterName", "PCell")?;
+                                    let beta = attr(&inner_e, "beta")
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.0);
+                                    param_matrix.push(RawPCell {
+                                        target_category,
+                                        parameter_name,
+                                        beta,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "PCell" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "PCell" => {
+                                    let target_category = attr(&inner_e, "targetCategory");
+                                    let parameter_name =
+                                        attr_required(&inner_e, "parameterName", "PCell")?;
+                                    let beta = attr(&inner_e, "beta")
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.0);
+                                    param_matrix.push(RawPCell {
+                                        target_category,
+                                        parameter_name,
+                                        beta,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ParamMatrix" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e))
+                if String::from_utf8_lossy(e.name().as_ref()) == "GeneralRegressionModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawGeneralRegressionModel {
+        function_name,
+        mining_schema,
+        output,
+        model_type,
+        target_variable_name,
+        target_reference_category,
+        parameters,
+        factors,
+        covariates,
+        pp_matrix,
+        param_matrix,
+    })
+}
+
+fn parse_support_vector_machine_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSupportVectorMachineModel> {
+    let function_name = attr_required(start, "functionName", "SupportVectorMachineModel")?;
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut vector_fields = Vec::new();
+    let mut vector_instances = Vec::new();
+    let mut support_vector_machine: Option<RawSupportVectorMachine> = None;
+    let mut kernel_gamma: Option<f64> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "RadialBasisKernelType" => {
+                        kernel_gamma = attr(&e, "gamma").and_then(|s| s.parse::<f64>().ok());
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "RadialBasisKernelType" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "VectorDictionary" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "VectorFields" =>
+                                {
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(f_e))
+                                                if tag_name(&f_e) == "FieldRef" =>
+                                            {
+                                                let field =
+                                                    attr_required(&f_e, "field", "FieldRef")?;
+                                                vector_fields.push(RawVectorField { field });
+                                                let mut skip = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut skip) {
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "FieldRef" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        Ok(Event::Empty(_)) => break,
+                                                        _ => {}
+                                                    }
+                                                    skip.clear();
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::Empty(f_e))
+                                                if tag_name(&f_e) == "FieldRef" =>
+                                            {
+                                                let field =
+                                                    attr_required(&f_e, "field", "FieldRef")?;
+                                                vector_fields.push(RawVectorField { field });
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "VectorFields" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                }
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "VectorInstance" =>
+                                {
+                                    let id = attr(&inner_e, "id").unwrap_or_else(|| {
+                                        format!("vec{}", vector_instances.len())
+                                    });
+                                    let mut array = Vec::new();
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(arr_e))
+                                                if tag_name(&arr_e) == "REAL-SparseArray" =>
+                                            {
+                                                let mut inner3 = Vec::new();
+                                                let mut indices = Vec::new();
+                                                let mut entries = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(idx_e))
+                                                            if tag_name(&idx_e) == "Indices" =>
+                                                        {
+                                                            let mut txt_buf = Vec::new();
+                                                            loop {
+                                                                match reader
+                                                                    .read_event_into(&mut txt_buf)
+                                                                {
+                                                                    Ok(Event::Text(t)) => {
+                                                                        let txt = t
+                                                                            .unescape()
+                                                                            .unwrap_or_default()
+                                                                            .into_owned();
+                                                                        for part in
+                                                                            txt.split_whitespace()
+                                                                        {
+                                                                            if let Ok(i) = part
+                                                                                .parse::<usize>()
+                                                                            {
+                                                                                indices.push(i);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "Indices" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                                txt_buf.clear();
+                                                            }
+                                                        }
+                                                        Ok(Event::Start(ent_e))
+                                                            if tag_name(&ent_e)
+                                                                == "REAL-Entries" =>
+                                                        {
+                                                            let mut txt_buf = Vec::new();
+                                                            loop {
+                                                                match reader
+                                                                    .read_event_into(&mut txt_buf)
+                                                                {
+                                                                    Ok(Event::Text(t)) => {
+                                                                        let txt = t
+                                                                            .unescape()
+                                                                            .unwrap_or_default()
+                                                                            .into_owned();
+                                                                        for part in
+                                                                            txt.split_whitespace()
+                                                                        {
+                                                                            if let Ok(f) =
+                                                                                part.parse::<f64>()
+                                                                            {
+                                                                                entries.push(f);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "REAL-Entries" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                                txt_buf.clear();
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "REAL-SparseArray" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                                let mut dense = vec![0.0; 2];
+                                                for (idx, val) in indices.into_iter().zip(entries) {
+                                                    if idx > 0 && idx <= dense.len() {
+                                                        dense[idx - 1] = val;
+                                                    }
+                                                }
+                                                array = dense;
+                                            }
+                                            Ok(Event::Start(arr_e))
+                                                if tag_name(&arr_e) == "Array" =>
+                                            {
+                                                let mut txt_buf = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut txt_buf) {
+                                                        Ok(Event::Text(t)) => {
+                                                            let txt = t
+                                                                .unescape()
+                                                                .unwrap_or_default()
+                                                                .into_owned();
+                                                            for part in txt.split_whitespace() {
+                                                                if let Ok(f) = part.parse::<f64>() {
+                                                                    array.push(f);
+                                                                }
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Array" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    txt_buf.clear();
+                                                }
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "VectorInstance" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                    vector_instances.push(RawVectorInstance { id, array });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "VectorDictionary" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "SupportVectorMachine" => {
+                        let mut svs = Vec::new();
+                        let mut coeffs = Vec::new();
+                        let mut abs_val: Option<f64> = None;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "SupportVectors" =>
+                                {
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(sv_e))
+                                                if tag_name(&sv_e) == "SupportVector" =>
+                                            {
+                                                let vid = attr_required(
+                                                    &sv_e,
+                                                    "vectorId",
+                                                    "SupportVector",
+                                                )?;
+                                                svs.push(RawSupportVector { vector_id: vid });
+                                                let mut skip = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut skip) {
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "SupportVector" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        Ok(Event::Empty(_)) => break,
+                                                        _ => {}
+                                                    }
+                                                    skip.clear();
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::Empty(sv_e))
+                                                if tag_name(&sv_e) == "SupportVector" =>
+                                            {
+                                                let vid = attr_required(
+                                                    &sv_e,
+                                                    "vectorId",
+                                                    "SupportVector",
+                                                )?;
+                                                svs.push(RawSupportVector { vector_id: vid });
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "SupportVectors" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                }
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "Coefficients" =>
+                                {
+                                    abs_val = attr(&inner_e, "absoluteValue")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(coeff_e))
+                                                if tag_name(&coeff_e) == "Coefficient" =>
+                                            {
+                                                let val = attr(&coeff_e, "value")
+                                                    .and_then(|s| s.parse::<f64>().ok())
+                                                    .unwrap_or(0.0);
+                                                coeffs.push(RawCoefficient { value: val });
+                                                let mut skip = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut skip) {
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Coefficient" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        Ok(Event::Empty(_)) => break,
+                                                        _ => {}
+                                                    }
+                                                    skip.clear();
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::Empty(coeff_e))
+                                                if tag_name(&coeff_e) == "Coefficient" =>
+                                            {
+                                                let val = attr(&coeff_e, "value")
+                                                    .and_then(|s| s.parse::<f64>().ok())
+                                                    .unwrap_or(0.0);
+                                                coeffs.push(RawCoefficient { value: val });
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Coefficients" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "SupportVectorMachine" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        support_vector_machine = Some(RawSupportVectorMachine {
+                            support_vectors: svs,
+                            coefficients: coeffs,
+                            absolute_value: abs_val,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e))
+                if String::from_utf8_lossy(e.name().as_ref()) == "SupportVectorMachineModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSupportVectorMachineModel {
+        function_name,
+        mining_schema,
+        output,
+        vector_fields,
+        vector_instances,
+        support_vector_machine,
+        kernel_gamma,
+    })
+}
+
 // ---------- Top-level ----------
 
 pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
@@ -2510,34 +3389,12 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         nearest_neighbor_model = Some(nn);
                     }
                     "SupportVectorMachineModel" => {
-                        // Stub: just consume and set empty
-                        let mut depth = 1usize;
-                        let mut inner = Vec::new();
-                        loop {
-                            match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(_)) => depth += 1,
-                                Ok(Event::End(end)) => {
-                                    depth -= 1;
-                                    if depth == 0
-                                        && String::from_utf8_lossy(end.name().as_ref())
-                                            == "SupportVectorMachineModel"
-                                    {
-                                        break;
-                                    }
-                                }
-                                Ok(Event::Empty(_)) => {}
-                                Ok(Event::Eof) => break,
-                                _ => {}
-                            }
-                            inner.clear();
-                        }
-                        support_vector_machine_model = Some(RawSupportVectorMachineModel {
-                            function_name: attr(&e, "functionName")
-                                .unwrap_or_else(|| "classification".to_string()),
-                            mining_schema: vec![],
-                            output: vec![],
-                            support_vectors: vec![],
-                        });
+                        let svm = parse_support_vector_machine_model(&mut reader, &e)?;
+                        support_vector_machine_model = Some(svm);
+                    }
+                    "GeneralRegressionModel" => {
+                        let gr = parse_general_regression_model(&mut reader, &e)?;
+                        general_regression_model = Some(gr);
                     }
                     "NeuralNetwork" => {
                         let mut depth = 1usize;
@@ -2566,35 +3423,6 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                             mining_schema: vec![],
                             output: vec![],
                             layers: vec![],
-                        });
-                    }
-                    "GeneralRegressionModel" => {
-                        let mut depth = 1usize;
-                        let mut inner = Vec::new();
-                        loop {
-                            match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(_)) => depth += 1,
-                                Ok(Event::End(end)) => {
-                                    depth -= 1;
-                                    if depth == 0
-                                        && String::from_utf8_lossy(end.name().as_ref())
-                                            == "GeneralRegressionModel"
-                                    {
-                                        break;
-                                    }
-                                }
-                                Ok(Event::Empty(_)) => {}
-                                Ok(Event::Eof) => break,
-                                _ => {}
-                            }
-                            inner.clear();
-                        }
-                        general_regression_model = Some(RawGeneralRegressionModel {
-                            function_name: attr(&e, "functionName")
-                                .unwrap_or_else(|| "regression".to_string()),
-                            mining_schema: vec![],
-                            output: vec![],
-                            model_type: None,
                         });
                     }
                     _ => {} // other top-level models ignored for v1 (stub)

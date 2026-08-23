@@ -37,11 +37,15 @@ impl ExecutionProvider for CpuSerialProvider {
             ModelIr::NearestNeighbor(nn) => {
                 pmml_evaluator::models::evaluate_nearest_neighbor(nn, values)
             }
-            ModelIr::SupportVectorMachine(_)
-            | ModelIr::NeuralNetwork(_)
-            | ModelIr::GeneralRegression(_) => {
+            ModelIr::SupportVectorMachine(svm) => {
+                pmml_evaluator::models::evaluate_support_vector_machine(svm, values)
+            }
+            ModelIr::GeneralRegression(gr) => {
+                pmml_evaluator::models::evaluate_general_regression(gr, values)
+            }
+            ModelIr::NeuralNetwork(_) => {
                 return Err(pmml_core::error::PmmlError::UnsupportedMarkup(
-                    "model type not yet fully supported (stub)".into(),
+                    "NeuralNetwork not yet fully supported (stub)".into(),
                 ))
             }
         };

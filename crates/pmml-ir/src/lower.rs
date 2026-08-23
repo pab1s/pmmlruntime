@@ -772,12 +772,38 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             instance_ids,
         };
         (ModelIr::NearestNeighbor(nn_ir), vec![])
-    } else if raw.support_vector_machine_model.is_some()
-        || raw.neural_network.is_some()
-        || raw.general_regression_model.is_some()
-    {
+    } else if let Some(gr) = raw.general_regression_model {
+        let mining_schema = lower_mining_schema(
+            &gr.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&gr.output, &field_name_to_id, &mut interner);
+        // For v1, we create a stub GeneralRegressionIr with empty param matrices
+        let gr_ir = GeneralRegressionIr {
+            function_name: gr.function_name.clone(),
+            mining_schema,
+            output,
+        };
+        (ModelIr::GeneralRegression(gr_ir), vec![])
+    } else if let Some(svm) = raw.support_vector_machine_model {
+        let mining_schema = lower_mining_schema(
+            &svm.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&svm.output, &field_name_to_id, &mut interner);
+        let svm_ir = SupportVectorMachineIr {
+            function_name: svm.function_name.clone(),
+            mining_schema,
+            output,
+        };
+        (ModelIr::SupportVectorMachine(svm_ir), vec![])
+    } else if raw.neural_network.is_some() {
         return Err(PmmlError::UnsupportedMarkup(
-            "model type not yet fully supported in v1.1 (stub)".into(),
+            "NeuralNetwork not yet fully supported (stub)".into(),
         ));
     } else {
         return Err(PmmlError::UnsupportedMarkup(
