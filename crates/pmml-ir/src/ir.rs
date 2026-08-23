@@ -222,12 +222,39 @@ pub struct ClusterIr {
 }
 
 #[derive(Debug, Clone)]
+pub struct TargetValueCountIr {
+    pub value: SymbolId,
+    pub count: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PairCountsIr {
+    pub value: SymbolId,
+    pub target_counts: Vec<TargetValueCountIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TargetValueStatIr {
+    pub value: SymbolId,
+    pub mean: Option<f64>,
+    pub variance: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BayesInputIr {
+    pub field: FieldId,
+    pub target_value_stats: Vec<TargetValueStatIr>,
+    pub pair_counts: Vec<PairCountsIr>,
+}
+
+#[derive(Debug, Clone)]
 pub struct NaiveBayesIr {
     pub function_name: String,
+    pub threshold: f64,
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
-    // Simplified stub
-    pub bayes_inputs: Vec<String>,
+    pub bayes_inputs: Vec<BayesInputIr>,
+    pub bayes_output_counts: Vec<TargetValueCountIr>,
 }
 
 #[derive(Debug, Clone)]

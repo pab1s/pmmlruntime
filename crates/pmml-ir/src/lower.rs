@@ -680,11 +680,69 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         let output = lower_output(&nb.output, &field_name_to_id, &mut interner);
+        let mut bayes_inputs = Vec::new();
+        for bi in &nb.bayes_inputs {
+            let fid = if let Some(&id) = field_name_to_id.get(&bi.field_name) {
+                id
+            } else {
+                let id = interner.intern_field(&bi.field_name);
+                field_name_to_id.insert(bi.field_name.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: bi.field_name.clone(),
+                    data_type: DataType::String,
+                    op_type: OpType::Categorical,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            let mut target_value_stats = Vec::new();
+            for tvs in &bi.target_value_stats {
+                let sid = interner.intern_symbol(&tvs.value);
+                target_value_stats.push(TargetValueStatIr {
+                    value: sid,
+                    mean: tvs.gaussian_mean,
+                    variance: tvs.gaussian_variance,
+                });
+            }
+            let mut pair_counts = Vec::new();
+            for pc in &bi.pair_counts {
+                let pc_sid = interner.intern_symbol(&pc.value);
+                let mut target_counts = Vec::new();
+                for tc in &pc.target_counts {
+                    let t_sid = interner.intern_symbol(&tc.value);
+                    target_counts.push(TargetValueCountIr {
+                        value: t_sid,
+                        count: tc.count,
+                    });
+                }
+                pair_counts.push(PairCountsIr {
+                    value: pc_sid,
+                    target_counts,
+                });
+            }
+            bayes_inputs.push(BayesInputIr {
+                field: fid,
+                target_value_stats,
+                pair_counts,
+            });
+        }
+        let mut bayes_output_counts = Vec::new();
+        for tc in &nb.bayes_output_counts {
+            let sid = interner.intern_symbol(&tc.value);
+            bayes_output_counts.push(TargetValueCountIr {
+                value: sid,
+                count: tc.count,
+            });
+        }
         let nb_ir = NaiveBayesIr {
             function_name: nb.function_name.clone(),
+            threshold: nb.threshold,
             mining_schema,
             output,
-            bayes_inputs: nb.bayes_inputs.clone(),
+            bayes_inputs,
+            bayes_output_counts,
         };
         (ModelIr::NaiveBayes(nb_ir), vec![])
     } else if let Some(nn) = raw.nearest_neighbor_model {
