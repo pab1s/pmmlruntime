@@ -241,6 +241,8 @@ pub struct RawParameter {
 pub struct RawFactor {
     pub name: String,
     pub categories: Vec<String>,
+    pub matrix: Vec<Vec<f64>>,
+    pub contrast_type: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -3114,7 +3116,9 @@ fn parse_general_regression_model(
                             match reader.read_event_into(&mut inner) {
                                 Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Predictor" => {
                                     let name = attr_required(&inner_e, "name", "Predictor")?;
+                                    let contrast_type = attr(&inner_e, "contrastMatrixType");
                                     let mut cats = Vec::new();
+                                    let mut matrix: Vec<Vec<f64>> = Vec::new();
                                     let mut inner2 = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut inner2) {
@@ -3162,6 +3166,59 @@ fn parse_general_regression_model(
                                                     inner3.clear();
                                                 }
                                             }
+                                            Ok(Event::Start(c_e)) if tag_name(&c_e) == "Matrix" => {
+                                                let mut inner3 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(arr_e))
+                                                            if tag_name(&arr_e) == "Array" =>
+                                                        {
+                                                            let mut txt = String::new();
+                                                            let mut inner4 = Vec::new();
+                                                            loop {
+                                                                match reader
+                                                                    .read_event_into(&mut inner4)
+                                                                {
+                                                                    Ok(Event::Text(t)) => {
+                                                                        txt = t
+                                                                            .unescape()
+                                                                            .unwrap_or_default()
+                                                                            .into_owned();
+                                                                    }
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "Array" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                                inner4.clear();
+                                                            }
+                                                            let row: Vec<f64> = txt
+                                                                .split_whitespace()
+                                                                .filter_map(|s| {
+                                                                    s.parse::<f64>().ok()
+                                                                })
+                                                                .collect();
+                                                            if !row.is_empty() {
+                                                                matrix.push(row);
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Matrix" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                            }
                                             Ok(Event::End(end))
                                                 if String::from_utf8_lossy(end.name().as_ref())
                                                     == "Predictor" =>
@@ -3175,6 +3232,8 @@ fn parse_general_regression_model(
                                     factors.push(RawFactor {
                                         name,
                                         categories: cats,
+                                        matrix,
+                                        contrast_type,
                                     });
                                 }
                                 Ok(Event::End(end))
