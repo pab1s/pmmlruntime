@@ -4059,6 +4059,403 @@ fn parse_neural_network(
     })
 }
 
+fn parse_association_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawAssociationModel> {
+    let function_name = attr_required(start, "functionName", "AssociationModel")?;
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut items = Vec::new();
+    let mut itemsets = Vec::new();
+    let mut rules = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Item" => {
+                        let id = attr_required(&e, "id", "Item")?;
+                        let value = attr_required(&e, "value", "Item")?;
+                        items.push(RawItem { id, value });
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Item" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                            break;
+                        }
+                    }
+                    "Itemset" => {
+                        let id = attr_required(&e, "id", "Itemset")?;
+                        let mut item_refs = Vec::new();
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "ItemRef" => {
+                                    let item_ref = attr_required(&inner_e, "itemRef", "ItemRef")?;
+                                    item_refs.push(item_ref);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "ItemRef" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "ItemRef" => {
+                                    let item_ref = attr_required(&inner_e, "itemRef", "ItemRef")?;
+                                    item_refs.push(item_ref);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Itemset" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        itemsets.push(RawItemset { id, item_refs });
+                    }
+                    "AssociationRule" => {
+                        let antecedent = attr_required(&e, "antecedent", "AssociationRule")?;
+                        let consequent = attr_required(&e, "consequent", "AssociationRule")?;
+                        let support = attr(&e, "support")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let confidence = attr(&e, "confidence")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let lift = attr(&e, "lift")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        rules.push(RawAssociationRule {
+                            antecedent,
+                            consequent,
+                            support,
+                            confidence,
+                            lift,
+                        });
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "AssociationRule" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                if tag == "Item" {
+                    let id = attr_required(&e, "id", "Item")?;
+                    let value = attr_required(&e, "value", "Item")?;
+                    items.push(RawItem { id, value });
+                } else if tag == "AssociationRule" {
+                    let antecedent = attr_required(&e, "antecedent", "AssociationRule")?;
+                    let consequent = attr_required(&e, "consequent", "AssociationRule")?;
+                    let support = attr(&e, "support")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let confidence = attr(&e, "confidence")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let lift = attr(&e, "lift")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    rules.push(RawAssociationRule {
+                        antecedent,
+                        consequent,
+                        support,
+                        confidence,
+                        lift,
+                    });
+                }
+            }
+            Ok(Event::End(e))
+                if String::from_utf8_lossy(e.name().as_ref()) == "AssociationModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawAssociationModel {
+        function_name,
+        mining_schema,
+        output,
+        items,
+        itemsets,
+        rules,
+    })
+}
+
+fn parse_rule_set_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawRuleSetModel> {
+    let function_name = attr_required(start, "functionName", "RuleSetModel")?;
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut rule_set: Option<RawRuleSet> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "RuleSet" => {
+                        let record_count =
+                            attr(&e, "recordCount").and_then(|s| s.parse::<f64>().ok());
+                        let nb_correct = attr(&e, "nbCorrect").and_then(|s| s.parse::<f64>().ok());
+                        let default_score = attr(&e, "defaultScore");
+                        let mut rules = Vec::new();
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(rule_e)) if tag_name(&rule_e) == "SimpleRule" => {
+                                    let id = attr(&rule_e, "id");
+                                    let score = attr_required(&rule_e, "score", "SimpleRule")?;
+                                    let mut predicate = RawPredicate::True;
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(pred_e))
+                                                if tag_name(&pred_e) == "CompoundPredicate" =>
+                                            {
+                                                let boolean_operator = attr_required(
+                                                    &pred_e,
+                                                    "booleanOperator",
+                                                    "CompoundPredicate",
+                                                )?;
+                                                let mut preds = Vec::new();
+                                                let mut inner3 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(simple_e))
+                                                            if tag_name(&simple_e)
+                                                                == "SimplePredicate" =>
+                                                        {
+                                                            preds.push(parse_simple_predicate(
+                                                                &simple_e,
+                                                            )?);
+                                                        }
+                                                        Ok(Event::Empty(simple_e))
+                                                            if tag_name(&simple_e)
+                                                                == "SimplePredicate" =>
+                                                        {
+                                                            preds.push(parse_simple_predicate(
+                                                                &simple_e,
+                                                            )?);
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "CompoundPredicate" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                                predicate = RawPredicate::Compound {
+                                                    boolean_operator,
+                                                    predicates: preds,
+                                                };
+                                            }
+                                            Ok(Event::Start(pred_e))
+                                                if tag_name(&pred_e) == "SimplePredicate" =>
+                                            {
+                                                predicate = parse_simple_predicate(&pred_e)?;
+                                            }
+                                            Ok(Event::Empty(pred_e))
+                                                if tag_name(&pred_e) == "SimplePredicate" =>
+                                            {
+                                                predicate = parse_simple_predicate(&pred_e)?;
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "SimpleRule" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                    rules.push(RawSimpleRule {
+                                        id,
+                                        score,
+                                        predicate,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "RuleSet" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        rule_set = Some(RawRuleSet {
+                            record_count,
+                            nb_correct,
+                            default_score,
+                            rules,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e)) if String::from_utf8_lossy(e.name().as_ref()) == "RuleSetModel" => {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawRuleSetModel {
+        function_name,
+        mining_schema,
+        output,
+        rule_set,
+    })
+}
+
 // ---------- Top-level ----------
 
 pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
@@ -4203,64 +4600,12 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         general_regression_model = Some(gr);
                     }
                     "AssociationModel" => {
-                        let mut depth = 1usize;
-                        let mut inner = Vec::new();
-                        loop {
-                            match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(_)) => depth += 1,
-                                Ok(Event::End(end)) => {
-                                    depth -= 1;
-                                    if depth == 0
-                                        && String::from_utf8_lossy(end.name().as_ref())
-                                            == "AssociationModel"
-                                    {
-                                        break;
-                                    }
-                                }
-                                Ok(Event::Empty(_)) => {}
-                                Ok(Event::Eof) => break,
-                                _ => {}
-                            }
-                            inner.clear();
-                        }
-                        association_model = Some(RawAssociationModel {
-                            function_name: attr(&e, "functionName")
-                                .unwrap_or_else(|| "associationRules".to_string()),
-                            mining_schema: vec![],
-                            output: vec![],
-                            items: vec![],
-                            itemsets: vec![],
-                            rules: vec![],
-                        });
+                        let am = parse_association_model(&mut reader, &e)?;
+                        association_model = Some(am);
                     }
                     "RuleSetModel" => {
-                        let mut depth = 1usize;
-                        let mut inner = Vec::new();
-                        loop {
-                            match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(_)) => depth += 1,
-                                Ok(Event::End(end)) => {
-                                    depth -= 1;
-                                    if depth == 0
-                                        && String::from_utf8_lossy(end.name().as_ref())
-                                            == "RuleSetModel"
-                                    {
-                                        break;
-                                    }
-                                }
-                                Ok(Event::Empty(_)) => {}
-                                Ok(Event::Eof) => break,
-                                _ => {}
-                            }
-                            inner.clear();
-                        }
-                        rule_set_model = Some(RawRuleSetModel {
-                            function_name: attr(&e, "functionName")
-                                .unwrap_or_else(|| "classification".to_string()),
-                            mining_schema: vec![],
-                            output: vec![],
-                            rule_set: None,
-                        });
+                        let rsm = parse_rule_set_model(&mut reader, &e)?;
+                        rule_set_model = Some(rsm);
                     }
                     "NeuralNetwork" => {
                         let nn = parse_neural_network(&mut reader, &e)?;
