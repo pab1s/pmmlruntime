@@ -1,8 +1,7 @@
 //! C ABI — stable like onnxruntime_c_api.h
 //! v1 minimal: PmmlEnv, PmmlSession, PmmlCreate/Run/Release.
 
-// For v1 we expose opaque pointers and status codes.
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::os::raw::c_char;
 
 #[repr(C)]
@@ -22,12 +21,13 @@ pub enum PmmlStatusCode {
 }
 
 /// Create Env. Caller must call `PmmlReleaseEnv`.
+/// # Safety
+/// `env_out` must be a valid mutable pointer.
 #[no_mangle]
-pub extern "C" fn PmmlCreateEnv(env_out: *mut *mut PmmlEnv) -> i32 {
+pub unsafe extern "C" fn PmmlCreateEnv(env_out: *mut *mut PmmlEnv) -> i32 {
     if env_out.is_null() {
         return PmmlStatusCode::Error as i32;
     }
-    // In v1 we just allocate a dummy
     let _env = Box::new(PmmlEnv { _private: [] });
     unsafe {
         *env_out = Box::into_raw(_env);
@@ -35,8 +35,10 @@ pub extern "C" fn PmmlCreateEnv(env_out: *mut *mut PmmlEnv) -> i32 {
     PmmlStatusCode::Ok as i32
 }
 
+/// # Safety
+/// `env` must be a valid pointer from `PmmlCreateEnv`.
 #[no_mangle]
-pub extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
+pub unsafe extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
     if env.is_null() {
         return;
     }
@@ -46,8 +48,10 @@ pub extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
 }
 
 /// Create Session from file path.
+/// # Safety
+/// `path` must be a valid null-terminated C string, `session_out` valid.
 #[no_mangle]
-pub extern "C" fn PmmlCreateSession(
+pub unsafe extern "C" fn PmmlCreateSession(
     _env: *mut PmmlEnv,
     path: *const c_char,
     session_out: *mut *mut PmmlSession,
@@ -57,7 +61,6 @@ pub extern "C" fn PmmlCreateSession(
     }
     let c_str = unsafe { CStr::from_ptr(path) };
     let _path_str = c_str.to_string_lossy().into_owned();
-    // Stub: allocate dummy session
     let sess = Box::new(PmmlSession { _private: [] });
     unsafe {
         *session_out = Box::into_raw(sess);
@@ -65,8 +68,10 @@ pub extern "C" fn PmmlCreateSession(
     PmmlStatusCode::Ok as i32
 }
 
+/// # Safety
+/// `session` must be a valid pointer from `PmmlCreateSession`.
 #[no_mangle]
-pub extern "C" fn PmmlReleaseSession(session: *mut PmmlSession) {
+pub unsafe extern "C" fn PmmlReleaseSession(session: *mut PmmlSession) {
     if session.is_null() {
         return;
     }

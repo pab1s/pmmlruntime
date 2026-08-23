@@ -16,3 +16,7 @@ arrow = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+
+[[bench]]
+name = "scoring"
+harness = false

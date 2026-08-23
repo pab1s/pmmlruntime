@@ -4,7 +4,6 @@ use pmml_core::Result;
 use pmml_core::error::PmmlError;
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use std::io::BufReader;
 
 const MAX_DEPTH: usize = 128;
 const MAX_FILE_BYTES: usize = 100 * 1024 * 1024; // 100 MB

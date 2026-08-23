@@ -1,3 +1,4 @@
+#![allow(clippy::never_loop, clippy::match_same_arms, clippy::needless_range_loop)]
 pub mod reader;
 pub mod unmarshal;
 

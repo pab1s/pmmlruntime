@@ -13,7 +13,7 @@ impl ExecutionProvider for CpuSerialProvider {
         // 1. DerivedFields (bytecode) — v1: noop if empty
         if !ir.derived_fields.is_empty() {
             pmml_evaluator::eval_derived_fields(&ir.derived_fields, values)
-                .map_err(|e| pmml_core::error::PmmlError::InvalidValue(e))?;
+                .map_err(pmml_core::error::PmmlError::InvalidValue)?;
         }
         // 2. Model
         let predicted = match &ir.model {

@@ -1,11 +1,12 @@
 //! SessionOptions — like OrtSessionOptions (graph opt level, threads, EP).
 
 /// ONNX-style graph optimization level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum GraphOptimizationLevel {
     /// Disable all (interpreter, cold fastest)
     DisableAll = 0,
     /// Basic (bytecode) — default v1
+    #[default]
     EnableBasic = 1,
     /// Extended (SIMD, batch) — stub v1, active v2
     EnableExtended = 2,
@@ -13,23 +14,12 @@ pub enum GraphOptimizationLevel {
     EnableAll = 3,
 }
 
-impl Default for GraphOptimizationLevel {
-    fn default() -> Self {
-        Self::EnableBasic
-    }
-}
-
 /// Execution provider kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ExecutionProviderKind {
+    #[default]
     CpuSerial,
     CpuBatched, // stub v1, ready for Rayon
-}
-
-impl Default for ExecutionProviderKind {
-    fn default() -> Self {
-        Self::CpuSerial
-    }
 }
 
 /// Session options builder.
