@@ -41,7 +41,18 @@ impl ExecutionProvider for CpuSerialProvider {
                 pmml_evaluator::models::evaluate_support_vector_machine(svm, values)
             }
             ModelIr::GeneralRegression(gr) => {
-                pmml_evaluator::models::evaluate_general_regression(gr, values)
+                let mut name_to_id: std::collections::HashMap<String, pmml_core::FieldId> =
+                    std::collections::HashMap::new();
+                for (fid, name) in &ir.field_names {
+                    name_to_id.insert(name.clone(), *fid);
+                }
+                pmml_evaluator::models::evaluate_general_regression(
+                    gr,
+                    values,
+                    &ir.field_names,
+                    &ir.symbol_names,
+                    &name_to_id,
+                )
             }
             ModelIr::Association(a) => pmml_evaluator::models::evaluate_association(a, values),
             ModelIr::RuleSet(r) => pmml_evaluator::models::evaluate_rule_set(r, values),

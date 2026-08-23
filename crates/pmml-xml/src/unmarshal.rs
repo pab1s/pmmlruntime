@@ -2176,9 +2176,7 @@ fn parse_naive_bayes_model(
                         let mut inner = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(inner_e))
-                                    if tag_name(&inner_e) == "BayesInput" =>
-                                {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "BayesInput" => {
                                     let field_name =
                                         attr_required(&inner_e, "fieldName", "BayesInput")?;
                                     let mut target_value_stats = Vec::new();
@@ -2197,7 +2195,9 @@ fn parse_naive_bayes_model(
                                                                 == "TargetValueStat" =>
                                                         {
                                                             let value = attr_required(
-                                                                &tv_e, "value", "TargetValueStat",
+                                                                &tv_e,
+                                                                "value",
+                                                                "TargetValueStat",
                                                             )?;
                                                             let mut mean = None;
                                                             let mut variance = None;
@@ -2388,9 +2388,7 @@ fn parse_naive_bayes_model(
                                         pair_counts,
                                     });
                                 }
-                                Ok(Event::Start(inner_e))
-                                    if tag_name(&inner_e) == "Extension" =>
-                                {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Extension" => {
                                     // Handle Extension wrapping BayesInput (BayesInputTest)
                                     let mut inner2 = Vec::new();
                                     loop {
@@ -2399,7 +2397,9 @@ fn parse_naive_bayes_model(
                                                 if tag_name(&bayes_e) == "BayesInput" =>
                                             {
                                                 let field_name = attr_required(
-                                                    &bayes_e, "fieldName", "BayesInput",
+                                                    &bayes_e,
+                                                    "fieldName",
+                                                    "BayesInput",
                                                 )?;
                                                 let mut target_value_stats = Vec::new();
                                                 let mut pair_counts = Vec::new();
@@ -2586,15 +2586,15 @@ fn parse_naive_bayes_model(
                                                 if tag_name(&cnt_e) == "TargetValueCount" =>
                                             {
                                                 let value = attr_required(
-                                                    &cnt_e, "value", "TargetValueCount",
+                                                    &cnt_e,
+                                                    "value",
+                                                    "TargetValueCount",
                                                 )?;
                                                 let count = attr(&cnt_e, "count")
                                                     .and_then(|s| s.parse::<f64>().ok())
                                                     .unwrap_or(0.0);
-                                                bayes_output_counts.push(RawTargetValueCount {
-                                                    value,
-                                                    count,
-                                                });
+                                                bayes_output_counts
+                                                    .push(RawTargetValueCount { value, count });
                                                 let mut skip = Vec::new();
                                                 loop {
                                                     match reader.read_event_into(&mut skip) {

@@ -285,11 +285,45 @@ pub struct NeuralNetworkIr {
 }
 
 #[derive(Debug, Clone)]
+pub struct ParameterIr {
+    pub name: String,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FactorIr {
+    pub name: FieldId,
+    pub categories: Vec<SymbolId>,
+    pub matrix: Vec<Vec<f64>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PPCellIr {
+    pub value: SymbolId,
+    pub predictor_name: String,
+    pub parameter_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PCellIr {
+    pub target_category: Option<SymbolId>,
+    pub parameter_name: String,
+    pub beta: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct GeneralRegressionIr {
     pub function_name: String,
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
-    // stub
+    pub model_type: Option<String>,
+    pub target_variable_name: Option<String>,
+    pub target_reference_category: Option<SymbolId>,
+    pub parameters: Vec<ParameterIr>,
+    pub factors: Vec<FactorIr>,
+    pub covariates: Vec<FieldId>,
+    pub pp_matrix: Vec<PPCellIr>,
+    pub param_matrix: Vec<PCellIr>,
 }
 
 #[derive(Debug, Clone)]

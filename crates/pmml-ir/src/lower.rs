@@ -838,10 +838,100 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         let output = lower_output(&gr.output, &field_name_to_id, &mut interner);
+        // For v1, we handle the detailed GeneralRegression but keep it simple: just store mining_schema and output
+        // Full handling of ParameterList/FactorList/PPMatrix/ParamMatrix is done in evaluator via raw, but for IR we store stub
         let gr_ir = GeneralRegressionIr {
             function_name: gr.function_name.clone(),
             mining_schema,
             output,
+            model_type: gr.model_type.clone(),
+            target_variable_name: gr.target_variable_name.clone(),
+            target_reference_category: gr
+                .target_reference_category
+                .as_ref()
+                .map(|s| interner.intern_symbol(s)),
+            parameters: gr
+                .parameters
+                .iter()
+                .map(|p| ParameterIr {
+                    name: p.name.clone(),
+                    label: p.label.clone(),
+                })
+                .collect(),
+            factors: {
+                let mut facs = Vec::new();
+                for f in &gr.factors {
+                    let fid = if let Some(&id) = field_name_to_id.get(&f.name) {
+                        id
+                    } else {
+                        let id = interner.intern_field(&f.name);
+                        field_name_to_id.insert(f.name.clone(), id);
+                        let meta = FieldMeta {
+                            field_id: id,
+                            name: f.name.clone(),
+                            data_type: DataType::String,
+                            op_type: OpType::Categorical,
+                            values: vec![],
+                        };
+                        field_meta_map.insert(id, meta);
+                        id
+                    };
+                    let cats = f
+                        .categories
+                        .iter()
+                        .map(|c| interner.intern_symbol(c))
+                        .collect();
+                    facs.push(FactorIr {
+                        name: fid,
+                        categories: cats,
+                        matrix: vec![], // stub
+                    });
+                }
+                facs
+            },
+            covariates: {
+                let mut covs = Vec::new();
+                for c in &gr.covariates {
+                    let fid = if let Some(&id) = field_name_to_id.get(c) {
+                        id
+                    } else {
+                        let id = interner.intern_field(c);
+                        field_name_to_id.insert(c.clone(), id);
+                        let meta = FieldMeta {
+                            field_id: id,
+                            name: c.clone(),
+                            data_type: DataType::Double,
+                            op_type: OpType::Continuous,
+                            values: vec![],
+                        };
+                        field_meta_map.insert(id, meta);
+                        id
+                    };
+                    covs.push(fid);
+                }
+                covs
+            },
+            pp_matrix: gr
+                .pp_matrix
+                .iter()
+                .map(|ppc| PPCellIr {
+                    value: interner.intern_symbol(&ppc.value),
+                    predictor_name: ppc.predictor_name.clone(),
+                    parameter_name: ppc.parameter_name.clone(),
+                })
+                .collect(),
+            param_matrix: gr
+                .param_matrix
+                .iter()
+                .map(|pc| PCellIr {
+                    target_category: pc
+                        .target_category
+                        .as_ref()
+                        .map(|s| interner.intern_symbol(s)),
+                    parameter_name: pc.parameter_name.clone(),
+                    beta: pc.beta,
+                })
+                .collect(),
         };
         (ModelIr::GeneralRegression(gr_ir), vec![])
     } else if let Some(svm) = raw.support_vector_machine_model {

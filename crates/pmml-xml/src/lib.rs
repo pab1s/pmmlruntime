@@ -12,10 +12,11 @@ pub use unmarshal::{
     RawCategoricalPredictor, RawCharacteristic, RawCluster, RawClusteringModel,
     RawComparisonMeasure, RawDataField, RawGeneralRegressionModel, RawItem, RawItemset,
     RawMiningField, RawMiningModel, RawNaiveBayesModel, RawNearestNeighborModel, RawNeuralLayer,
-    RawNeuralNetwork, RawNeuron, RawNode, RawNumericPredictor, RawOutputField, RawPairCounts, RawPmml,
-    RawPredicate, RawRegressionModel, RawRegressionTable, RawRuleSet, RawRuleSetModel,
-    RawScoreDistribution, RawScorecard, RawSegment, RawSegmentModel, RawSegmentation, RawSimpleRule,
-    RawSupportVectorMachineModel, RawTargetValueCount, RawTargetValueStat, RawTreeModel,
+    RawNeuralNetwork, RawNeuron, RawNode, RawNumericPredictor, RawOutputField, RawPairCounts,
+    RawPmml, RawPredicate, RawRegressionModel, RawRegressionTable, RawRuleSet, RawRuleSetModel,
+    RawScoreDistribution, RawScorecard, RawSegment, RawSegmentModel, RawSegmentation,
+    RawSimpleRule, RawSupportVectorMachineModel, RawTargetValueCount, RawTargetValueStat,
+    RawTreeModel,
 };
 
 pub fn placeholder() {}
