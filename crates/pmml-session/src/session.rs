@@ -57,13 +57,20 @@ impl Session {
             .max()
             .unwrap_or(0)
             + 1;
-        // Extract target name from model if classification
+        // Extract target name from model
         let target_name = match &ir.model {
             pmml_ir::ir::ModelIr::Tree(t) => t
                 .mining_schema
                 .target_field
                 .and_then(|fid| ir.field_names.get(&fid).cloned()),
-            _ => None,
+            pmml_ir::ir::ModelIr::Regression(r) => r
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            pmml_ir::ir::ModelIr::Mining(m) => m
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
         };
 
         Ok(Self {
@@ -107,10 +114,11 @@ impl Session {
             pmml_ir::ir::ModelIr::Tree(tree) => {
                 pmml_evaluator::output::build_output(&tree.output, predicted, &HashMap::new())
             }
-            _ => {
-                let mut m = HashMap::new();
-                m.insert("predictedValue".to_string(), predicted);
-                m
+            pmml_ir::ir::ModelIr::Regression(reg) => {
+                pmml_evaluator::output::build_output(&reg.output, predicted, &HashMap::new())
+            }
+            pmml_ir::ir::ModelIr::Mining(mining) => {
+                pmml_evaluator::output::build_output(&mining.output, predicted, &HashMap::new())
             }
         };
 
@@ -162,7 +170,8 @@ impl Session {
     pub fn num_active_fields(&self) -> usize {
         match &self.ir.model {
             pmml_ir::ir::ModelIr::Tree(t) => t.mining_schema.active_fields.len(),
-            _ => 0,
+            pmml_ir::ir::ModelIr::Regression(r) => r.mining_schema.active_fields.len(),
+            pmml_ir::ir::ModelIr::Mining(m) => m.mining_schema.active_fields.len(),
         }
     }
 }

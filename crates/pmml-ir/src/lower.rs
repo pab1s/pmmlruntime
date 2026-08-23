@@ -227,6 +227,253 @@ fn flatten_node(
     Ok(idx)
 }
 
+fn parse_regression_norm(s: Option<&str>) -> RegressionNormalizationMethod {
+    match s.unwrap_or("none") {
+        "none" => RegressionNormalizationMethod::None,
+        "simplemax" => RegressionNormalizationMethod::SimpleMax,
+        "softmax" => RegressionNormalizationMethod::Softmax,
+        "logit" => RegressionNormalizationMethod::Logit,
+        "probit" => RegressionNormalizationMethod::Probit,
+        "cloglog" => RegressionNormalizationMethod::ClogLog,
+        "exp" => RegressionNormalizationMethod::Exp,
+        "loglog" => RegressionNormalizationMethod::Loglog,
+        "cauchit" => RegressionNormalizationMethod::Cauchit,
+        _ => RegressionNormalizationMethod::None,
+    }
+}
+
+fn parse_multiple_model_method(s: &str) -> MultipleModelMethod {
+    match s {
+        "majorityVote" => MultipleModelMethod::MajorityVote,
+        "weightedMajorityVote" => MultipleModelMethod::WeightedMajorityVote,
+        "average" => MultipleModelMethod::Average,
+        "weightedAverage" => MultipleModelMethod::WeightedAverage,
+        "median" => MultipleModelMethod::Median,
+        "weightedMedian" => MultipleModelMethod::WeightedMedian,
+        "max" => MultipleModelMethod::Max,
+        "sum" => MultipleModelMethod::Sum,
+        "weightedSum" => MultipleModelMethod::WeightedSum,
+        "selectFirst" => MultipleModelMethod::SelectFirst,
+        "selectAll" => MultipleModelMethod::SelectAll,
+        "modelChain" => MultipleModelMethod::ModelChain,
+        _ => MultipleModelMethod::Average,
+    }
+}
+
+fn parse_missing_pred(s: Option<&str>) -> MissingPredictionTreatment {
+    match s.unwrap_or("continue") {
+        "returnMissing" => MissingPredictionTreatment::ReturnMissing,
+        "skipSegment" => MissingPredictionTreatment::SkipSegment,
+        "continue" => MissingPredictionTreatment::Continue,
+        _ => MissingPredictionTreatment::Continue,
+    }
+}
+
+fn lower_mining_schema(
+    raw_fields: &[pmml_xml::RawMiningField],
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<MiningSchemaIr> {
+    let mut active_fields = Vec::new();
+    let mut target_field: Option<FieldId> = None;
+    let mut field_metas = Vec::new();
+    for mf in raw_fields {
+        let fid = if let Some(&id) = field_name_to_id.get(&mf.name) {
+            id
+        } else {
+            // For modelChain, segment's mining_schema may reference output fields of previous segment (e.g., Probability_setosa)
+            // Intern them as synthetic continuous double fields
+            let id = interner.intern_field(&mf.name);
+            field_name_to_id.insert(mf.name.clone(), id);
+            let meta = FieldMeta {
+                field_id: id,
+                name: mf.name.clone(),
+                data_type: DataType::Double,
+                op_type: OpType::Continuous,
+                values: vec![],
+            };
+            field_meta_map.insert(id, meta.clone());
+            id
+        };
+        let meta = field_meta_map
+            .get(&fid)
+            .cloned()
+            .ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
+        match mf.usage_type.as_deref() {
+            Some("target") | Some("predicted") => target_field = Some(fid),
+            Some("supplementary") => {} // not active
+            _ => active_fields.push(fid),
+        }
+        field_metas.push(meta);
+    }
+    Ok(MiningSchemaIr {
+        active_fields,
+        target_field,
+        field_metas,
+        missing_value_replacement: None,
+    })
+}
+
+fn lower_output(
+    raw_output: &[pmml_xml::RawOutputField],
+    field_name_to_id: &HashMap<String, FieldId>,
+    interner: &mut Interner,
+) -> Vec<OutputFieldIr> {
+    raw_output
+        .iter()
+        .map(|of| {
+            let feature = of
+                .feature
+                .as_deref()
+                .unwrap_or("predictedValue")
+                .parse::<pmml_core::field::ResultFeature>()
+                .unwrap_or(pmml_core::field::ResultFeature::PredictedValue);
+            let val = of.value.as_ref().map(|v| interner.intern_symbol(v));
+            let field = field_name_to_id.get(&of.name).copied();
+            OutputFieldIr {
+                name: of.name.clone(),
+                feature,
+                value: val,
+                field,
+            }
+        })
+        .collect()
+}
+
+fn lower_regression(
+    raw: &pmml_xml::RawRegressionModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<RegressionIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let mut tables = Vec::new();
+    for tbl in &raw.regression_tables {
+        let mut numeric_predictors = Vec::new();
+        for np in &tbl.numeric_predictors {
+            let fid = if let Some(&id) = field_name_to_id.get(&np.name) {
+                id
+            } else {
+                let id = interner.intern_field(&np.name);
+                field_name_to_id.insert(np.name.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: np.name.clone(),
+                    data_type: DataType::Double,
+                    op_type: OpType::Continuous,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            numeric_predictors.push(NumericPredictorIr {
+                field: fid,
+                coefficient: np.coefficient,
+                exponent: np.exponent,
+            });
+        }
+        let mut categorical_predictors = Vec::new();
+        for cp in &tbl.categorical_predictors {
+            let fid = if let Some(&id) = field_name_to_id.get(&cp.name) {
+                id
+            } else {
+                let id = interner.intern_field(&cp.name);
+                field_name_to_id.insert(cp.name.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: cp.name.clone(),
+                    data_type: DataType::String,
+                    op_type: OpType::Categorical,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            let val = interner.intern_symbol(&cp.value);
+            categorical_predictors.push(CategoricalPredictorIr {
+                field: fid,
+                value: val,
+                coefficient: cp.coefficient,
+            });
+        }
+        let target_category = tbl
+            .target_category
+            .as_ref()
+            .map(|s| interner.intern_symbol(s));
+        tables.push(RegressionTableIr {
+            intercept: tbl.intercept,
+            target_category,
+            numeric_predictors,
+            categorical_predictors,
+        });
+    }
+    Ok(RegressionIr {
+        function_name: raw.function_name.clone(),
+        mining_schema,
+        regression_tables: tables,
+        normalization_method: parse_regression_norm(raw.normalization_method.as_deref()),
+        targets: vec![],
+        output,
+    })
+}
+
+fn lower_tree_raw(
+    raw: &pmml_xml::RawTreeModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<TreeIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let mut nodes = Vec::new();
+    flatten_node(
+        &raw.root,
+        interner,
+        field_meta_map,
+        field_name_to_id,
+        &mut nodes,
+    )?;
+    Ok(TreeIr {
+        function_name: raw.function_name.clone(),
+        missing_value_strategy: parse_missing_strategy(raw.missing_value_strategy.as_deref()),
+        no_true_child_strategy: parse_no_true_child(raw.no_true_child_strategy.as_deref()),
+        nodes,
+        mining_schema,
+        targets: vec![],
+        output,
+    })
+}
+
+fn lower_segment_model(
+    raw: &pmml_xml::RawSegmentModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<ModelIr> {
+    match raw {
+        pmml_xml::RawSegmentModel::Tree(tm) => {
+            let tree_ir = lower_tree_raw(tm, field_name_to_id, field_meta_map, interner)?;
+            Ok(ModelIr::Tree(tree_ir))
+        }
+        pmml_xml::RawSegmentModel::Regression(rm) => {
+            let reg_ir = lower_regression(rm, field_name_to_id, field_meta_map, interner)?;
+            Ok(ModelIr::Regression(reg_ir))
+        }
+    }
+}
+
 pub fn lower(raw: RawPmml) -> Result<Ir> {
     let mut interner = Interner::new();
     let mut field_name_to_id: HashMap<String, FieldId> = HashMap::new();
@@ -260,86 +507,77 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         data_dictionary.push(meta);
     }
 
-    // Build Ir
+    // Build Ir — handle Tree, Regression, Mining
     let (model, derived_fields) = if let Some(tm) = raw.tree_model {
-        // mining schema
-        let mut active_fields = Vec::new();
-        let mut target_field: Option<FieldId> = None;
-        let mut mining_field_metas: Vec<FieldMeta> = Vec::new();
-        for mf in &tm.mining_schema {
-            let fid = *field_name_to_id
-                .get(&mf.name)
-                .ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
-            let meta = field_meta_map
-                .get(&fid)
-                .cloned()
-                .ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
-            match mf.usage_type.as_deref() {
-                Some("target") => target_field = Some(fid),
-                _ => active_fields.push(fid),
-            }
-            mining_field_metas.push(meta);
-        }
-        // if no mining schema explicitly says target, try to infer via DataDictionary target? For now keep as is.
-
-        let mining_schema_ir = MiningSchemaIr {
-            active_fields: active_fields.clone(),
-            target_field,
-            field_metas: mining_field_metas,
-            missing_value_replacement: None,
-        };
-
-        // output
-        let output_ir: Vec<OutputFieldIr> = tm
-            .output
-            .iter()
-            .map(|of| {
-                let feature = of
-                    .feature
-                    .as_deref()
-                    .unwrap_or("predictedValue")
-                    .parse::<pmml_core::field::ResultFeature>()
-                    .unwrap_or(pmml_core::field::ResultFeature::PredictedValue);
-                let val = of.value.as_ref().map(|v| interner.intern_symbol(v));
-                let field = of
-                    .name
-                    .parse::<String>()
-                    .ok()
-                    .and_then(|n| field_name_to_id.get(&n).copied());
-                // Actually output field name is not necessarily data field; keep None for field
-                OutputFieldIr {
-                    name: of.name.clone(),
-                    feature,
-                    value: val,
-                    field,
-                }
-            })
-            .collect();
-
-        // flatten tree
-        let mut nodes: Vec<NodeIr> = Vec::new();
-        flatten_node(
-            &tm.root,
+        let tree_ir = lower_tree_raw(
+            &tm,
+            &mut field_name_to_id,
+            &mut field_meta_map,
             &mut interner,
-            &field_meta_map,
-            &field_name_to_id,
-            &mut nodes,
         )?;
-
-        let tree_ir = TreeIr {
-            function_name: tm.function_name.clone(),
-            missing_value_strategy: parse_missing_strategy(tm.missing_value_strategy.as_deref()),
-            no_true_child_strategy: parse_no_true_child(tm.no_true_child_strategy.as_deref()),
-            nodes,
-            mining_schema: mining_schema_ir,
-            targets: vec![], // v1 skip Targets
-            output: output_ir,
-        };
-
         (ModelIr::Tree(tree_ir), vec![])
+    } else if let Some(rm) = raw.regression_model {
+        let reg_ir = lower_regression(
+            &rm,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        (ModelIr::Regression(reg_ir), vec![])
+    } else if let Some(mm) = raw.mining_model {
+        // MiningModel: need to lower its mining_schema + segmentation
+        let mining_schema = lower_mining_schema(
+            &mm.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&mm.output, &field_name_to_id, &mut interner);
+        let segmentation = if let Some(seg_raw) = mm.segmentation {
+            let mut segments = Vec::new();
+            for seg in &seg_raw.segments {
+                let pred = lower_predicate(
+                    &seg.predicate,
+                    &mut interner,
+                    &field_meta_map,
+                    &field_name_to_id,
+                )?;
+                let model_ir = lower_segment_model(
+                    &seg.model,
+                    &mut field_name_to_id,
+                    &mut field_meta_map,
+                    &mut interner,
+                )?;
+                segments.push(SegmentIr {
+                    id: seg.id.clone(),
+                    predicate: pred,
+                    weight: seg.weight,
+                    model: Box::new(model_ir),
+                });
+            }
+            SegmentationIr {
+                multiple_model_method: parse_multiple_model_method(&seg_raw.multiple_model_method),
+                missing_prediction_treatment: parse_missing_pred(
+                    seg_raw.missing_prediction_treatment.as_deref(),
+                ),
+                segments,
+            }
+        } else {
+            return Err(PmmlError::UnsupportedMarkup(
+                "MiningModel without Segmentation not supported".into(),
+            ));
+        };
+        let mining_ir = MiningIr {
+            function_name: mm.function_name.clone(),
+            mining_schema,
+            segmentation,
+            targets: vec![],
+            output,
+        };
+        (ModelIr::Mining(mining_ir), vec![])
     } else {
         return Err(PmmlError::UnsupportedMarkup(
-            "no TreeModel found — only TreeModel supported in v1".into(),
+            "no supported model found (Tree/Regression/Mining)".into(),
         ));
     };
 
