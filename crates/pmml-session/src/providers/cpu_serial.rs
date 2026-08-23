@@ -43,6 +43,8 @@ impl ExecutionProvider for CpuSerialProvider {
             ModelIr::GeneralRegression(gr) => {
                 pmml_evaluator::models::evaluate_general_regression(gr, values)
             }
+            ModelIr::Association(a) => pmml_evaluator::models::evaluate_association(a, values),
+            ModelIr::RuleSet(r) => pmml_evaluator::models::evaluate_rule_set(r, values),
             ModelIr::NeuralNetwork(_) => {
                 return Err(pmml_core::error::PmmlError::UnsupportedMarkup(
                     "NeuralNetwork not yet fully supported (stub)".into(),

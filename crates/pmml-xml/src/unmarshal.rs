@@ -198,7 +198,8 @@ pub struct RawNeuralNetwork {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
-    pub layers: Vec<String>, // stub
+    pub layers: Vec<RawNeuralLayer>,
+    pub model_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -240,6 +241,74 @@ pub struct RawGeneralRegressionModel {
     pub covariates: Vec<String>,
     pub pp_matrix: Vec<RawPPCell>,
     pub param_matrix: Vec<RawPCell>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawItem {
+    pub id: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawItemset {
+    pub id: String,
+    pub item_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawAssociationRule {
+    pub antecedent: String,
+    pub consequent: String,
+    pub support: f64,
+    pub confidence: f64,
+    pub lift: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawAssociationModel {
+    pub function_name: String,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub items: Vec<RawItem>,
+    pub itemsets: Vec<RawItemset>,
+    pub rules: Vec<RawAssociationRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawSimpleRule {
+    pub id: Option<String>,
+    pub score: String,
+    pub predicate: RawPredicate,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawRuleSet {
+    pub record_count: Option<f64>,
+    pub nb_correct: Option<f64>,
+    pub default_score: Option<String>,
+    pub rules: Vec<RawSimpleRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawRuleSetModel {
+    pub function_name: String,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub rule_set: Option<RawRuleSet>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawNeuron {
+    pub id: String,
+    pub bias: Option<f64>,
+    pub weights: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawNeuralLayer {
+    pub number_of_neurons: Option<usize>,
+    pub activation_function: Option<String>,
+    pub neurons: Vec<RawNeuron>,
 }
 
 #[derive(Debug, Clone)]
@@ -318,6 +387,8 @@ pub struct RawPmml {
     pub support_vector_machine_model: Option<RawSupportVectorMachineModel>,
     pub neural_network: Option<RawNeuralNetwork>,
     pub general_regression_model: Option<RawGeneralRegressionModel>,
+    pub association_model: Option<RawAssociationModel>,
+    pub rule_set_model: Option<RawRuleSetModel>,
 }
 
 // ---------- helpers ----------
@@ -3270,6 +3341,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
     let mut support_vector_machine_model: Option<RawSupportVectorMachineModel> = None;
     let mut neural_network: Option<RawNeuralNetwork> = None;
     let mut general_regression_model: Option<RawGeneralRegressionModel> = None;
+    let mut association_model: Option<RawAssociationModel> = None;
+    let mut rule_set_model: Option<RawRuleSetModel> = None;
     let mut buf = Vec::new();
 
     loop {
@@ -3396,6 +3469,66 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         let gr = parse_general_regression_model(&mut reader, &e)?;
                         general_regression_model = Some(gr);
                     }
+                    "AssociationModel" => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "AssociationModel"
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        association_model = Some(RawAssociationModel {
+                            function_name: attr(&e, "functionName")
+                                .unwrap_or_else(|| "associationRules".to_string()),
+                            mining_schema: vec![],
+                            output: vec![],
+                            items: vec![],
+                            itemsets: vec![],
+                            rules: vec![],
+                        });
+                    }
+                    "RuleSetModel" => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "RuleSetModel"
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        rule_set_model = Some(RawRuleSetModel {
+                            function_name: attr(&e, "functionName")
+                                .unwrap_or_else(|| "classification".to_string()),
+                            mining_schema: vec![],
+                            output: vec![],
+                            rule_set: None,
+                        });
+                    }
                     "NeuralNetwork" => {
                         let mut depth = 1usize;
                         let mut inner = Vec::new();
@@ -3423,6 +3556,7 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                             mining_schema: vec![],
                             output: vec![],
                             layers: vec![],
+                            model_name: attr(&e, "modelName"),
                         });
                     }
                     _ => {} // other top-level models ignored for v1 (stub)
@@ -3479,6 +3613,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
         support_vector_machine_model,
         neural_network,
         general_regression_model,
+        association_model,
+        rule_set_model,
     })
 }
 
