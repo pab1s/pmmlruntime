@@ -85,8 +85,8 @@ fn value_to_symbol_or_continuous(
 fn lower_predicate(
     raw: &RawPredicate,
     interner: &mut Interner,
-    field_meta_map: &HashMap<FieldId, FieldMeta>,
-    field_name_to_id: &HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    field_name_to_id: &mut HashMap<String, FieldId>,
 ) -> Result<PredicateIr> {
     match raw {
         RawPredicate::True => Ok(PredicateIr::True),
@@ -95,12 +95,31 @@ fn lower_predicate(
             operator,
             value,
         } => {
-            let fid = *field_name_to_id
-                .get(field)
-                .ok_or_else(|| PmmlError::MissingField(field.clone()))?;
+            let fid = if let Some(&id) = field_name_to_id.get(field) {
+                id
+            } else {
+                let id = interner.intern_field(field);
+                field_name_to_id.insert(field.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: field.clone(),
+                    data_type: DataType::String,
+                    op_type: OpType::Categorical,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
             let meta = field_meta_map
                 .get(&fid)
-                .ok_or_else(|| PmmlError::MissingField(field.clone()))?;
+                .cloned()
+                .unwrap_or_else(|| FieldMeta {
+                    field_id: fid,
+                    name: field.clone(),
+                    data_type: DataType::String,
+                    op_type: OpType::Categorical,
+                    values: vec![],
+                });
             let op = parse_simple_operator(operator)?;
             let val = if matches!(op, SimpleOperator::IsMissing | SimpleOperator::IsNotMissing) {
                 SymbolIdOrContinuous::Missing
@@ -118,9 +137,21 @@ fn lower_predicate(
             boolean_operator,
             array,
         } => {
-            let fid = *field_name_to_id
-                .get(field)
-                .ok_or_else(|| PmmlError::MissingField(field.clone()))?;
+            let fid = if let Some(&id) = field_name_to_id.get(field) {
+                id
+            } else {
+                let id = interner.intern_field(field);
+                field_name_to_id.insert(field.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: field.clone(),
+                    data_type: DataType::String,
+                    op_type: OpType::Categorical,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
             let meta = field_meta_map
                 .get(&fid)
                 .cloned()
@@ -173,8 +204,8 @@ fn lower_predicate(
 fn flatten_node(
     raw: &pmml_xml::RawNode,
     interner: &mut Interner,
-    field_meta_map: &HashMap<FieldId, FieldMeta>,
-    field_name_to_id: &HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    field_name_to_id: &mut HashMap<String, FieldId>,
     out: &mut Vec<NodeIr>,
 ) -> Result<usize> {
     let idx = out.len();
@@ -539,8 +570,8 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                 let pred = lower_predicate(
                     &seg.predicate,
                     &mut interner,
-                    &field_meta_map,
-                    &field_name_to_id,
+                    &mut field_meta_map,
+                    &mut field_name_to_id,
                 )?;
                 let model_ir = lower_segment_model(
                     &seg.model,
@@ -590,8 +621,8 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                 let pred = lower_predicate(
                     &attr.predicate,
                     &mut interner,
-                    &field_meta_map,
-                    &field_name_to_id,
+                    &mut field_meta_map,
+                    &mut field_name_to_id,
                 )?;
                 attrs.push(AttributeIr {
                     partial_score: attr.partial_score,
@@ -1053,8 +1084,8 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                 let pred = lower_predicate(
                     &sr.predicate,
                     &mut interner,
-                    &field_meta_map,
-                    &field_name_to_id,
+                    &mut field_meta_map,
+                    &mut field_name_to_id,
                 )?;
                 let score_sid = interner.intern_symbol(&sr.score);
                 rules.push(SimpleRuleIr {
