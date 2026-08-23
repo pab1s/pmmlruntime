@@ -956,10 +956,38 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         let output = lower_output(&am.output, &field_name_to_id, &mut interner);
+        let mut items = Vec::new();
+        for it in &am.items {
+            let sid = interner.intern_symbol(&it.value);
+            items.push(ItemIr {
+                id: it.id.clone(),
+                value: sid,
+            });
+        }
+        let mut itemsets = Vec::new();
+        for is in &am.itemsets {
+            itemsets.push(ItemsetIr {
+                id: is.id.clone(),
+                item_ids: is.item_refs.clone(),
+            });
+        }
+        let mut rules = Vec::new();
+        for r in &am.rules {
+            rules.push(AssociationRuleIr {
+                antecedent: r.antecedent.clone(),
+                consequent: r.consequent.clone(),
+                support: r.support,
+                confidence: r.confidence,
+                lift: r.lift,
+            });
+        }
         let assoc_ir = AssociationIr {
             function_name: am.function_name.clone(),
             mining_schema,
             output,
+            items,
+            itemsets,
+            rules,
         };
         (ModelIr::Association(assoc_ir), vec![])
     } else if let Some(rs) = raw.rule_set_model {
@@ -970,12 +998,44 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         let output = lower_output(&rs.output, &field_name_to_id, &mut interner);
-        let rs_ir = RuleSetIr {
-            function_name: rs.function_name.clone(),
-            mining_schema,
-            output,
-        };
-        (ModelIr::RuleSet(rs_ir), vec![])
+        let mut rules = Vec::new();
+        if let Some(rule_set) = &rs.rule_set {
+            for sr in &rule_set.rules {
+                let pred = lower_predicate(
+                    &sr.predicate,
+                    &mut interner,
+                    &field_meta_map,
+                    &field_name_to_id,
+                )?;
+                let score_sid = interner.intern_symbol(&sr.score);
+                rules.push(SimpleRuleIr {
+                    id: sr.id.clone(),
+                    score: score_sid,
+                    predicate: pred,
+                });
+            }
+            let default_score = rule_set
+                .default_score
+                .as_ref()
+                .map(|s| interner.intern_symbol(s));
+            let rs_ir = RuleSetIr {
+                function_name: rs.function_name.clone(),
+                mining_schema,
+                output,
+                default_score,
+                rules,
+            };
+            (ModelIr::RuleSet(rs_ir), vec![])
+        } else {
+            let rs_ir = RuleSetIr {
+                function_name: rs.function_name.clone(),
+                mining_schema,
+                output,
+                default_score: None,
+                rules: vec![],
+            };
+            (ModelIr::RuleSet(rs_ir), vec![])
+        }
     } else if let Some(nn) = raw.neural_network {
         let mining_schema = lower_mining_schema(
             &nn.mining_schema,

@@ -349,10 +349,41 @@ pub struct GeneralRegressionIr {
 }
 
 #[derive(Debug, Clone)]
+pub struct ItemIr {
+    pub id: String,
+    pub value: SymbolId,
+}
+
+#[derive(Debug, Clone)]
+pub struct ItemsetIr {
+    pub id: String,
+    pub item_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociationRuleIr {
+    pub antecedent: String,
+    pub consequent: String,
+    pub support: f64,
+    pub confidence: f64,
+    pub lift: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct AssociationIr {
     pub function_name: String,
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
+    pub items: Vec<ItemIr>,
+    pub itemsets: Vec<ItemsetIr>,
+    pub rules: Vec<AssociationRuleIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SimpleRuleIr {
+    pub id: Option<String>,
+    pub score: SymbolId,
+    pub predicate: PredicateIr,
 }
 
 #[derive(Debug, Clone)]
@@ -360,6 +391,8 @@ pub struct RuleSetIr {
     pub function_name: String,
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
+    pub default_score: Option<SymbolId>,
+    pub rules: Vec<SimpleRuleIr>,
 }
 
 #[derive(Debug, Clone)]
