@@ -157,12 +157,39 @@ pub struct RawClusteringModel {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawTargetValueCount {
+    pub value: String,
+    pub count: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawBayesInput {
+    pub field_name: String,
+    pub target_value_stats: Vec<RawTargetValueStat>,
+    pub pair_counts: Vec<RawPairCounts>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawTargetValueStat {
+    pub value: String,
+    pub gaussian_mean: Option<f64>,
+    pub gaussian_variance: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawPairCounts {
+    pub value: String,
+    pub target_counts: Vec<RawTargetValueCount>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RawNaiveBayesModel {
     pub function_name: String,
+    pub threshold: f64,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
-    // Simplified: we store raw counts as strings for v1 stub
-    pub bayes_inputs: Vec<String>,
+    pub bayes_inputs: Vec<RawBayesInput>,
+    pub bayes_output_counts: Vec<RawTargetValueCount>,
 }
 
 #[derive(Debug, Clone)]
@@ -2082,8 +2109,13 @@ fn parse_naive_bayes_model(
     start: &BytesStart,
 ) -> Result<RawNaiveBayesModel> {
     let function_name = attr_required(start, "functionName", "NaiveBayesModel")?;
+    let threshold = attr(start, "threshold")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
     let mut mining_schema = Vec::new();
     let mut output = Vec::new();
+    let mut bayes_inputs: Vec<RawBayesInput> = Vec::new();
+    let mut bayes_output_counts: Vec<RawTargetValueCount> = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -2140,25 +2172,463 @@ fn parse_naive_bayes_model(
                             inner.clear();
                         }
                     }
-                    "BayesInputs" | "BayesOutput" => {
-                        let mut depth = 1usize;
+                    "BayesInputs" => {
                         let mut inner = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(_)) => depth += 1,
-                                Ok(Event::End(end)) => {
-                                    depth -= 1;
-                                    if depth == 0
-                                        && (String::from_utf8_lossy(end.name().as_ref())
-                                            == "BayesInputs"
-                                            || String::from_utf8_lossy(end.name().as_ref())
-                                                == "BayesOutput")
-                                    {
-                                        break;
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "BayesInput" =>
+                                {
+                                    let field_name =
+                                        attr_required(&inner_e, "fieldName", "BayesInput")?;
+                                    let mut target_value_stats = Vec::new();
+                                    let mut pair_counts = Vec::new();
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(b_e))
+                                                if tag_name(&b_e) == "TargetValueStats" =>
+                                            {
+                                                let mut inner3 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(tv_e))
+                                                            if tag_name(&tv_e)
+                                                                == "TargetValueStat" =>
+                                                        {
+                                                            let value = attr_required(
+                                                                &tv_e, "value", "TargetValueStat",
+                                                            )?;
+                                                            let mut mean = None;
+                                                            let mut variance = None;
+                                                            let mut inner4 = Vec::new();
+                                                            loop {
+                                                                match reader.read_event_into(
+                                                                    &mut inner4,
+                                                                ) {
+                                                                    Ok(Event::Start(g_e))
+                                                                        if tag_name(&g_e)
+                                                                            == "GaussianDistribution" =>
+                                                                    {
+                                                                        mean = attr(&g_e, "mean")
+                                                                            .and_then(|s| {
+                                                                                s.parse::<f64>().ok()
+                                                                            });
+                                                                        variance = attr(
+                                                                            &g_e, "variance",
+                                                                        )
+                                                                        .and_then(|s| {
+                                                                            s.parse::<f64>().ok()
+                                                                        });
+                                                                        let mut skip = Vec::new();
+                                                                        loop {
+                                                                            match reader
+                                                                                .read_event_into(
+                                                                                    &mut skip,
+                                                                                )
+                                                                            {
+                                                                                Ok(Event::End(
+                                                                                    end,
+                                                                                )) if String::from_utf8_lossy(
+                                                                                    end.name().as_ref(),
+                                                                                )
+                                                                                    == "GaussianDistribution" =>
+                                                                                {
+                                                                                    break
+                                                                                }
+                                                                                Ok(Event::Empty(
+                                                                                    _,
+                                                                                )) => break,
+                                                                                _ => {}
+                                                                            }
+                                                                            skip.clear();
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "TargetValueStat" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                                inner4.clear();
+                                                            }
+                                                            target_value_stats.push(
+                                                                RawTargetValueStat {
+                                                                    value,
+                                                                    gaussian_mean: mean,
+                                                                    gaussian_variance: variance,
+                                                                },
+                                                            );
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "TargetValueStats" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                            }
+                                            Ok(Event::Start(b_e))
+                                                if tag_name(&b_e) == "PairCounts" =>
+                                            {
+                                                let pc_value =
+                                                    attr(&b_e, "value").unwrap_or_default();
+                                                let mut target_counts = Vec::new();
+                                                let mut inner3 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(tvc_e))
+                                                            if tag_name(&tvc_e)
+                                                                == "TargetValueCounts" =>
+                                                        {
+                                                            let mut inner4 = Vec::new();
+                                                            loop {
+                                                                match reader.read_event_into(
+                                                                    &mut inner4,
+                                                                ) {
+                                                                    Ok(Event::Start(cnt_e))
+                                                                        if tag_name(&cnt_e)
+                                                                            == "TargetValueCount" =>
+                                                                    {
+                                                                        let value = attr_required(
+                                                                            &cnt_e,
+                                                                            "value",
+                                                                            "TargetValueCount",
+                                                                        )?;
+                                                                        let count = attr(
+                                                                            &cnt_e, "count",
+                                                                        )
+                                                                        .and_then(|s| {
+                                                                            s.parse::<f64>().ok()
+                                                                        })
+                                                                        .unwrap_or(0.0);
+                                                                        target_counts.push(
+                                                                            RawTargetValueCount {
+                                                                                value,
+                                                                                count,
+                                                                            },
+                                                                        );
+                                                                        let mut skip =
+                                                                            Vec::new();
+                                                                        loop {
+                                                                            match reader
+                                                                                .read_event_into(
+                                                                                    &mut skip,
+                                                                                )
+                                                                            {
+                                                                                Ok(Event::End(
+                                                                                    end,
+                                                                                )) if String::from_utf8_lossy(
+                                                                                    end.name().as_ref(),
+                                                                                )
+                                                                                    == "TargetValueCount" =>
+                                                                                {
+                                                                                    break
+                                                                                }
+                                                                                Ok(Event::Empty(
+                                                                                    _,
+                                                                                )) => break,
+                                                                                _ => {}
+                                                                            }
+                                                                            skip.clear();
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "TargetValueCounts" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                                inner4.clear();
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "PairCounts" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                                pair_counts.push(RawPairCounts {
+                                                    value: pc_value,
+                                                    target_counts,
+                                                });
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "BayesInput" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                    bayes_inputs.push(RawBayesInput {
+                                        field_name,
+                                        target_value_stats,
+                                        pair_counts,
+                                    });
+                                }
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "Extension" =>
+                                {
+                                    // Handle Extension wrapping BayesInput (BayesInputTest)
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(bayes_e))
+                                                if tag_name(&bayes_e) == "BayesInput" =>
+                                            {
+                                                let field_name = attr_required(
+                                                    &bayes_e, "fieldName", "BayesInput",
+                                                )?;
+                                                let mut target_value_stats = Vec::new();
+                                                let mut pair_counts = Vec::new();
+                                                let mut inner3 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(b_e))
+                                                            if tag_name(&b_e)
+                                                                == "TargetValueStats" =>
+                                                        {
+                                                            let mut inner4 = Vec::new();
+                                                            loop {
+                                                                match reader.read_event_into(
+                                                                    &mut inner4,
+                                                                ) {
+                                                                    Ok(Event::Start(tv_e))
+                                                                        if tag_name(&tv_e)
+                                                                            == "TargetValueStat" =>
+                                                                    {
+                                                                        let value = attr_required(
+                                                                            &tv_e,
+                                                                            "value",
+                                                                            "TargetValueStat",
+                                                                        )?;
+                                                                        let mut mean = None;
+                                                                        let mut variance = None;
+                                                                        let mut inner5 = Vec::new();
+                                                                        loop {
+                                                                            match reader
+                                                                                .read_event_into(
+                                                                                    &mut inner5,
+                                                                                )
+                                                                            {
+                                                                                Ok(Event::Start(
+                                                                                    g_e,
+                                                                                )) if tag_name(
+                                                                                    &g_e,
+                                                                                )
+                                                                                    == "GaussianDistribution" =>
+                                                                                {
+                                                                                    mean = attr(
+                                                                                        &g_e,
+                                                                                        "mean",
+                                                                                    )
+                                                                                    .and_then(
+                                                                                        |s| {
+                                                                                            s.parse::<
+                                                                                                f64,
+                                                                                            >(
+                                                                                            )
+                                                                                            .ok()
+                                                                                        },
+                                                                                    );
+                                                                                    variance = attr(
+                                                                                        &g_e,
+                                                                                        "variance",
+                                                                                    )
+                                                                                    .and_then(
+                                                                                        |s| {
+                                                                                            s.parse::<
+                                                                                                f64,
+                                                                                            >(
+                                                                                            )
+                                                                                            .ok()
+                                                                                        },
+                                                                                    );
+                                                                                    let mut skip =
+                                                                                        Vec::new();
+                                                                                    loop {
+                                                                                        match reader
+                                                                                            .read_event_into(
+                                                                                                &mut skip,
+                                                                                            )
+                                                                                        {
+                                                                                            Ok(Event::End(
+                                                                                                end,
+                                                                                            )) if String::from_utf8_lossy(
+                                                                                                end
+                                                                                                    .name()
+                                                                                                    .as_ref(),
+                                                                                            )
+                                                                                                == "GaussianDistribution" =>
+                                                                                            {
+                                                                                                break
+                                                                                            }
+                                                                                            Ok(Event::Empty(
+                                                                                                _,
+                                                                                            )) => {
+                                                                                                break
+                                                                                            }
+                                                                                            _ => {}
+                                                                                        }
+                                                                                        skip.clear(
+                                                                                        );
+                                                                                        break;
+                                                                                    }
+                                                                                }
+                                                                                Ok(Event::End(
+                                                                                    end,
+                                                                                )) if String::from_utf8_lossy(
+                                                                                    end.name().as_ref(),
+                                                                                )
+                                                                                    == "TargetValueStat" =>
+                                                                                {
+                                                                                    break
+                                                                                }
+                                                                                _ => {}
+                                                                            }
+                                                                            inner5.clear();
+                                                                        }
+                                                                        target_value_stats.push(
+                                                                            RawTargetValueStat {
+                                                                                value,
+                                                                                gaussian_mean:
+                                                                                    mean,
+                                                                                gaussian_variance:
+                                                                                    variance,
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "TargetValueStats" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                                inner4.clear();
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "BayesInput" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                                bayes_inputs.push(RawBayesInput {
+                                                    field_name,
+                                                    target_value_stats,
+                                                    pair_counts,
+                                                });
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Extension" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
                                     }
                                 }
-                                Ok(Event::Empty(_)) => {}
-                                Ok(Event::Eof) => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "BayesInputs" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "BayesOutput" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "TargetValueCounts" =>
+                                {
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(cnt_e))
+                                                if tag_name(&cnt_e) == "TargetValueCount" =>
+                                            {
+                                                let value = attr_required(
+                                                    &cnt_e, "value", "TargetValueCount",
+                                                )?;
+                                                let count = attr(&cnt_e, "count")
+                                                    .and_then(|s| s.parse::<f64>().ok())
+                                                    .unwrap_or(0.0);
+                                                bayes_output_counts.push(RawTargetValueCount {
+                                                    value,
+                                                    count,
+                                                });
+                                                let mut skip = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut skip) {
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "TargetValueCount" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        Ok(Event::Empty(_)) => break,
+                                                        _ => {}
+                                                    }
+                                                    skip.clear();
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "TargetValueCounts" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "BayesOutput" =>
+                                {
+                                    break
+                                }
                                 _ => {}
                             }
                             inner.clear();
@@ -2179,9 +2649,11 @@ fn parse_naive_bayes_model(
     }
     Ok(RawNaiveBayesModel {
         function_name,
+        threshold,
         mining_schema,
         output,
-        bayes_inputs: vec![],
+        bayes_inputs,
+        bayes_output_counts,
     })
 }
 
