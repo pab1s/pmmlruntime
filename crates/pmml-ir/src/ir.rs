@@ -67,12 +67,19 @@ pub enum BuiltinId {
     Unknown,
 }
 
-/// Model IR — Tree, Regression, Mining (ensemble).
+/// Model IR — all supported PMML 4.4 models.
 #[derive(Debug, Clone)]
 pub enum ModelIr {
     Tree(TreeIr),
     Regression(RegressionIr),
     Mining(MiningIr),
+    Scorecard(ScorecardIr),
+    Clustering(ClusteringIr),
+    NaiveBayes(NaiveBayesIr),
+    NearestNeighbor(NearestNeighborIr),
+    SupportVectorMachine(SupportVectorMachineIr),
+    NeuralNetwork(NeuralNetworkIr),
+    GeneralRegression(GeneralRegressionIr),
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +172,95 @@ pub enum MissingPredictionTreatment {
     ReturnMissing,
     SkipSegment,
     Continue,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScorecardIr {
+    pub function_name: String,
+    pub initial_score: f64,
+    pub use_reason_codes: bool,
+    pub reason_code_algorithm: String,
+    pub mining_schema: MiningSchemaIr,
+    pub characteristics: Vec<CharacteristicIr>,
+    pub output: Vec<OutputFieldIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CharacteristicIr {
+    pub name: String,
+    pub reason_code: Option<String>,
+    pub baseline_score: f64,
+    pub attributes: Vec<AttributeIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttributeIr {
+    pub partial_score: f64,
+    pub predicate: PredicateIr,
+    pub reason_code: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClusteringIr {
+    pub function_name: String,
+    pub model_class: String,
+    pub number_of_clusters: usize,
+    pub mining_schema: MiningSchemaIr,
+    pub comparison_measure: String,
+    pub clustering_fields: Vec<FieldId>,
+    pub clusters: Vec<ClusterIr>,
+    pub output: Vec<OutputFieldIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClusterIr {
+    pub name: pmml_core::SymbolId,
+    pub name_str: String,
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NaiveBayesIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    // Simplified stub
+    pub bayes_inputs: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NearestNeighborIr {
+    pub function_name: String,
+    pub number_of_neighbors: usize,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    pub knn_inputs: Vec<FieldId>,
+    pub instances: Vec<std::collections::HashMap<pmml_core::FieldId, pmml_core::Value>>,
+    pub instance_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SupportVectorMachineIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    // stub
+}
+
+#[derive(Debug, Clone)]
+pub struct NeuralNetworkIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    // stub
+}
+
+#[derive(Debug, Clone)]
+pub struct GeneralRegressionIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    // stub
 }
 
 #[derive(Debug, Clone)]

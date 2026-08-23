@@ -29,14 +29,16 @@ pub fn evaluate_mining(
         let seg_pred = match &*seg.model {
             ModelIr::Tree(tree) => {
                 let pred = crate::models::tree::evaluate_tree(tree, values);
-                // Also compute and write probability outputs for modelChain
                 if mining.segmentation.multiple_model_method == MultipleModelMethod::ModelChain {
                     write_tree_outputs(tree, pred, values, field_names, symbol_names, name_to_id);
                 }
                 pred
             }
             ModelIr::Regression(reg) => crate::models::regression::evaluate_regression(reg, values),
-            ModelIr::Mining(_) => Value::Missing, // nested mining not supported v1
+            ModelIr::Scorecard(sc) => crate::models::scorecard::evaluate_scorecard(sc, values),
+            ModelIr::Clustering(cl) => crate::models::clustering::evaluate_clustering(cl, values),
+            ModelIr::Mining(_) => Value::Missing,
+            _ => Value::Missing, // other models stub
         };
 
         if seg_pred.is_missing() {

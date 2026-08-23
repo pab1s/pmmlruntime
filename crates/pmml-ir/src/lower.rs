@@ -575,9 +575,213 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             output,
         };
         (ModelIr::Mining(mining_ir), vec![])
+    } else if let Some(sc) = raw.scorecard {
+        let mining_schema = lower_mining_schema(
+            &sc.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&sc.output, &field_name_to_id, &mut interner);
+        let mut characteristics = Vec::new();
+        for ch in &sc.characteristics {
+            let mut attrs = Vec::new();
+            for attr in &ch.attributes {
+                let pred = lower_predicate(
+                    &attr.predicate,
+                    &mut interner,
+                    &field_meta_map,
+                    &field_name_to_id,
+                )?;
+                attrs.push(AttributeIr {
+                    partial_score: attr.partial_score,
+                    predicate: pred,
+                    reason_code: attr.reason_code.clone(),
+                });
+            }
+            characteristics.push(CharacteristicIr {
+                name: ch.name.clone(),
+                reason_code: ch.reason_code.clone(),
+                baseline_score: ch.baseline_score.unwrap_or(0.0),
+                attributes: attrs,
+            });
+        }
+        let scorecard_ir = ScorecardIr {
+            function_name: sc.function_name.clone(),
+            initial_score: sc.initial_score,
+            use_reason_codes: sc.use_reason_codes.unwrap_or(false),
+            reason_code_algorithm: sc
+                .reason_code_algorithm
+                .unwrap_or_else(|| "pointsAbove".to_string()),
+            mining_schema,
+            characteristics,
+            output,
+        };
+        (ModelIr::Scorecard(scorecard_ir), vec![])
+    } else if let Some(cm) = raw.clustering_model {
+        let mining_schema = lower_mining_schema(
+            &cm.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&cm.output, &field_name_to_id, &mut interner);
+        let mut clusters = Vec::new();
+        for cl in &cm.clusters {
+            let sym = interner.intern_symbol(&cl.name);
+            clusters.push(ClusterIr {
+                name: sym,
+                name_str: cl.name.clone(),
+                array: cl.array.clone(),
+            });
+        }
+        let mut clustering_fields = Vec::new();
+        for f in &cm.clustering_fields {
+            let fid = if let Some(&id) = field_name_to_id.get(f) {
+                id
+            } else {
+                let id = interner.intern_field(f);
+                field_name_to_id.insert(f.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: f.clone(),
+                    data_type: DataType::Double,
+                    op_type: OpType::Continuous,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            clustering_fields.push(fid);
+        }
+        let clustering_ir = ClusteringIr {
+            function_name: cm.function_name.clone(),
+            model_class: cm
+                .model_class
+                .clone()
+                .unwrap_or_else(|| "centerBased".to_string()),
+            number_of_clusters: cm.number_of_clusters.unwrap_or(clusters.len()),
+            mining_schema,
+            comparison_measure: cm
+                .comparison_measure
+                .as_ref()
+                .map(|c| c.kind.clone())
+                .unwrap_or_else(|| "euclidean".to_string()),
+            clustering_fields,
+            clusters,
+            output,
+        };
+        (ModelIr::Clustering(clustering_ir), vec![])
+    } else if let Some(nb) = raw.naive_bayes_model {
+        let mining_schema = lower_mining_schema(
+            &nb.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&nb.output, &field_name_to_id, &mut interner);
+        let nb_ir = NaiveBayesIr {
+            function_name: nb.function_name.clone(),
+            mining_schema,
+            output,
+            bayes_inputs: nb.bayes_inputs.clone(),
+        };
+        (ModelIr::NaiveBayes(nb_ir), vec![])
+    } else if let Some(nn) = raw.nearest_neighbor_model {
+        let mining_schema = lower_mining_schema(
+            &nn.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&nn.output, &field_name_to_id, &mut interner);
+        // knn_inputs
+        let mut knn_inputs = Vec::new();
+        for f in &nn.knn_inputs {
+            let fid = if let Some(&id) = field_name_to_id.get(f) {
+                id
+            } else {
+                let id = interner.intern_field(f);
+                field_name_to_id.insert(f.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: f.clone(),
+                    data_type: DataType::Double,
+                    op_type: OpType::Continuous,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            knn_inputs.push(fid);
+        }
+        // instances: convert HashMap<String,String> to HashMap<FieldId, Value>
+        let mut instances = Vec::new();
+        let mut instance_ids = Vec::new();
+        for row in &nn.instances {
+            let mut map: std::collections::HashMap<pmml_core::FieldId, pmml_core::Value> =
+                std::collections::HashMap::new();
+            for inst_field in &nn.instance_fields {
+                let col = &inst_field.column;
+                let field_name = &inst_field.field;
+                if let Some(val_str) = row.get(col) {
+                    let fid = if let Some(&id) = field_name_to_id.get(field_name) {
+                        id
+                    } else {
+                        let id = interner.intern_field(field_name);
+                        field_name_to_id.insert(field_name.clone(), id);
+                        let meta = FieldMeta {
+                            field_id: id,
+                            name: field_name.clone(),
+                            data_type: DataType::String,
+                            op_type: OpType::Categorical,
+                            values: vec![],
+                        };
+                        field_meta_map.insert(id, meta);
+                        id
+                    };
+                    // Try to parse as f64, else as discrete
+                    let val = if let Ok(f) = val_str.parse::<f64>() {
+                        pmml_core::Value::Continuous(f)
+                    } else {
+                        let sid = interner.intern_symbol(val_str);
+                        pmml_core::Value::Discrete(sid)
+                    };
+                    map.insert(fid, val);
+                    if field_name == "ID" || field_name == "output" || field_name == "output" {
+                        // Capture ID if needed
+                    }
+                }
+            }
+            // Extract ID if present (field "ID" or first instance field)
+            let id_val = row
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| format!("{}", instances.len()));
+            instance_ids.push(id_val);
+            instances.push(map);
+        }
+        let nn_ir = NearestNeighborIr {
+            function_name: nn.function_name.clone(),
+            number_of_neighbors: nn.number_of_neighbors,
+            mining_schema,
+            output,
+            knn_inputs,
+            instances,
+            instance_ids,
+        };
+        (ModelIr::NearestNeighbor(nn_ir), vec![])
+    } else if raw.support_vector_machine_model.is_some()
+        || raw.neural_network.is_some()
+        || raw.general_regression_model.is_some()
+    {
+        return Err(PmmlError::UnsupportedMarkup(
+            "model type not yet fully supported in v1.1 (stub)".into(),
+        ));
     } else {
         return Err(PmmlError::UnsupportedMarkup(
-            "no supported model found (Tree/Regression/Mining)".into(),
+            "no supported model found".into(),
         ));
     };
 

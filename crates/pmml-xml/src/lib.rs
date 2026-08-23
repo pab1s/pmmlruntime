@@ -8,10 +8,12 @@ pub mod unmarshal;
 
 pub use reader::{new_reader, PmmlReader};
 pub use unmarshal::{
-    unmarshal, RawCategoricalPredictor, RawDataField, RawMiningField, RawMiningModel, RawNode,
-    RawNumericPredictor, RawOutputField, RawPmml, RawPredicate, RawRegressionModel,
-    RawRegressionTable, RawScoreDistribution, RawSegment, RawSegmentModel, RawSegmentation,
-    RawTreeModel,
+    unmarshal, RawAttribute, RawCategoricalPredictor, RawCharacteristic, RawCluster,
+    RawClusteringModel, RawComparisonMeasure, RawDataField, RawGeneralRegressionModel,
+    RawMiningField, RawMiningModel, RawNaiveBayesModel, RawNearestNeighborModel, RawNeuralNetwork,
+    RawNode, RawNumericPredictor, RawOutputField, RawPmml, RawPredicate, RawRegressionModel,
+    RawRegressionTable, RawScoreDistribution, RawScorecard, RawSegment, RawSegmentModel,
+    RawSegmentation, RawSupportVectorMachineModel, RawTreeModel,
 };
 
 pub fn placeholder() {}
