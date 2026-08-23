@@ -19,5 +19,9 @@ Thumbs.db
 .upstream/
 tmp/
 
+# Worktrees (opencode / git worktree isolation)
+.worktrees/
+worktrees/
+
 # Secrets
 .env
