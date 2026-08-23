@@ -234,7 +234,9 @@ pub struct NearestNeighborIr {
     pub number_of_neighbors: usize,
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
-    pub instance_fields: Vec<FieldId>,
+    pub knn_inputs: Vec<FieldId>,
+    pub instances: Vec<std::collections::HashMap<pmml_core::FieldId, pmml_core::Value>>,
+    pub instance_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

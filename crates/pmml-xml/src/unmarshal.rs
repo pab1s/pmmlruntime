@@ -166,13 +166,20 @@ pub struct RawNaiveBayesModel {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawInstanceField {
+    pub field: String,
+    pub column: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct RawNearestNeighborModel {
     pub function_name: String,
     pub number_of_neighbors: usize,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
-    pub instances: Vec<Vec<f64>>,
-    pub instance_fields: Vec<String>,
+    pub instance_fields: Vec<RawInstanceField>,
+    pub instances: Vec<std::collections::HashMap<String, String>>,
+    pub knn_inputs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1935,6 +1942,440 @@ fn parse_clustering_model(
     })
 }
 
+fn parse_naive_bayes_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawNaiveBayesModel> {
+    let function_name = attr_required(start, "functionName", "NaiveBayesModel")?;
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "BayesInputs" | "BayesOutput" => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && (String::from_utf8_lossy(end.name().as_ref())
+                                            == "BayesInputs"
+                                            || String::from_utf8_lossy(end.name().as_ref())
+                                                == "BayesOutput")
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e))
+                if String::from_utf8_lossy(e.name().as_ref()) == "NaiveBayesModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawNaiveBayesModel {
+        function_name,
+        mining_schema,
+        output,
+        bayes_inputs: vec![],
+    })
+}
+
+fn parse_nearest_neighbor_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawNearestNeighborModel> {
+    let function_name = attr_required(start, "functionName", "NearestNeighborModel")?;
+    let number_of_neighbors = attr(start, "numberOfNeighbors")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1);
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut instance_fields: Vec<RawInstanceField> = Vec::new();
+    let mut instances: Vec<std::collections::HashMap<String, String>> = Vec::new();
+    let mut knn_inputs = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "TrainingInstances" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "InstanceFields" =>
+                                {
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(f_e))
+                                                if tag_name(&f_e) == "InstanceField" =>
+                                            {
+                                                let field =
+                                                    attr_required(&f_e, "field", "InstanceField")?;
+                                                let column = attr(&f_e, "column")
+                                                    .unwrap_or_else(|| field.clone());
+                                                instance_fields
+                                                    .push(RawInstanceField { field, column });
+                                                let mut skip = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut skip) {
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "InstanceField" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        Ok(Event::Empty(_)) => break,
+                                                        _ => {}
+                                                    }
+                                                    skip.clear();
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::Empty(f_e))
+                                                if tag_name(&f_e) == "InstanceField" =>
+                                            {
+                                                let field =
+                                                    attr_required(&f_e, "field", "InstanceField")?;
+                                                let column = attr(&f_e, "column")
+                                                    .unwrap_or_else(|| field.clone());
+                                                instance_fields
+                                                    .push(RawInstanceField { field, column });
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "InstanceFields" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                }
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "InlineTable" =>
+                                {
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(row_e))
+                                                if tag_name(&row_e) == "row" =>
+                                            {
+                                                let mut row_buf = Vec::new();
+                                                let mut row_map: std::collections::HashMap<
+                                                    String,
+                                                    String,
+                                                > = std::collections::HashMap::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut row_buf) {
+                                                        Ok(Event::Start(cell_e)) => {
+                                                            let col_name = tag_name(&cell_e);
+                                                            let mut cell_buf = Vec::new();
+                                                            let mut cell_val = String::new();
+                                                            loop {
+                                                                match reader
+                                                                    .read_event_into(&mut cell_buf)
+                                                                {
+                                                                    Ok(Event::Text(t)) => {
+                                                                        cell_val = t
+                                                                            .unescape()
+                                                                            .unwrap_or_default()
+                                                                            .into_owned();
+                                                                    }
+                                                                    Ok(Event::End(end)) => {
+                                                                        let tag = String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                        .into_owned();
+                                                                        if tag == col_name {
+                                                                            row_map.insert(
+                                                                                col_name.clone(),
+                                                                                cell_val.clone(),
+                                                                            );
+                                                                            break;
+                                                                        } else if tag == "row" {
+                                                                            break;
+                                                                        } else {
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                                cell_buf.clear();
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "row" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    row_buf.clear();
+                                                }
+                                                if !row_map.is_empty() {
+                                                    instances.push(row_map);
+                                                }
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "InlineTable" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TrainingInstances" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "KNNInputs" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "KNNInput" => {
+                                    let field = attr_required(&inner_e, "field", "KNNInput")?;
+                                    knn_inputs.push(field);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "KNNInput" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "KNNInput" => {
+                                    let field = attr_required(&inner_e, "field", "KNNInput")?;
+                                    knn_inputs.push(field);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "KNNInputs" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "OutputField")?;
+                                    output.push(RawOutputField {
+                                        name,
+                                        feature: attr(&inner_e, "feature"),
+                                        value: attr(&inner_e, "value"),
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "OutputField")?;
+                                    output.push(RawOutputField {
+                                        name,
+                                        feature: attr(&inner_e, "feature"),
+                                        value: attr(&inner_e, "value"),
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e))
+                if String::from_utf8_lossy(e.name().as_ref()) == "NearestNeighborModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawNearestNeighborModel {
+        function_name,
+        number_of_neighbors,
+        mining_schema,
+        output,
+        instance_fields,
+        instances,
+        knn_inputs,
+    })
+}
+
 // ---------- Top-level ----------
 
 pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
@@ -2060,6 +2501,102 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         let cm = parse_clustering_model(&mut reader, &e)?;
                         clustering_model = Some(cm);
                     }
+                    "NaiveBayesModel" => {
+                        let nb = parse_naive_bayes_model(&mut reader, &e)?;
+                        naive_bayes_model = Some(nb);
+                    }
+                    "NearestNeighborModel" => {
+                        let nn = parse_nearest_neighbor_model(&mut reader, &e)?;
+                        nearest_neighbor_model = Some(nn);
+                    }
+                    "SupportVectorMachineModel" => {
+                        // Stub: just consume and set empty
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "SupportVectorMachineModel"
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        support_vector_machine_model = Some(RawSupportVectorMachineModel {
+                            function_name: attr(&e, "functionName")
+                                .unwrap_or_else(|| "classification".to_string()),
+                            mining_schema: vec![],
+                            output: vec![],
+                            support_vectors: vec![],
+                        });
+                    }
+                    "NeuralNetwork" => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "NeuralNetwork"
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        neural_network = Some(RawNeuralNetwork {
+                            function_name: attr(&e, "functionName")
+                                .unwrap_or_else(|| "classification".to_string()),
+                            mining_schema: vec![],
+                            output: vec![],
+                            layers: vec![],
+                        });
+                    }
+                    "GeneralRegressionModel" => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "GeneralRegressionModel"
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        general_regression_model = Some(RawGeneralRegressionModel {
+                            function_name: attr(&e, "functionName")
+                                .unwrap_or_else(|| "regression".to_string()),
+                            mining_schema: vec![],
+                            output: vec![],
+                            model_type: None,
+                        });
+                    }
                     _ => {} // other top-level models ignored for v1 (stub)
                 }
             }
@@ -2082,6 +2619,12 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                 } else if tag == "ClusteringModel" {
                     let cm = parse_clustering_model(&mut reader, &e)?;
                     clustering_model = Some(cm);
+                } else if tag == "NaiveBayesModel" {
+                    let nb = parse_naive_bayes_model(&mut reader, &e)?;
+                    naive_bayes_model = Some(nb);
+                } else if tag == "NearestNeighborModel" {
+                    let nn = parse_nearest_neighbor_model(&mut reader, &e)?;
+                    nearest_neighbor_model = Some(nn);
                 }
             }
             Ok(Event::Eof) => break,

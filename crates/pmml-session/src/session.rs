@@ -79,6 +79,14 @@ impl Session {
                 .mining_schema
                 .target_field
                 .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            pmml_ir::ir::ModelIr::NaiveBayes(n) => n
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            pmml_ir::ir::ModelIr::NearestNeighbor(n) => n
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
             _ => None,
         };
 
@@ -134,6 +142,12 @@ impl Session {
             }
             pmml_ir::ir::ModelIr::Clustering(cl) => {
                 pmml_evaluator::output::build_output(&cl.output, predicted, &HashMap::new())
+            }
+            pmml_ir::ir::ModelIr::NaiveBayes(nb) => {
+                pmml_evaluator::output::build_output(&nb.output, predicted, &HashMap::new())
+            }
+            pmml_ir::ir::ModelIr::NearestNeighbor(nn) => {
+                pmml_evaluator::output::build_output(&nn.output, predicted, &HashMap::new())
             }
             _ => {
                 let mut m = HashMap::new();
@@ -194,6 +208,8 @@ impl Session {
             pmml_ir::ir::ModelIr::Mining(m) => m.mining_schema.active_fields.len(),
             pmml_ir::ir::ModelIr::Scorecard(s) => s.mining_schema.active_fields.len(),
             pmml_ir::ir::ModelIr::Clustering(c) => c.mining_schema.active_fields.len(),
+            pmml_ir::ir::ModelIr::NaiveBayes(n) => n.mining_schema.active_fields.len(),
+            pmml_ir::ir::ModelIr::NearestNeighbor(n) => n.mining_schema.active_fields.len(),
             _ => 0,
         }
     }

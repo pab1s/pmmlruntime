@@ -687,8 +687,92 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             bayes_inputs: nb.bayes_inputs.clone(),
         };
         (ModelIr::NaiveBayes(nb_ir), vec![])
-    } else if raw.nearest_neighbor_model.is_some()
-        || raw.support_vector_machine_model.is_some()
+    } else if let Some(nn) = raw.nearest_neighbor_model {
+        let mining_schema = lower_mining_schema(
+            &nn.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&nn.output, &field_name_to_id, &mut interner);
+        // knn_inputs
+        let mut knn_inputs = Vec::new();
+        for f in &nn.knn_inputs {
+            let fid = if let Some(&id) = field_name_to_id.get(f) {
+                id
+            } else {
+                let id = interner.intern_field(f);
+                field_name_to_id.insert(f.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: f.clone(),
+                    data_type: DataType::Double,
+                    op_type: OpType::Continuous,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            knn_inputs.push(fid);
+        }
+        // instances: convert HashMap<String,String> to HashMap<FieldId, Value>
+        let mut instances = Vec::new();
+        let mut instance_ids = Vec::new();
+        for row in &nn.instances {
+            let mut map: std::collections::HashMap<pmml_core::FieldId, pmml_core::Value> =
+                std::collections::HashMap::new();
+            for inst_field in &nn.instance_fields {
+                let col = &inst_field.column;
+                let field_name = &inst_field.field;
+                if let Some(val_str) = row.get(col) {
+                    let fid = if let Some(&id) = field_name_to_id.get(field_name) {
+                        id
+                    } else {
+                        let id = interner.intern_field(field_name);
+                        field_name_to_id.insert(field_name.clone(), id);
+                        let meta = FieldMeta {
+                            field_id: id,
+                            name: field_name.clone(),
+                            data_type: DataType::String,
+                            op_type: OpType::Categorical,
+                            values: vec![],
+                        };
+                        field_meta_map.insert(id, meta);
+                        id
+                    };
+                    // Try to parse as f64, else as discrete
+                    let val = if let Ok(f) = val_str.parse::<f64>() {
+                        pmml_core::Value::Continuous(f)
+                    } else {
+                        let sid = interner.intern_symbol(val_str);
+                        pmml_core::Value::Discrete(sid)
+                    };
+                    map.insert(fid, val);
+                    if field_name == "ID" || field_name == "output" || field_name == "output" {
+                        // Capture ID if needed
+                    }
+                }
+            }
+            // Extract ID if present (field "ID" or first instance field)
+            let id_val = row
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| format!("{}", instances.len()));
+            instance_ids.push(id_val);
+            instances.push(map);
+        }
+        let nn_ir = NearestNeighborIr {
+            function_name: nn.function_name.clone(),
+            number_of_neighbors: nn.number_of_neighbors,
+            mining_schema,
+            output,
+            knn_inputs,
+            instances,
+            instance_ids,
+        };
+        (ModelIr::NearestNeighbor(nn_ir), vec![])
+    } else if raw.support_vector_machine_model.is_some()
         || raw.neural_network.is_some()
         || raw.general_regression_model.is_some()
     {
