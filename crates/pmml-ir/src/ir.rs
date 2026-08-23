@@ -277,11 +277,33 @@ pub struct SupportVectorMachineIr {
 }
 
 #[derive(Debug, Clone)]
+pub struct NeuralInputIr {
+    pub id: String,
+    pub field: FieldId,
+}
+
+#[derive(Debug, Clone)]
+pub struct NeuronIr {
+    pub id: String,
+    pub bias: f64,
+    pub cons: Vec<(String, f64)>, // from -> weight
+}
+
+#[derive(Debug, Clone)]
+pub struct NeuralLayerIr {
+    pub number_of_neurons: usize,
+    pub activation_function: String,
+    pub neurons: Vec<NeuronIr>,
+}
+
+#[derive(Debug, Clone)]
 pub struct NeuralNetworkIr {
     pub function_name: String,
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
-    // stub
+    pub neural_inputs: Vec<NeuralInputIr>,
+    pub neural_layers: Vec<NeuralLayerIr>,
+    pub activation_function: String,
 }
 
 #[derive(Debug, Clone)]

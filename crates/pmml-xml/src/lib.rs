@@ -10,13 +10,13 @@ pub use reader::{new_reader, PmmlReader};
 pub use unmarshal::{
     unmarshal, RawAssociationModel, RawAssociationRule, RawAttribute, RawBayesInput,
     RawCategoricalPredictor, RawCharacteristic, RawCluster, RawClusteringModel,
-    RawComparisonMeasure, RawDataField, RawGeneralRegressionModel, RawItem, RawItemset,
-    RawMiningField, RawMiningModel, RawNaiveBayesModel, RawNearestNeighborModel, RawNeuralLayer,
-    RawNeuralNetwork, RawNeuron, RawNode, RawNumericPredictor, RawOutputField, RawPairCounts,
-    RawPmml, RawPredicate, RawRegressionModel, RawRegressionTable, RawRuleSet, RawRuleSetModel,
-    RawScoreDistribution, RawScorecard, RawSegment, RawSegmentModel, RawSegmentation,
-    RawSimpleRule, RawSupportVectorMachineModel, RawTargetValueCount, RawTargetValueStat,
-    RawTreeModel,
+    RawComparisonMeasure, RawCon, RawDataField, RawGeneralRegressionModel, RawItem, RawItemset,
+    RawMiningField, RawMiningModel, RawNaiveBayesModel, RawNearestNeighborModel, RawNeuralInput,
+    RawNeuralLayer, RawNeuralNetwork, RawNeuron, RawNode, RawNumericPredictor, RawOutputField,
+    RawPairCounts, RawPmml, RawPredicate, RawRegressionModel, RawRegressionTable, RawRuleSet,
+    RawRuleSetModel, RawScoreDistribution, RawScorecard, RawSegment, RawSegmentModel,
+    RawSegmentation, RawSimpleRule, RawSupportVectorMachineModel, RawTargetValueCount,
+    RawTargetValueStat, RawTreeModel,
 };
 
 pub fn placeholder() {}

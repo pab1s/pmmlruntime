@@ -225,8 +225,10 @@ pub struct RawNeuralNetwork {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
-    pub layers: Vec<RawNeuralLayer>,
+    pub neural_inputs: Vec<RawNeuralInput>,
+    pub neural_layers: Vec<RawNeuralLayer>,
     pub model_name: Option<String>,
+    pub activation_function: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -325,10 +327,22 @@ pub struct RawRuleSetModel {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawCon {
+    pub from: String,
+    pub weight: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct RawNeuron {
     pub id: String,
     pub bias: Option<f64>,
-    pub weights: Vec<f64>,
+    pub cons: Vec<RawCon>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawNeuralInput {
+    pub id: String,
+    pub field: String,
 }
 
 #[derive(Debug, Clone)]
@@ -3798,6 +3812,253 @@ fn parse_support_vector_machine_model(
     })
 }
 
+fn parse_neural_network(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawNeuralNetwork> {
+    let function_name = attr_required(start, "functionName", "NeuralNetwork")?;
+    let model_name = attr(start, "modelName");
+    let activation_function = attr(start, "activationFunction");
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut neural_inputs: Vec<RawNeuralInput> = Vec::new();
+    let mut neural_layers: Vec<RawNeuralLayer> = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let name = attr_required(&inner_e, "name", "MiningField")?;
+                                    mining_schema.push(RawMiningField {
+                                        name,
+                                        usage_type: attr(&inner_e, "usageType"),
+                                        importance: None,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "NeuralInputs" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "NeuralInput" =>
+                                {
+                                    let id = attr_required(&inner_e, "id", "NeuralInput")?;
+                                    let mut field = String::new();
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(df_e))
+                                                if tag_name(&df_e) == "DerivedField" =>
+                                            {
+                                                let mut inner3 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner3) {
+                                                        Ok(Event::Start(fr_e))
+                                                            if tag_name(&fr_e) == "FieldRef" =>
+                                                        {
+                                                            field = attr_required(
+                                                                &fr_e, "field", "FieldRef",
+                                                            )?;
+                                                            let mut skip = Vec::new();
+                                                            loop {
+                                                                match reader
+                                                                    .read_event_into(&mut skip)
+                                                                {
+                                                                    Ok(Event::End(end))
+                                                                        if String::from_utf8_lossy(
+                                                                            end.name().as_ref(),
+                                                                        )
+                                                                            == "FieldRef" =>
+                                                                    {
+                                                                        break
+                                                                    }
+                                                                    Ok(Event::Empty(_)) => break,
+                                                                    _ => {}
+                                                                }
+                                                                skip.clear();
+                                                                break;
+                                                            }
+                                                        }
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "DerivedField" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner3.clear();
+                                                }
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "NeuralInput" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                    neural_inputs.push(RawNeuralInput { id, field });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "NeuralInputs" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "NeuralLayer" => {
+                        let number_of_neurons =
+                            attr(&e, "numberOfNeurons").and_then(|s| s.parse::<usize>().ok());
+                        let activation_function =
+                            attr(&e, "activationFunction").or_else(|| activation_function.clone());
+                        let mut neurons = Vec::new();
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(neuron_e)) if tag_name(&neuron_e) == "Neuron" => {
+                                    let id = attr_required(&neuron_e, "id", "Neuron")?;
+                                    let bias =
+                                        attr(&neuron_e, "bias").and_then(|s| s.parse::<f64>().ok());
+                                    let mut cons = Vec::new();
+                                    let mut inner2 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner2) {
+                                            Ok(Event::Start(con_e))
+                                                if tag_name(&con_e) == "Con" =>
+                                            {
+                                                let from = attr_required(&con_e, "from", "Con")?;
+                                                let weight = attr(&con_e, "weight")
+                                                    .and_then(|s| s.parse::<f64>().ok())
+                                                    .unwrap_or(0.0);
+                                                cons.push(RawCon { from, weight });
+                                                let mut skip = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut skip) {
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Con" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        Ok(Event::Empty(_)) => break,
+                                                        _ => {}
+                                                    }
+                                                    skip.clear();
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::Empty(con_e))
+                                                if tag_name(&con_e) == "Con" =>
+                                            {
+                                                let from = attr_required(&con_e, "from", "Con")?;
+                                                let weight = attr(&con_e, "weight")
+                                                    .and_then(|s| s.parse::<f64>().ok())
+                                                    .unwrap_or(0.0);
+                                                cons.push(RawCon { from, weight });
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Neuron" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner2.clear();
+                                    }
+                                    neurons.push(RawNeuron { id, bias, cons });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "NeuralLayer" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        neural_layers.push(RawNeuralLayer {
+                            number_of_neurons,
+                            activation_function: activation_function.clone(),
+                            neurons,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e)) if String::from_utf8_lossy(e.name().as_ref()) == "NeuralNetwork" => {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawNeuralNetwork {
+        function_name,
+        mining_schema,
+        output,
+        neural_inputs,
+        neural_layers,
+        model_name,
+        activation_function,
+    })
+}
+
 // ---------- Top-level ----------
 
 pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
@@ -4002,34 +4263,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         });
                     }
                     "NeuralNetwork" => {
-                        let mut depth = 1usize;
-                        let mut inner = Vec::new();
-                        loop {
-                            match reader.read_event_into(&mut inner) {
-                                Ok(Event::Start(_)) => depth += 1,
-                                Ok(Event::End(end)) => {
-                                    depth -= 1;
-                                    if depth == 0
-                                        && String::from_utf8_lossy(end.name().as_ref())
-                                            == "NeuralNetwork"
-                                    {
-                                        break;
-                                    }
-                                }
-                                Ok(Event::Empty(_)) => {}
-                                Ok(Event::Eof) => break,
-                                _ => {}
-                            }
-                            inner.clear();
-                        }
-                        neural_network = Some(RawNeuralNetwork {
-                            function_name: attr(&e, "functionName")
-                                .unwrap_or_else(|| "classification".to_string()),
-                            mining_schema: vec![],
-                            output: vec![],
-                            layers: vec![],
-                            model_name: attr(&e, "modelName"),
-                        });
+                        let nn = parse_neural_network(&mut reader, &e)?;
+                        neural_network = Some(nn);
                     }
                     _ => {} // other top-level models ignored for v1 (stub)
                 }

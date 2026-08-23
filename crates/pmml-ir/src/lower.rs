@@ -976,10 +976,71 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             output,
         };
         (ModelIr::RuleSet(rs_ir), vec![])
-    } else if raw.neural_network.is_some() {
-        return Err(PmmlError::UnsupportedMarkup(
-            "NeuralNetwork not yet fully supported (stub)".into(),
-        ));
+    } else if let Some(nn) = raw.neural_network {
+        let mining_schema = lower_mining_schema(
+            &nn.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&nn.output, &field_name_to_id, &mut interner);
+        let mut neural_inputs = Vec::new();
+        for ni in &nn.neural_inputs {
+            let fid = if let Some(&id) = field_name_to_id.get(&ni.field) {
+                id
+            } else {
+                let id = interner.intern_field(&ni.field);
+                field_name_to_id.insert(ni.field.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: ni.field.clone(),
+                    data_type: DataType::Double,
+                    op_type: OpType::Continuous,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            neural_inputs.push(NeuralInputIr {
+                id: ni.id.clone(),
+                field: fid,
+            });
+        }
+        let mut neural_layers = Vec::new();
+        for layer in &nn.neural_layers {
+            let mut neurons = Vec::new();
+            for neuron in &layer.neurons {
+                let mut cons = Vec::new();
+                for con in &neuron.cons {
+                    cons.push((con.from.clone(), con.weight));
+                }
+                neurons.push(NeuronIr {
+                    id: neuron.id.clone(),
+                    bias: neuron.bias.unwrap_or(0.0),
+                    cons,
+                });
+            }
+            neural_layers.push(NeuralLayerIr {
+                number_of_neurons: layer.number_of_neurons.unwrap_or(neurons.len()),
+                activation_function: layer
+                    .activation_function
+                    .clone()
+                    .unwrap_or_else(|| "identity".to_string()),
+                neurons,
+            });
+        }
+        let nn_ir = NeuralNetworkIr {
+            function_name: nn.function_name.clone(),
+            mining_schema,
+            output,
+            neural_inputs,
+            neural_layers,
+            activation_function: nn
+                .activation_function
+                .clone()
+                .unwrap_or_else(|| "logistic".to_string()),
+        };
+        (ModelIr::NeuralNetwork(nn_ir), vec![])
     } else {
         return Err(PmmlError::UnsupportedMarkup(
             "no supported model found".into(),
