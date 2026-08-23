@@ -1,0 +1,17 @@
+[package]
+name = "pmml-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pmml-core = { path = "../pmml-core" }
+pmml-ir = { path = "../pmml-ir" }
+pmml-xml = { path = "../pmml-xml" }
+pmml-evaluator = { path = "../pmml-evaluator" }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+bumpalo = { workspace = true }
+rayon = { workspace = true }
+smallvec = { workspace = true }
