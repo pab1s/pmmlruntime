@@ -273,7 +273,12 @@ pub struct SupportVectorMachineIr {
     pub function_name: String,
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
-    // stub
+    pub vector_fields: Vec<FieldId>,
+    pub vector_instances: Vec<(String, Vec<f64>)>,
+    pub support_vectors: Vec<String>,
+    pub coefficients: Vec<f64>,
+    pub absolute_value: f64,
+    pub kernel_gamma: f64,
 }
 
 #[derive(Debug, Clone)]

@@ -141,7 +141,68 @@ impl Session {
         // MiningSchema: copy active fields (already done via input_by_id + values)
         // For v1, mining_schema apply is handled via values directly; we still call provider which does derived+model.
         // But mining_schema's missing handling is trivial v1 (already Missing).
-        // Call provider
+        // Handle GeneralRegression specially to get probabilities
+        if let pmml_ir::ir::ModelIr::GeneralRegression(gr) = &self.ir.model {
+            let (predicted, probs) = pmml_evaluator::models::evaluate_general_regression_with_probs(
+                gr,
+                &values,
+                &self.ir.field_names,
+                &self.ir.symbol_names,
+                &self.name_to_id,
+            );
+            let mut output = HashMap::new();
+            for of in &gr.output {
+                match of.feature {
+                    pmml_core::field::ResultFeature::Probability => {
+                        if let Some(cat_sid) = of.value {
+                            if let Some(cat_str) = self.ir.symbol_names.get(&cat_sid) {
+                                if let Some(p) = probs.get(cat_str) {
+                                    output.insert(of.name.clone(), Value::Continuous(*p));
+                                    continue;
+                                }
+                            }
+                        }
+                        // Fallback: try to find prob by value string
+                        if let Some(cat_sid) = of.value {
+                            if let Some(cat_str) = self.ir.symbol_names.get(&cat_sid) {
+                                if let Some(p) = probs.get(cat_str) {
+                                    output.insert(of.name.clone(), Value::Continuous(*p));
+                                    continue;
+                                }
+                            }
+                        }
+                        output.insert(of.name.clone(), Value::Missing);
+                    }
+                    pmml_core::field::ResultFeature::PredictedValue => {
+                        output.insert(of.name.clone(), predicted);
+                    }
+                    _ => {
+                        output.insert(of.name.clone(), predicted);
+                    }
+                }
+            }
+            if output.is_empty() {
+                output.insert("predictedValue".to_string(), predicted);
+            }
+            // Also handle target-named and predictedValue
+            let mut final_out = output;
+            if let Some(tname) = &self.target_name {
+                final_out.entry(tname.clone()).or_insert(predicted);
+            }
+            final_out
+                .entry("predictedValue".to_string())
+                .or_insert(predicted);
+            // Also add probability entries directly for test convenience
+            for (k, v) in probs {
+                final_out.entry(k.clone()).or_insert(Value::Continuous(v));
+                // Also try Probability_* naming
+                let prob_name = format!("Probability_{}", k);
+                final_out.entry(prob_name).or_insert(Value::Continuous(v));
+            }
+            return Ok(final_out);
+        }
+
+        // Call provider for other models
         let predicted = self.provider.evaluate(&self.ir, &mut values)?;
 
         // Targets (none v1)

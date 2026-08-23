@@ -44,6 +44,31 @@ fn general_regression_contrast() {
         }
         _ => panic!("expected discrete Low"),
     }
+    // Check probabilities: expected 0.81956470 for Low, 0.18043530 for High
+    let prob_low = out
+        .get("Probability_Low")
+        .or_else(|| out.get("Low"))
+        .expect("Probability_Low");
+    if let Value::Continuous(p) = prob_low {
+        assert!(
+            (p - 0.81956470).abs() < 1e-6,
+            "expected Probability_Low 0.819 got {}",
+            p
+        );
+    } else {
+        panic!("expected continuous prob");
+    }
+    let prob_high = out
+        .get("Probability_High")
+        .or_else(|| out.get("High"))
+        .expect("Probability_High");
+    if let Value::Continuous(p) = prob_high {
+        assert!(
+            (p - 0.18043530).abs() < 1e-6,
+            "expected Probability_High 0.180 got {}",
+            p
+        );
+    }
 }
 
 #[test]
@@ -53,10 +78,34 @@ fn svm_xor() {
         .expect("svm pmml not found");
     let env = PmmlEnv::new();
     let sess = Session::from_bytes(&env, &bytes, SessionOptions::default()).expect("load svm");
-    let mut m = HashMap::new();
-    m.insert("x1".to_string(), Value::Continuous(0.0));
-    m.insert("x2".to_string(), Value::Continuous(0.0));
-    let out = sess.run(m).expect("run svm");
-    println!("svm out: {:?}", out);
-    assert!(!out.is_empty());
+    // Test all 4 XOR cases
+    let cases = vec![
+        (0.0, 0.0, 0.1004236),
+        (0.0, 1.0, 0.8995764),
+        (1.0, 0.0, 0.8995764),
+        (1.0, 1.0, 0.1004236),
+    ];
+    for (x1, x2, expected) in cases {
+        let mut m = HashMap::new();
+        m.insert("x1".to_string(), Value::Continuous(x1));
+        m.insert("x2".to_string(), Value::Continuous(x2));
+        let out = sess.run(m).expect("run svm");
+        println!("svm ({}, {}) out: {:?}", x1, x2, out);
+        let pred = out
+            .get("predictedValue")
+            .or_else(|| out.get("class"))
+            .expect("predicted");
+        if let Value::Continuous(p) = pred {
+            assert!(
+                (p - expected).abs() < 1e-5,
+                "for ({}, {}) expected {} got {}",
+                x1,
+                x2,
+                expected,
+                p
+            );
+        } else {
+            panic!("expected continuous");
+        }
+    }
 }

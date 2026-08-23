@@ -13,7 +13,7 @@ pub mod tree;
 
 pub use association::evaluate_association;
 pub use clustering::evaluate_clustering;
-pub use general_regression::evaluate_general_regression;
+pub use general_regression::{evaluate_general_regression, evaluate_general_regression_with_probs};
 pub use mining::evaluate_mining;
 pub use naive_bayes::evaluate_naive_bayes;
 pub use nearest_neighbor::evaluate_nearest_neighbor;

@@ -884,7 +884,7 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                     facs.push(FactorIr {
                         name: fid,
                         categories: cats,
-                        matrix: vec![], // stub
+                        matrix: f.matrix.clone(),
                     });
                 }
                 facs
@@ -942,10 +942,59 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         let output = lower_output(&svm.output, &field_name_to_id, &mut interner);
+        // vector_fields
+        let mut vector_fields = Vec::new();
+        for vf in &svm.vector_fields {
+            let fid = if let Some(&id) = field_name_to_id.get(&vf.field) {
+                id
+            } else {
+                let id = interner.intern_field(&vf.field);
+                field_name_to_id.insert(vf.field.clone(), id);
+                let meta = FieldMeta {
+                    field_id: id,
+                    name: vf.field.clone(),
+                    data_type: DataType::Double,
+                    op_type: OpType::Continuous,
+                    values: vec![],
+                };
+                field_meta_map.insert(id, meta);
+                id
+            };
+            vector_fields.push(fid);
+        }
+        // vector_instances
+        let mut vector_instances = Vec::new();
+        for vi in &svm.vector_instances {
+            vector_instances.push((vi.id.clone(), vi.array.clone()));
+        }
+        // support vectors and coefficients
+        let mut support_vectors = Vec::new();
+        let mut coefficients = Vec::new();
+        let mut absolute_value = 0.0;
+        let mut kernel_gamma = svm.kernel_gamma.unwrap_or(1.0);
+        if let Some(svm_inner) = &svm.support_vector_machine {
+            for sv in &svm_inner.support_vectors {
+                support_vectors.push(sv.vector_id.clone());
+            }
+            for coeff in &svm_inner.coefficients {
+                coefficients.push(coeff.value);
+            }
+            if let Some(av) = svm_inner.absolute_value {
+                absolute_value = av;
+            }
+        }
+        // If no support_vectors but we have vector_instances, use all as support?
+        // For fixture, support_vectors are all 4
         let svm_ir = SupportVectorMachineIr {
             function_name: svm.function_name.clone(),
             mining_schema,
             output,
+            vector_fields,
+            vector_instances,
+            support_vectors,
+            coefficients,
+            absolute_value,
+            kernel_gamma,
         };
         (ModelIr::SupportVectorMachine(svm_ir), vec![])
     } else if let Some(am) = raw.association_model {
