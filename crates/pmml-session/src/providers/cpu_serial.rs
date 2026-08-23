@@ -19,7 +19,6 @@ impl ExecutionProvider for CpuSerialProvider {
             ModelIr::Tree(tree) => pmml_evaluator::models::evaluate_tree(tree, values),
             ModelIr::Regression(reg) => pmml_evaluator::models::evaluate_regression(reg, values),
             ModelIr::Mining(mining) => {
-                // Build name_to_id map from ir.field_names (FieldId->String invert)
                 let mut name_to_id: HashMap<String, pmml_core::FieldId> = HashMap::new();
                 for (fid, name) in &ir.field_names {
                     name_to_id.insert(name.clone(), *fid);
@@ -31,6 +30,17 @@ impl ExecutionProvider for CpuSerialProvider {
                     &ir.symbol_names,
                     &name_to_id,
                 )
+            }
+            ModelIr::Scorecard(sc) => pmml_evaluator::models::evaluate_scorecard(sc, values),
+            ModelIr::Clustering(cl) => pmml_evaluator::models::evaluate_clustering(cl, values),
+            ModelIr::NaiveBayes(_)
+            | ModelIr::NearestNeighbor(_)
+            | ModelIr::SupportVectorMachine(_)
+            | ModelIr::NeuralNetwork(_)
+            | ModelIr::GeneralRegression(_) => {
+                return Err(pmml_core::error::PmmlError::UnsupportedMarkup(
+                    "model type not yet fully supported (stub)".into(),
+                ))
             }
         };
         Ok(predicted)
