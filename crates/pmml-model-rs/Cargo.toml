@@ -1,7 +1,0 @@
-[package]
-name = "pmml-model-rs"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]

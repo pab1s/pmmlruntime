@@ -1,7 +1,17 @@
 struct	field	type	java_owner	rust_owner	notes
-PMML	dataDictionary	DataDictionary	single	Arc<DataDictionary>	root owns
-PMML	models	List<Model>	single	Vec<Arc<dyn Model>>	root owns
-ModelEvaluator	pmml	PMML	single	Arc<PMML>	builder copy-on-build, not alias
-ModelEvaluator	pmmlBuilder	ModelEvaluatorBuilder	single	Arc<PMML>	see ModelEvaluatorBuilder#pmml field
-FieldValue	value	Object	shared	Enum Value	never null
-ModelManager	cache	LoadingCache	single	moka::sync::Cache	lazy per PMML
+Ir	data_dictionary	Vec<FieldMeta>	single	Vec<FieldMeta>	Ir owns, Arc<Ir> shared across Sessions
+Ir	mining_schema	MiningSchemaIr	single	MiningSchemaIr	flat Vec<FieldId> active
+Ir	derived_dag	Vec<DerivedFieldIr>	single	Vec<DerivedFieldIr>	DAG topo, bytecode Vec<Op> owned by Ir
+Ir	model	ModelIr	single	ModelIr	Box<TreeIr> flat Nodes
+RawPMML	header	Header	single	Box<Header>	only during lower()
+Interner	rodeo	Rodeo	single	Rodeo	only during lower(), not in hot path
+Interner	field_ids	HashMap<Box<str>,FieldId>	single	HashMap<Box<str>,FieldId>	lower cold only
+Session	ir	Arc<Ir>	shared	Arc<Ir>	Send+Sync, clone is Arc clone
+Session	env	Arc<PmmlEnv>	shared	Arc<PmmlEnv>	pool + logger
+PmmlEnv	pool	rayon::ThreadPool	single	rayon::ThreadPool	created once per Env
+Run	values	Vec<Value>	shared	BumpVec<Value>	thread_local! arena, reset per run()
+Run	inputs	HashMap<FieldName,Value>	shared	SmallVec<[(FieldId,Value);16]>	SmallVec avoids alloc for N<=16
+TreeIr	nodes	Vec<NodeIr>	single	Vec<NodeIr>	flat contiguo, Box<TreeIr> in Ir
+NodeIr	predicate	PredicateIr	single	PredicateIr	enum, inline
+Bytecode	ops	Vec<Op>	single	Vec<Op>	owned by DerivedFieldIr, eval via &[Op]
+PmmlError	msg	String	single	String	thiserror, no backtrace hot path

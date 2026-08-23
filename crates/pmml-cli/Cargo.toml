@@ -1,0 +1,18 @@
+[package]
+name = "pmml-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pmml-runtime"
+path = "src/main.rs"
+
+[dependencies]
+pmml-core = { path = "../pmml-core" }
+pmml-session = { path = "../pmml-session" }
+pmml-xml = { path = "../pmml-xml" }
+pmml-ir = { path = "../pmml-ir" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
