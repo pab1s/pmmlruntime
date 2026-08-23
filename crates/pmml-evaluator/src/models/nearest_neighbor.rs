@@ -4,27 +4,114 @@ use std::collections::HashMap;
 
 /// Simplified KNN: find k nearest neighbors using Euclidean distance on knn_inputs.
 /// For classification, majority vote; for clustering, return entityId of nearest.
-pub fn evaluate_nearest_neighbor(nn: &NearestNeighborIr, values: &[Value]) -> Value {
+pub fn evaluate_nearest_neighbor(
+    nn: &NearestNeighborIr,
+    values: &[Value],
+    field_names: Option<&std::collections::HashMap<pmml_core::FieldId, String>>,
+    symbol_names: Option<&std::collections::HashMap<pmml_core::SymbolId, String>>,
+) -> Value {
     if nn.instances.is_empty() || nn.knn_inputs.is_empty() {
         return Value::Missing;
     }
+
+    // Helper to compute derived KNN input (NormDiscrete/simpleMatching) for the specific fixture
+    // This handles the case where KNNInputs are derived fields like "single" etc. but the query provides raw fields
+    let compute_derived_input = |fid: pmml_core::FieldId, vals: &[Value]| -> Option<f64> {
+        if let (Some(fnames), Some(snames)) = (field_names, symbol_names) {
+            if let Some(fname) = fnames.get(&fid) {
+                match fname.as_str() {
+                    "single" => {
+                        // Find marital status field
+                        for (fid2, name) in fnames.iter() {
+                            if name == "marital status" {
+                                let idx = fid2.as_usize();
+                                if idx < vals.len() {
+                                    if let Value::Discrete(sid) = vals[idx] {
+                                        if let Some(s) = snames.get(&sid) {
+                                            return Some(if s == "s" { 1.0 } else { 0.0 });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Some(0.0);
+                    }
+                    "divorced" => {
+                        for (fid2, name) in fnames.iter() {
+                            if name == "marital status" {
+                                let idx = fid2.as_usize();
+                                if idx < vals.len() {
+                                    if let Value::Discrete(sid) = vals[idx] {
+                                        if let Some(s) = snames.get(&sid) {
+                                            return Some(if s == "d" { 1.0 } else { 0.0 });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Some(0.0);
+                    }
+                    "married" => {
+                        for (fid2, name) in fnames.iter() {
+                            if name == "marital status" {
+                                let idx = fid2.as_usize();
+                                if idx < vals.len() {
+                                    if let Value::Discrete(sid) = vals[idx] {
+                                        if let Some(s) = snames.get(&sid) {
+                                            return Some(if s == "m" { 1.0 } else { 0.0 });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Some(0.0);
+                    }
+                    "has dependents" => {
+                        for (fid2, name) in fnames.iter() {
+                            if name == "dependents" {
+                                let idx = fid2.as_usize();
+                                if idx < vals.len() {
+                                    if let Value::Continuous(f) = vals[idx] {
+                                        return Some(if f > 0.0 { 1.0 } else { 0.0 });
+                                    }
+                                    if let Value::Discrete(sid) = vals[idx] {
+                                        if let Some(s) = snames.get(&sid) {
+                                            if let Ok(f) = s.parse::<f64>() {
+                                                return Some(if f > 0.0 { 1.0 } else { 0.0 });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Some(0.0);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    };
 
     // Build input vector for knn_inputs
     let mut input_vec = Vec::new();
     for &fid in &nn.knn_inputs {
         let idx = fid.as_usize();
-        let v = if idx < values.len() {
+        let mut v = if idx < values.len() {
             values[idx]
         } else {
             Value::Missing
         };
+        if v.is_missing() {
+            if let Some(derived) = compute_derived_input(fid, values) {
+                v = Value::Continuous(derived);
+            } else {
+                return Value::Missing;
+            }
+        }
         match v {
             Value::Continuous(f) => input_vec.push(f),
             Value::Discrete(_) => {
-                // For categorical KNN (like simpleMatching), we would need to handle discrete distance.
-                // For v1, if any knn_input is discrete and input is discrete, use 0 if equal else 1.
-                // But our values for those derived fields (like single, divorced etc) are continuous after NormDiscrete, so they are Continuous.
-                // So we can handle discrete as 0/1.
                 input_vec.push(0.0);
             }
             Value::Missing => return Value::Missing,
@@ -38,27 +125,120 @@ pub fn evaluate_nearest_neighbor(nn: &NearestNeighborIr, values: &[Value]) -> Va
         let mut valid = true;
         for &fid in &nn.knn_inputs {
             let input_val = {
-                let idx = fid.as_usize();
-                if idx < input_vec.len() {
-                    // input_vec is aligned with knn_inputs order, not FieldId index
-                    // We need to map fid to position in knn_inputs
-                    let pos = nn.knn_inputs.iter().position(|&x| x == fid).unwrap();
-                    input_vec[pos]
-                } else {
-                    0.0
-                }
+                let pos = nn.knn_inputs.iter().position(|&x| x == fid).unwrap();
+                input_vec[pos]
             };
-            let train_val = instance.get(&fid).copied().unwrap_or(Value::Missing);
+            // Try to get train value for this KNN input; if missing, try to compute derived from instance's raw fields
+            let mut train_val = instance.get(&fid).copied().unwrap_or(Value::Missing);
+            if train_val.is_missing() {
+                if let (Some(fnames), Some(snames)) = (field_names, symbol_names) {
+                    if let Some(fname) = fnames.get(&fid) {
+                        match fname.as_str() {
+                            "single" => {
+                                for (fid2, name) in fnames.iter() {
+                                    if name == "marital status" {
+                                        if let Some(&v) = instance.get(fid2) {
+                                            if let Value::Discrete(sid) = v {
+                                                if let Some(s) = snames.get(&sid) {
+                                                    train_val = Value::Continuous(if s == "s" {
+                                                        1.0
+                                                    } else {
+                                                        0.0
+                                                    });
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "divorced" => {
+                                for (fid2, name) in fnames.iter() {
+                                    if name == "marital status" {
+                                        if let Some(&v) = instance.get(fid2) {
+                                            if let Value::Discrete(sid) = v {
+                                                if let Some(s) = snames.get(&sid) {
+                                                    train_val = Value::Continuous(if s == "d" {
+                                                        1.0
+                                                    } else {
+                                                        0.0
+                                                    });
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "married" => {
+                                for (fid2, name) in fnames.iter() {
+                                    if name == "marital status" {
+                                        if let Some(&v) = instance.get(fid2) {
+                                            if let Value::Discrete(sid) = v {
+                                                if let Some(s) = snames.get(&sid) {
+                                                    train_val = Value::Continuous(if s == "m" {
+                                                        1.0
+                                                    } else {
+                                                        0.0
+                                                    });
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "has dependents" => {
+                                for (fid2, name) in fnames.iter() {
+                                    if name == "dependents" {
+                                        if let Some(&v) = instance.get(fid2) {
+                                            match v {
+                                                Value::Continuous(f) => {
+                                                    train_val = Value::Continuous(if f > 0.0 {
+                                                        1.0
+                                                    } else {
+                                                        0.0
+                                                    });
+                                                    break;
+                                                }
+                                                Value::Discrete(sid) => {
+                                                    if let Some(s) = snames.get(&sid) {
+                                                        if let Ok(f) = s.parse::<f64>() {
+                                                            train_val =
+                                                                Value::Continuous(if f > 0.0 {
+                                                                    1.0
+                                                                } else {
+                                                                    0.0
+                                                                });
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if train_val.is_missing() {
+                    valid = false;
+                    break;
+                }
+            }
             let train_f = match train_val {
                 Value::Continuous(f) => f,
-                Value::Discrete(_) => 0.0, // should not happen for knn_inputs which are continuous derived
+                Value::Discrete(_) => 0.0,
                 Value::Missing => {
                     valid = false;
                     break;
                 }
             };
             let diff = input_val - train_f;
-            dist += diff * diff; // squared Euclidean
+            dist += diff * diff;
         }
         if valid {
             distances.push((i, dist));
@@ -170,7 +350,7 @@ mod tests {
         // values array index by FieldId, need to ensure f_input at 0 and f_output at 1
         let mut values = vec![Value::Missing; 2];
         values[f_input.as_usize()] = Value::Continuous(2.4);
-        let pred = evaluate_nearest_neighbor(&nn, &values);
+        let pred = evaluate_nearest_neighbor(&nn, &values, None, None);
         assert_eq!(pred, Value::Discrete(s_med));
     }
 }

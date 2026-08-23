@@ -34,9 +34,12 @@ impl ExecutionProvider for CpuSerialProvider {
             ModelIr::Scorecard(sc) => pmml_evaluator::models::evaluate_scorecard(sc, values),
             ModelIr::Clustering(cl) => pmml_evaluator::models::evaluate_clustering(cl, values),
             ModelIr::NaiveBayes(nb) => pmml_evaluator::models::evaluate_naive_bayes(nb, values),
-            ModelIr::NearestNeighbor(nn) => {
-                pmml_evaluator::models::evaluate_nearest_neighbor(nn, values)
-            }
+            ModelIr::NearestNeighbor(nn) => pmml_evaluator::models::evaluate_nearest_neighbor(
+                nn,
+                values,
+                Some(&ir.field_names),
+                Some(&ir.symbol_names),
+            ),
             ModelIr::SupportVectorMachine(svm) => {
                 pmml_evaluator::models::evaluate_support_vector_machine(svm, values)
             }
