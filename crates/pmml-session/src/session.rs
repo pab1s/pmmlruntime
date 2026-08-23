@@ -95,6 +95,14 @@ impl Session {
                 .mining_schema
                 .target_field
                 .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            pmml_ir::ir::ModelIr::Association(a) => a
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            pmml_ir::ir::ModelIr::RuleSet(r) => r
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
             _ => None,
         };
 
@@ -163,6 +171,12 @@ impl Session {
             pmml_ir::ir::ModelIr::GeneralRegression(gr) => {
                 pmml_evaluator::output::build_output(&gr.output, predicted, &HashMap::new())
             }
+            pmml_ir::ir::ModelIr::Association(a) => {
+                pmml_evaluator::output::build_output(&a.output, predicted, &HashMap::new())
+            }
+            pmml_ir::ir::ModelIr::RuleSet(r) => {
+                pmml_evaluator::output::build_output(&r.output, predicted, &HashMap::new())
+            }
             _ => {
                 let mut m = HashMap::new();
                 m.insert("predictedValue".to_string(), predicted);
@@ -226,6 +240,8 @@ impl Session {
             pmml_ir::ir::ModelIr::NearestNeighbor(n) => n.mining_schema.active_fields.len(),
             pmml_ir::ir::ModelIr::SupportVectorMachine(s) => s.mining_schema.active_fields.len(),
             pmml_ir::ir::ModelIr::GeneralRegression(g) => g.mining_schema.active_fields.len(),
+            pmml_ir::ir::ModelIr::Association(a) => a.mining_schema.active_fields.len(),
+            pmml_ir::ir::ModelIr::RuleSet(r) => r.mining_schema.active_fields.len(),
             _ => 0,
         }
     }

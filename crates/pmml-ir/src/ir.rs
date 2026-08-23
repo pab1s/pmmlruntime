@@ -80,6 +80,8 @@ pub enum ModelIr {
     SupportVectorMachine(SupportVectorMachineIr),
     NeuralNetwork(NeuralNetworkIr),
     GeneralRegression(GeneralRegressionIr),
+    Association(AssociationIr),
+    RuleSet(RuleSetIr),
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +263,20 @@ pub struct GeneralRegressionIr {
     pub mining_schema: MiningSchemaIr,
     pub output: Vec<OutputFieldIr>,
     // stub
+}
+
+#[derive(Debug, Clone)]
+pub struct AssociationIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuleSetIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
 }
 
 #[derive(Debug, Clone)]

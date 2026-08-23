@@ -780,7 +780,6 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         let output = lower_output(&gr.output, &field_name_to_id, &mut interner);
-        // For v1, we create a stub GeneralRegressionIr with empty param matrices
         let gr_ir = GeneralRegressionIr {
             function_name: gr.function_name.clone(),
             mining_schema,
@@ -801,6 +800,34 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             output,
         };
         (ModelIr::SupportVectorMachine(svm_ir), vec![])
+    } else if let Some(am) = raw.association_model {
+        let mining_schema = lower_mining_schema(
+            &am.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&am.output, &field_name_to_id, &mut interner);
+        let assoc_ir = AssociationIr {
+            function_name: am.function_name.clone(),
+            mining_schema,
+            output,
+        };
+        (ModelIr::Association(assoc_ir), vec![])
+    } else if let Some(rs) = raw.rule_set_model {
+        let mining_schema = lower_mining_schema(
+            &rs.mining_schema,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        let output = lower_output(&rs.output, &field_name_to_id, &mut interner);
+        let rs_ir = RuleSetIr {
+            function_name: rs.function_name.clone(),
+            mining_schema,
+            output,
+        };
+        (ModelIr::RuleSet(rs_ir), vec![])
     } else if raw.neural_network.is_some() {
         return Err(PmmlError::UnsupportedMarkup(
             "NeuralNetwork not yet fully supported (stub)".into(),
