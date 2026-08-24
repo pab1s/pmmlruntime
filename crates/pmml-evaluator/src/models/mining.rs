@@ -330,20 +330,20 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
             operator,
             predicates,
         } => match operator {
-            CompoundOperator::And => predicates.iter().all(|p| eval_predicate(p, values)),
-            CompoundOperator::Or => predicates.iter().any(|p| eval_predicate(p, values)),
+            CompoundOperator::And => predicates.iter().all(|p| eval_predicate(&**p, values)),
+            CompoundOperator::Or => predicates.iter().any(|p| eval_predicate(&**p, values)),
             CompoundOperator::Xor => {
                 let mut c = 0;
-                for p in predicates {
-                    if eval_predicate(p, values) {
+                for p in predicates.iter() {
+                    if eval_predicate(&**p, values) {
                         c += 1;
                     }
                 }
                 c == 1
             }
             CompoundOperator::Surrogate => {
-                for p in predicates {
-                    let field_missing = match p {
+                for p in predicates.iter() {
+                    let field_missing = match &**p {
                         PredicateIr::Simple { field, .. } => {
                             let idx = field.as_usize();
                             idx < values.len() && values[idx].is_missing()
@@ -357,7 +357,7 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
                     if field_missing {
                         continue;
                     }
-                    if eval_predicate(p, values) {
+                    if eval_predicate(&**p, values) {
                         return true;
                     }
                     return false;

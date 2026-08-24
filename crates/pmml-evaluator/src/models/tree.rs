@@ -104,12 +104,12 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
             operator,
             predicates,
         } => match operator {
-            CompoundOperator::And => predicates.iter().all(|p| eval_predicate(p, values)),
-            CompoundOperator::Or => predicates.iter().any(|p| eval_predicate(p, values)),
+            CompoundOperator::And => predicates.iter().all(|p| eval_predicate(&**p, values)),
+            CompoundOperator::Or => predicates.iter().any(|p| eval_predicate(&**p, values)),
             CompoundOperator::Xor => {
                 let mut true_count = 0;
-                for p in predicates {
-                    if eval_predicate(p, values) {
+                for p in predicates.iter() {
+                    if eval_predicate(&**p, values) {
                         true_count += 1;
                     }
                 }
@@ -119,9 +119,9 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
                 // Surrogate: evaluate predicates in order, first whose field is not missing
                 // For v1 we approximate: return first predicate where field not missing and predicate true.
                 // If none evaluatable, false.
-                for p in predicates {
+                for p in predicates.iter() {
                     // Check if predicate's field is missing — need to extract field
-                    let field_missing = match p {
+                    let field_missing = match &**p {
                         PredicateIr::Simple { field, .. } => {
                             let idx = field.as_usize();
                             idx < values.len() && values[idx].is_missing()
@@ -135,7 +135,7 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
                     if field_missing {
                         continue;
                     }
-                    if eval_predicate(p, values) {
+                    if eval_predicate(&**p, values) {
                         return true;
                     }
                     // if first non-missing predicate is false, surrogate false (don't try next?)

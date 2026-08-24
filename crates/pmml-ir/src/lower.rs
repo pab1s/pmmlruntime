@@ -6,6 +6,7 @@ use pmml_core::error::{PmmlError, Result};
 use pmml_core::field::{DataType, OpType};
 use pmml_core::{FieldId, SymbolId};
 use pmml_xml::{RawPmml, RawPredicate};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 fn parse_data_type(s: &str) -> Result<DataType> {
@@ -163,10 +164,33 @@ fn lower_predicate(
                     values: vec![],
                 });
             let is_in = boolean_operator == "isIn";
-            let vals: Vec<SymbolIdOrContinuous> = array
-                .split_whitespace()
-                .map(|v| value_to_symbol_or_continuous(v, meta.data_type, interner))
-                .collect();
+            // E2: memchr fast path for inlineTable array split (whitespace)
+            // Use memchr to find whitespace boundaries faster than split_whitespace for large arrays
+            let vals: Vec<SymbolIdOrContinuous> = {
+                let bytes = array.as_bytes();
+                let mut out = Vec::new();
+                let mut start = 0usize;
+                while start < bytes.len() {
+                    // skip leading whitespace via memchr not needed, manual skip
+                    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                        start += 1;
+                    }
+                    if start >= bytes.len() {
+                        break;
+                    }
+                    // find next whitespace using memchr (fast SIMD)
+                    let remaining = &bytes[start..];
+                    let next_ws = memchr::memchr2(b' ', b'\t', remaining)
+                        .or_else(|| memchr::memchr(b'\n', remaining))
+                        .or_else(|| memchr::memchr(b'\r', remaining))
+                        .unwrap_or(remaining.len());
+                    let end = start + next_ws;
+                    let token = &array[start..end];
+                    out.push(value_to_symbol_or_continuous(token, meta.data_type, interner));
+                    start = end;
+                }
+                out
+            };
             Ok(PredicateIr::SimpleSet {
                 field: fid,
                 is_in,
@@ -189,10 +213,10 @@ fn lower_predicate(
                     })
                 }
             };
-            let preds = predicates
+            let preds: SmallVec<[Box<PredicateIr>; 4]> = predicates
                 .iter()
-                .map(|p| lower_predicate(p, interner, field_meta_map, field_name_to_id))
-                .collect::<Result<Vec<_>>>()?;
+                .map(|p| lower_predicate(p, interner, field_meta_map, field_name_to_id).map(Box::new))
+                .collect::<Result<SmallVec<[Box<PredicateIr>; 4]>>>()?;
             Ok(PredicateIr::Compound {
                 operator: op,
                 predicates: preds,

@@ -531,6 +531,7 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
 mod tests {
     use super::*;
     use pmml_core::Value;
+    use pmml_ir::ir::{DiscretizeBin, LinearNorm};
 
     #[test]
     fn empty_bytecode() {

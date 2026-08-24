@@ -80,19 +80,19 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
             predicates,
         } => match operator {
             pmml_ir::ir::CompoundOperator::And => {
-                predicates.iter().all(|p| eval_predicate(p, values))
+                predicates.iter().all(|p| eval_predicate(&**p, values))
             }
             pmml_ir::ir::CompoundOperator::Or => {
-                predicates.iter().any(|p| eval_predicate(p, values))
+                predicates.iter().any(|p| eval_predicate(&**p, values))
             }
             pmml_ir::ir::CompoundOperator::Xor => {
-                let true_count = predicates.iter().filter(|p| eval_predicate(p, values)).count();
+                let true_count = predicates.iter().filter(|p| eval_predicate(&**p, values)).count();
                 true_count == 1
             }
             pmml_ir::ir::CompoundOperator::Surrogate => {
                 // Surrogate: true if any predicate true or if missing values cause surrogate to be considered
                 // For v1, treat as Or but handle missing as false
-                predicates.iter().any(|p| eval_predicate(p, values))
+                predicates.iter().any(|p| eval_predicate(&**p, values))
             }
         },
     }

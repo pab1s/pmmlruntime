@@ -11,3 +11,5 @@ smallvec = { workspace = true }
 bumpalo = { workspace = true }
 ahash = { workspace = true }
 rayon = { workspace = true }
+memchr = { workspace = true }
+lasso = { workspace = true }

@@ -2,6 +2,7 @@
 
 use pmml_core::field::{DataType, OpType, ResultFeature};
 use pmml_core::{FieldId, SymbolId};
+use smallvec::SmallVec;
 
 /// Field metadata after DataDictionary + MiningSchema lowering.
 #[derive(Debug, Clone)]
@@ -523,7 +524,8 @@ pub enum PredicateIr {
     },
     Compound {
         operator: CompoundOperator,
-        predicates: Vec<PredicateIr>,
+        // SmallVec pooled for typical 1-4 predicates per compound (E2) — Boxed to avoid infinite size
+        predicates: SmallVec<[Box<PredicateIr>; 4]>,
     },
 }
 
