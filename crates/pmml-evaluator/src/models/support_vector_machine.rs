@@ -19,7 +19,7 @@ pub fn evaluate_support_vector_machine(svm: &SupportVectorMachineIr, values: &[V
         match v {
             Value::Continuous(f) => input_vec.push(f),
             Value::Missing => return Value::Missing,
-            Value::Discrete(sid) => {
+            Value::Discrete(_sid) => {
                 // For categorical via vector, try to parse? For now 0
                 // This shouldn't happen for continuous vector fields
                 return Value::Missing;

@@ -1,8 +1,8 @@
 //! TreeModel evaluation — flat Node traversal with ONNX-style branchless predicates.
 
-use pmml_core::{FieldId, SymbolId, Value};
+use pmml_core::{FieldId, Value};
 use pmml_ir::ir::{
-    CompoundOperator, MissingValueStrategy, NoTrueChildStrategy, NodeIr, PredicateIr,
+    CompoundOperator, NoTrueChildStrategy, PredicateIr,
     SimpleOperator, TreeIr,
 };
 

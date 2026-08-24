@@ -9,28 +9,51 @@ use pmml_xml::RawPmml;
 const UNSUPPORTED_MSG: &str = "unsupported markup";
 
 pub fn verify_raw(raw: &RawPmml) -> Result<()> {
-    // Check for models we don't support in v1: if raw has no TreeModel but has other models,
-    // we should error. For now RawPmml only has tree_model, so if it's None, we error.
-    // In future, RawPmml will have multiple model fields; we check each.
-    if raw.tree_model.is_none() && raw.data_dictionary.is_empty() {
+    // Gracefully handle vendor extensions — never error, just store
+    // Extensions are already captured in raw.extensions; no verification needed
+
+    // Handle unsupported PMML 4.4 models (plan D1): AnomalyDetection, Baseline, Bayesian, etc.
+    // These are captured as raw.unsupported_model during unmarshal and should produce a clear
+    // UnsupportedMarkup error that callers can handle gracefully (keep, not panic).
+    if let Some(ref model) = raw.unsupported_model {
+        return Err(unsupported(model));
+    }
+
+    // Deprecated / removed elements: ModelComposition (4.1), CenterFields (3.2), TableLocator handled in arrow bridge
+    // They are already either captured as unsupported_model or handled gracefully elsewhere
+
+    // Check for invalid PMML: no known model and no extensions but empty data_dictionary handled elsewhere
+    if raw.tree_model.is_none()
+        && raw.regression_model.is_none()
+        && raw.mining_model.is_none()
+        && raw.scorecard.is_none()
+        && raw.clustering_model.is_none()
+        && raw.naive_bayes_model.is_none()
+        && raw.nearest_neighbor_model.is_none()
+        && raw.support_vector_machine_model.is_none()
+        && raw.neural_network.is_none()
+        && raw.general_regression_model.is_none()
+        && raw.association_model.is_none()
+        && raw.rule_set_model.is_none()
+        && raw.unsupported_model.is_none()
+        && raw.data_dictionary.is_empty()
+    {
         // empty pmml — validation will fail elsewhere
         return Ok(());
     }
-    // No explicit unsupported elements in Raw yet; later we parse Extension/other.
+    // InvalidValueTreatment and other MiningField attributes are validated in lower; here we just ensure
+    // at least one known model or extensions present is ok
     Ok(())
 }
 
 pub fn verify_ir(ir: &Ir) -> Result<()> {
     // Check for unsupported ResultFeature etc — already filtered in lower.
     // Check for unsupported mining_function? Tree supports classification/regression.
-    match &ir.model {
-        crate::ir::ModelIr::Tree(tree) => {
-            // Check missingValueStrategy is one of allowed
-            // Allowed: lastPrediction, nullPrediction, defaultChild
-            // Already validated in lower; if unknown, error
-            let _ = tree.missing_value_strategy;
-        }
-        _ => {}
+    if let crate::ir::ModelIr::Tree(tree) = &ir.model {
+        // Check missingValueStrategy is one of allowed
+        // Allowed: lastPrediction, nullPrediction, defaultChild
+        // Already validated in lower; if unknown, error
+        let _ = tree.missing_value_strategy;
     }
     Ok(())
 }

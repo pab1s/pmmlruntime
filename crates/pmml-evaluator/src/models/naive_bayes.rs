@@ -1,5 +1,5 @@
 use pmml_core::Value;
-use pmml_ir::ir::{NaiveBayesIr, TargetValueCountIr};
+use pmml_ir::ir::NaiveBayesIr;
 
 /// Gaussian PDF
 fn gaussian_pdf(x: f64, mean: f64, variance: f64) -> f64 {
@@ -23,12 +23,15 @@ pub fn evaluate_naive_bayes(nb: &NaiveBayesIr, values: &[Value]) -> Value {
         return Value::Discrete(nb.bayes_output_counts[0].value);
     }
 
+    // Compute log probabilities per target for threshold handling
+    let mut log_probs: std::collections::HashMap<pmml_core::SymbolId, f64> = std::collections::HashMap::new();
     let mut best_score = f64::NEG_INFINITY;
     let mut best_value: Option<pmml_core::SymbolId> = None;
 
     for target_count in &nb.bayes_output_counts {
         let prior = target_count.count / total_prior;
         if prior <= 0.0 {
+            log_probs.insert(target_count.value, f64::NEG_INFINITY);
             continue;
         }
         let mut log_prob = prior.ln();
@@ -72,7 +75,7 @@ pub fn evaluate_naive_bayes(nb: &NaiveBayesIr, values: &[Value]) -> Value {
                 // Need to check if actual discrete value equals pc.value
                 let matches = match actual {
                     Value::Discrete(sid) => sid == pc.value,
-                    Value::Continuous(f) => {
+                    Value::Continuous(_f) => {
                         // For categorical double like "1.0", need to handle as discrete string?
                         // Try to compare as string via symbol? For v1, if actual is continuous but expected discrete, try to see if f as string matches
                         // For simplicity, if actual is continuous and pc.value corresponds to discrete string representation of f, we can try
@@ -108,14 +111,45 @@ pub fn evaluate_naive_bayes(nb: &NaiveBayesIr, values: &[Value]) -> Value {
             }
         }
 
+        log_probs.insert(target_count.value, log_prob);
         if log_prob > best_score {
             best_score = log_prob;
             best_value = Some(target_count.value);
         }
     }
 
+    // Threshold handling: if best probability < threshold, return Missing (per PMML spec)
+    // threshold is e.g., 0.001 to avoid low-confidence predictions
+    if nb.threshold > 0.0 {
+        if let Some(best_sid) = best_value {
+            if let Some(&best_log) = log_probs.get(&best_sid) {
+                // Compute normalized probability via softmax of log probs (exp(log)/sum exp)
+                let mut sum_exp = 0.0;
+                let mut max_log = f64::NEG_INFINITY;
+                for &lp in log_probs.values() {
+                    if lp > max_log {
+                        max_log = lp;
+                    }
+                }
+                // Subtract max for numerical stability
+                for &lp in log_probs.values() {
+                    if lp.is_finite() {
+                        sum_exp += (lp - max_log).exp();
+                    }
+                }
+                let best_prob = if sum_exp > 0.0 {
+                    (best_log - max_log).exp() / sum_exp
+                } else {
+                    0.0
+                };
+                if best_prob < nb.threshold {
+                    return Value::Missing;
+                }
+            }
+        }
+    }
+
     if let Some(v) = best_value {
-        // Apply threshold if needed: if best_score below threshold, return Missing? For v1, ignore threshold
         Value::Discrete(v)
     } else {
         Value::Missing

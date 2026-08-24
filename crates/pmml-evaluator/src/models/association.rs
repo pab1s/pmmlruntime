@@ -2,43 +2,68 @@ use pmml_core::Value;
 use pmml_ir::ir::AssociationIr;
 
 pub fn evaluate_association(assoc: &AssociationIr, values: &[Value]) -> Value {
-    // For Association, the input is typically a transaction. For the fixture, we have transaction and item.
-    // The model has Itemsets and Rules. The evaluation is to find rules where antecedent matches the input itemset.
-    // For v1, we implement a simple version: if input has an item that matches an itemset, return the consequent's item value.
-
-    // Find the first active field's value
+    // Association evaluation: input transaction (active field) contains items; find matching rules.
+    // Full InputTable handling would require Host table join, but v1 handles simple discrete item input.
+    // We also support transactional field where value is Discrete representing a single item (e.g., "milk")
+    // and check which rules have antecedent containing that item.
     if assoc.mining_schema.active_fields.is_empty() {
         return Value::Missing;
     }
-    // Get the first active field's value
     let fid = assoc.mining_schema.active_fields[0].as_usize();
-    let actual = if fid < values.len() {
-        values[fid]
-    } else {
-        Value::Missing
-    };
+    let actual = if fid < values.len() { values[fid] } else { Value::Missing };
     if actual.is_missing() {
         return Value::Missing;
     }
 
-    // Find the item that matches the actual value
-    // Actual is Discrete with SymbolId, need to find item with that value
-    if let Value::Discrete(sid) = actual {
-        // Find item id that has value matching sid? We need to map SymbolId to item value string, but we don't have symbol_names here.
-        // For v1, we will just return the first rule's consequent's item value
-        if let Some(first_rule) = assoc.rules.first() {
-            // Find itemset for consequent
-            for itemset in &assoc.itemsets {
-                if itemset.id == first_rule.consequent {
-                    if let Some(item_id) = itemset.item_ids.first() {
-                        for item in &assoc.items {
-                            if &item.id == item_id {
-                                // Return the item's value as Discrete with a new SymbolId?
-                                // For v1, we can't resolve SymbolId, so just return the first rule's consequent as string via Value::Discrete with a placeholder
-                                // Instead, we will return the associated item's value as string via Value::Discrete with SymbolId 0?
-                                // For now, just return the first item's value as Discrete with sid 0
-                                return Value::Discrete(sid);
-                            }
+    // Extract input SymbolId (discrete item). For continuous fallback, try to use as is.
+    let input_sid = match actual {
+        Value::Discrete(sid) => sid,
+        Value::Continuous(_) => {
+            // For transactional numeric inputs, treat as missing for categorical association
+            return Value::Missing;
+        }
+        Value::Missing => return Value::Missing,
+    };
+
+    // Build map item_id -> value SymbolId for quick lookup
+    use std::collections::HashMap;
+    let item_value_map: HashMap<&String, pmml_core::SymbolId> = assoc
+        .items
+        .iter()
+        .map(|it| (&it.id, it.value))
+        .collect();
+    // Find which item id corresponds to input_sid (reverse lookup)
+    let mut input_item_id: Option<&String> = None;
+    for it in &assoc.items {
+        if it.value == input_sid {
+            input_item_id = Some(&it.id);
+            break;
+        }
+    }
+    let input_item_id = match input_item_id {
+        Some(id) => id,
+        None => {
+            // Input value not found among items — no matching rule
+            return Value::Missing;
+        }
+    };
+
+    // Build map itemset_id -> item_ids set
+    let itemset_map: HashMap<&String, &[String]> = assoc
+        .itemsets
+        .iter()
+        .map(|is| (&is.id, is.item_ids.as_slice()))
+        .collect();
+
+    // Find rules where antecedent itemset contains input item
+    for rule in &assoc.rules {
+        if let Some(ante_items) = itemset_map.get(&rule.antecedent) {
+            if ante_items.contains(input_item_id) {
+                // Rule antecedent matches input; return consequent's first item's value
+                if let Some(cons_items) = itemset_map.get(&rule.consequent) {
+                    if let Some(first_con_id) = cons_items.first() {
+                        if let Some(&val) = item_value_map.get(first_con_id) {
+                            return Value::Discrete(val);
                         }
                     }
                 }
@@ -46,25 +71,20 @@ pub fn evaluate_association(assoc: &AssociationIr, values: &[Value]) -> Value {
         }
     }
 
-    // Fallback: return first rule's consequent as string
-    if let Some(rule) = assoc.rules.first() {
-        // Find consequent itemset's first item's value
-        for itemset in &assoc.itemsets {
-            if itemset.id == rule.consequent {
-                if let Some(item_id) = itemset.item_ids.first() {
-                    for item in &assoc.items {
-                        if &item.id == item_id {
-                            // Return item value as Discrete with a dummy SymbolId
-                            // For v1, we will just return the item's value as string via Value::Discrete with SymbolId 0
-                            // But we need a SymbolId that corresponds to that value. Since we don't have interner here, we will just return the first item's SymbolId
-                            // For now, return the actual input's SymbolId as placeholder
-                            return actual;
-                        }
+    // Also consider rules where antecedent is single item equal to input itemset (fallback original logic)
+    // If no rule matched via containment, fallback to first rule's consequent if antecedent equals input item id directly
+    for rule in &assoc.rules {
+        if &rule.antecedent == input_item_id {
+            if let Some(cons_items) = itemset_map.get(&rule.consequent) {
+                if let Some(first_con_id) = cons_items.first() {
+                    if let Some(&val) = item_value_map.get(first_con_id) {
+                        return Value::Discrete(val);
                     }
                 }
             }
         }
     }
 
+    // No matching rule
     Value::Missing
 }

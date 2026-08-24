@@ -1,5 +1,5 @@
 use pmml_core::Value;
-use pmml_ir::ir::{RegressionIr, RegressionNormalizationMethod, SymbolIdOrContinuous};
+use pmml_ir::ir::{RegressionIr, RegressionNormalizationMethod};
 
 /// Evaluate regression model given values array.
 /// Returns predicted Value (Continuous for regression, Discrete for classification).

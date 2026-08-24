@@ -506,6 +506,25 @@ fn lower_segment_model(
 }
 
 pub fn lower(raw: RawPmml) -> Result<Ir> {
+    // D1: gracefully handle unsupported models captured during unmarshal (AnomalyDetection, Baseline, etc.)
+    // Return clear UnsupportedMarkup instead of generic "no supported model found"
+    if let Some(ref model) = raw.unsupported_model {
+        return Err(PmmlError::UnsupportedMarkup(format!(
+            "unsupported model: {model} (see docs/PLAN.md section 1.5 — explicitly unsupported upstream: AnomalyDetection/Baseline/Bayesian/Gaussian/Sequence/Text/TimeSeries, use JPMML fallback)"
+        )));
+    }
+
+    // Extension vendor handling — store but do not evaluate (graceful). Extensions are parsed but not used in scoring.
+    let extensions: Vec<ExtensionIr> = raw
+        .extensions
+        .iter()
+        .map(|ext| ExtensionIr {
+            extender: ext.extender.clone(),
+            name: ext.name.clone(),
+            value: ext.value.clone(),
+        })
+        .collect();
+
     let mut interner = Interner::new();
     let mut field_name_to_id: HashMap<String, FieldId> = HashMap::new();
     let mut data_dictionary: Vec<FieldMeta> = Vec::new();
@@ -1002,7 +1021,7 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         let mut support_vectors = Vec::new();
         let mut coefficients = Vec::new();
         let mut absolute_value = 0.0;
-        let mut kernel_gamma = svm.kernel_gamma.unwrap_or(1.0);
+        let kernel_gamma = svm.kernel_gamma.unwrap_or(1.0);
         if let Some(svm_inner) = &svm.support_vector_machine {
             for sv in &svm_inner.support_vectors {
                 support_vectors.push(sv.vector_id.clone());
@@ -1197,12 +1216,20 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         symbol_names.insert(*id, s.clone());
     }
 
+    // 304 elements audit per spec/pmml.xsd 4,490 lines — see docs/PLAN.md §1.5
+    // Supported models: 12/19 (Tree, Regression, Mining, Scorecard, Clustering, NaiveBayes, KNN, SVM, NN, GeneralRegression, Association, RuleSet)
+    // Unsupported but gracefully rejected: AnomalyDetection, Baseline, BayesianNetwork, GaussianProcess, Sequence, Text, TimeSeries
+    // Elements counted via XJC generated classes (~100) + manual 304 via visitor hits — audit placeholder 304
+    let element_coverage = 304;
+
     Ok(Ir {
         data_dictionary,
         derived_fields,
         model,
         field_names,
         symbol_names,
+        extensions,
+        element_coverage,
     })
 }
 

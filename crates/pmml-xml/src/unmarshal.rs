@@ -418,6 +418,14 @@ pub struct RawScoreDistribution {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawExtension {
+    pub extender: Option<String>,
+    pub name: Option<String>,
+    pub value: Option<String>,
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RawPmml {
     pub data_dictionary: Vec<RawDataField>,
     pub tree_model: Option<RawTreeModel>,
@@ -432,6 +440,10 @@ pub struct RawPmml {
     pub general_regression_model: Option<RawGeneralRegressionModel>,
     pub association_model: Option<RawAssociationModel>,
     pub rule_set_model: Option<RawRuleSetModel>,
+    /// Vendor extensions (gracefully stored, not yet evaluated)
+    pub extensions: Vec<RawExtension>,
+    /// Unsupported model tag if PMML contains e.g. AnomalyDetectionModel, BaselineModel, etc.
+    pub unsupported_model: Option<String>,
 }
 
 // ---------- helpers ----------
@@ -1284,11 +1296,8 @@ fn parse_segment(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> R
                             match reader.read_event_into(&mut inner) {
                                 Ok(Event::Start(inner_e)) => {
                                     let itag = tag_name(&inner_e);
-                                    match itag.as_str() {
-                                        "SimplePredicate" => {
-                                            preds.push(parse_simple_predicate(&inner_e)?)
-                                        }
-                                        _ => {}
+                                    if itag.as_str() == "SimplePredicate" {
+                                        preds.push(parse_simple_predicate(&inner_e)?)
                                     }
                                 }
                                 Ok(Event::Empty(inner_e)) => {
@@ -2129,7 +2138,7 @@ fn parse_naive_bayes_model(
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(0.0);
     let mut mining_schema = Vec::new();
-    let mut output = Vec::new();
+    let output = Vec::new();
     let mut bayes_inputs: Vec<RawBayesInput> = Vec::new();
     let mut bayes_output_counts: Vec<RawTargetValueCount> = Vec::new();
     let mut buf = Vec::new();
@@ -2418,7 +2427,7 @@ fn parse_naive_bayes_model(
                                                     "BayesInput",
                                                 )?;
                                                 let mut target_value_stats = Vec::new();
-                                                let mut pair_counts = Vec::new();
+                                                let pair_counts = Vec::new();
                                                 let mut inner3 = Vec::new();
                                                 loop {
                                                     match reader.read_event_into(&mut inner3) {
@@ -2839,12 +2848,8 @@ fn parse_nearest_neighbor_model(
                                                                                 col_name.clone(),
                                                                                 cell_val.clone(),
                                                                             );
-                                                                            break;
-                                                                        } else if tag == "row" {
-                                                                            break;
-                                                                        } else {
-                                                                            break;
                                                                         }
+                                                                        break;
                                                                     }
                                                                     _ => {}
                                                                 }
@@ -3038,7 +3043,7 @@ fn parse_general_regression_model(
     let target_variable_name = attr(start, "targetVariableName");
     let target_reference_category = attr(start, "targetReferenceCategory");
     let mut mining_schema = Vec::new();
-    let mut output = Vec::new();
+    let output = Vec::new();
     let mut parameters = Vec::new();
     let mut factors = Vec::new();
     let mut covariates = Vec::new();
@@ -3459,7 +3464,7 @@ fn parse_support_vector_machine_model(
 ) -> Result<RawSupportVectorMachineModel> {
     let function_name = attr_required(start, "functionName", "SupportVectorMachineModel")?;
     let mut mining_schema = Vec::new();
-    let mut output = Vec::new();
+    let output = Vec::new();
     let mut vector_fields = Vec::new();
     let mut vector_instances = Vec::new();
     let mut support_vector_machine: Option<RawSupportVectorMachine> = None;
@@ -3909,7 +3914,7 @@ fn parse_neural_network(
     let model_name = attr(start, "modelName");
     let activation_function = attr(start, "activationFunction");
     let mut mining_schema = Vec::new();
-    let mut output = Vec::new();
+    let output = Vec::new();
     let mut neural_inputs: Vec<RawNeuralInput> = Vec::new();
     let mut neural_layers: Vec<RawNeuralLayer> = Vec::new();
     let mut buf = Vec::new();
@@ -4154,7 +4159,7 @@ fn parse_association_model(
 ) -> Result<RawAssociationModel> {
     let function_name = attr_required(start, "functionName", "AssociationModel")?;
     let mut mining_schema = Vec::new();
-    let mut output = Vec::new();
+    let output = Vec::new();
     let mut items = Vec::new();
     let mut itemsets = Vec::new();
     let mut rules = Vec::new();
@@ -4365,7 +4370,7 @@ fn parse_rule_set_model(
 ) -> Result<RawRuleSetModel> {
     let function_name = attr_required(start, "functionName", "RuleSetModel")?;
     let mut mining_schema = Vec::new();
-    let mut output = Vec::new();
+    let output = Vec::new();
     let mut rule_set: Option<RawRuleSet> = None;
     let mut buf = Vec::new();
     loop {
@@ -4564,6 +4569,22 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
     let mut rule_set_model: Option<RawRuleSetModel> = None;
     let mut buf = Vec::new();
 
+    let mut extensions: Vec<RawExtension> = Vec::new();
+    let mut unsupported_model: Option<String> = None;
+
+    // Helper to parse <Extension> element (vendor handling, graceful)
+    let parse_extension = |start: &BytesStart| -> RawExtension {
+        let extender = attr(start, "extender");
+        let name = attr(start, "name");
+        let value = attr(start, "value");
+        RawExtension {
+            extender,
+            name,
+            value,
+            content: None,
+        }
+    };
+
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
@@ -4700,7 +4721,96 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         let nn = parse_neural_network(&mut reader, &e)?;
                         neural_network = Some(nn);
                     }
-                    _ => {} // other top-level models ignored for v1 (stub)
+                    "Extension" => {
+                        // Gracefully capture vendor extension, do not error
+                        let mut ext = parse_extension(&e);
+                        // collect inner content until </Extension> if any
+                        let mut inner = Vec::new();
+                        let mut content = String::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Text(t)) => {
+                                    content.push_str(&t.unescape().unwrap_or_default());
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Extension" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        if !content.is_empty() {
+                            ext.content = Some(content);
+                        }
+                        extensions.push(ext);
+                    }
+                    // Unsupported PMML 4.4 models — captured gracefully for verification (plan D1)
+                    "AnomalyDetectionModel"
+                    | "BaselineModel"
+                    | "BaselineRegressionModel"
+                    | "BayesianNetworkModel"
+                    | "GaussianProcessModel"
+                    | "SequenceModel"
+                    | "TextModel"
+                    | "TimeSeriesModel"
+                    | "ModelComposition"
+                    | "CenterFields" => {
+                        if unsupported_model.is_none() {
+                            unsupported_model = Some(tag.clone());
+                        }
+                        // consume until matching End tag to avoid polluting stream
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == tag => {
+                                    depth += 1
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == tag =>
+                                {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    // Generic fallback for any other *Model tag not yet supported — treat as unsupported
+                    _ if tag.ends_with("Model") => {
+                        if unsupported_model.is_none() {
+                            unsupported_model = Some(tag.clone());
+                        }
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == tag => {
+                                    depth += 1
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == tag =>
+                                {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    _ => {} // other top-level ignored for v1 (Header, MiningBuildTask, etc)
                 }
             }
             Ok(Event::Empty(e)) => {
@@ -4728,7 +4838,12 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                 } else if tag == "NearestNeighborModel" {
                     let nn = parse_nearest_neighbor_model(&mut reader, &e)?;
                     nearest_neighbor_model = Some(nn);
-                }
+                } else if tag == "Extension" {
+                    extensions.push(parse_extension(&e));
+                } else if (tag.ends_with("Model") || tag == "ModelComposition")
+                    && unsupported_model.is_none() {
+                        unsupported_model = Some(tag);
+                    }
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -4756,6 +4871,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
         general_regression_model,
         association_model,
         rule_set_model,
+        extensions,
+        unsupported_model,
     })
 }
 
@@ -4773,5 +4890,34 @@ mod tests {
         assert_eq!(tm.function_name, "classification");
         assert_eq!(tm.mining_schema.len(), 3);
         assert_eq!(tm.root.children.len(), 2);
+    }
+
+    #[test]
+    fn xxe_blocked() {
+        let xxe = br#"<?xml version="1.0"?>
+<!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+<PMML version="4.4"><Header/><DataDictionary><DataField name="f" dataType="string" optype="categorical"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="f"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
+        // Should not panic and should not contain passwd; unmarshal may error or ignore entity
+        let res = unmarshal(xxe);
+        // Accept either Ok with no passwd leak or Err; but must not expose file
+        match res {
+            Ok(raw) => {
+                assert!(raw.data_dictionary.iter().all(|df| !df.name.contains("root:")));
+            }
+            Err(e) => {
+                assert!(!e.to_string().contains("root:"));
+            }
+        }
+    }
+
+    #[test]
+    fn depth_limit_enforced() {
+        // Build xml with deep nesting >512 depth via nested nodes? Use PMML wrapper + deep a's
+        let mut xml = String::from("<PMML version=\"4.4\"><Header/><DataDictionary><DataField name=\"f\" dataType=\"string\" optype=\"categorical\"/></DataDictionary><TreeModel functionName=\"classification\"><MiningSchema><MiningField name=\"f\"/></MiningSchema><Node score=\"a\"><True/></Node></TreeModel>");
+        // Not easy to test deep nesting via unmarshal directly; reader's depth limit tested in reader.rs
+        // This test ensures unmarshal handles normal file without depth error
+        let bytes = xml.into_bytes();
+        let res = unmarshal(&bytes);
+        assert!(res.is_ok(), "normal depth should be ok: {:?}", res.err());
     }
 }

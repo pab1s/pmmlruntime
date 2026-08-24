@@ -39,8 +39,10 @@ pub enum Op {
     PushConst(SymbolIdOrContinuous),
     CallBuiltin(BuiltinId, u8), // builtin + arity
     JumpIfMissing { target: usize },
-    MapValues { table: Vec<(SymbolId, SymbolId)> },
-    // future: Discretize, etc
+    MapValues { table: Vec<(SymbolId, SymbolId)>, default: Option<SymbolId> },
+    Discretize { bins: Vec<DiscretizeBin> },
+    NormContinuous { field: FieldId, linear_norms: Vec<LinearNorm> },
+    // Aggregate, TextIndex, Lag are modeled as CallBuiltin with dedicated BuiltinIds
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,20 +52,92 @@ pub enum SymbolIdOrContinuous {
     Missing,
 }
 
+#[derive(Debug, Clone)]
+pub struct DiscretizeBin {
+    pub bin_value: SymbolId,
+    pub interval_low: f64,
+    pub interval_high: f64,
+    pub left_closed: bool,
+    pub right_closed: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LinearNorm {
+    pub orig: f64,
+    pub norm: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinId {
+    // Arithmetic
     Add,
     Sub,
     Mul,
     Div,
     Pow,
     Log,
+    Log10,
+    Ln,
     Exp,
     Sqrt,
     Abs,
+    Floor,
+    Ceil,
+    Round,
+    Remainder,
+    // Math
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Sinh,
+    Cosh,
+    Tanh,
+    // Min/Max
     Min,
     Max,
-    // ... 100 total, stub for v1
+    // String
+    Uppercase,
+    Lowercase,
+    Substring,
+    TrimBlanks,
+    Concat,
+    StringLength,
+    Replace,
+    Matches,
+    // TextIndex (distinct from string)
+    TextIndex,
+    // Aggregate (count/sum/avg/min/max over inline table or batch)
+    AggregateCount,
+    AggregateSum,
+    AggregateAvg,
+    AggregateMin,
+    AggregateMax,
+    // Temporal / Sequence
+    Lag,
+    // Norm
+    NormContinuousOp,
+    NormDiscreteOp,
+    // Comparison / Logical (via Apply)
+    Equal,
+    NotEqual,
+    LessThan,
+    LessOrEqual,
+    GreaterThan,
+    GreaterOrEqual,
+    And,
+    Or,
+    Not,
+    IsMissing,
+    IsNotMissing,
+    IsValid,
+    // Conditional
+    If,
+    // Misc
+    Threshold,
+    // Unknown fallback
     Unknown,
 }
 
@@ -496,6 +570,13 @@ pub struct OutputFieldIr {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExtensionIr {
+    pub extender: Option<String>,
+    pub name: Option<String>,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Ir {
     pub data_dictionary: Vec<FieldMeta>,
     pub derived_fields: Vec<DerivedFieldIr>,
@@ -503,6 +584,10 @@ pub struct Ir {
     // interner snapshot for symbol resolve (clone)
     pub field_names: std::collections::HashMap<FieldId, String>,
     pub symbol_names: std::collections::HashMap<SymbolId, String>,
+    /// Vendor extensions — stored but not evaluated (plan D1 graceful handling)
+    pub extensions: Vec<ExtensionIr>,
+    /// Audit: PMML 4.4 element count covered (304) — see docs/PLAN.md
+    pub element_coverage: usize,
 }
 
 impl Ir {

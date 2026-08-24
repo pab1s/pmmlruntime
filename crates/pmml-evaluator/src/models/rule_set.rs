@@ -44,7 +44,37 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
                 }
             }
         }
-        PredicateIr::SimpleSet { .. } => false,
+        PredicateIr::SimpleSet {
+            field,
+            is_in,
+            array,
+        } => {
+            let idx = field.as_usize();
+            let actual = if idx < values.len() {
+                values[idx]
+            } else {
+                Value::Missing
+            };
+            if actual.is_missing() {
+                return false;
+            }
+            let is_contained = match actual {
+                Value::Continuous(a) => array.iter().any(|v| match v {
+                    SymbolIdOrContinuous::Continuous(b) => (a - b).abs() < 1e-9,
+                    _ => false,
+                }),
+                Value::Discrete(sid) => array.iter().any(|v| match v {
+                    SymbolIdOrContinuous::Symbol(s) => sid == *s,
+                    _ => false,
+                }),
+                Value::Missing => false,
+            };
+            if *is_in {
+                is_contained
+            } else {
+                !is_contained
+            }
+        }
         PredicateIr::Compound {
             operator,
             predicates,
@@ -55,7 +85,15 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
             pmml_ir::ir::CompoundOperator::Or => {
                 predicates.iter().any(|p| eval_predicate(p, values))
             }
-            _ => false,
+            pmml_ir::ir::CompoundOperator::Xor => {
+                let true_count = predicates.iter().filter(|p| eval_predicate(p, values)).count();
+                true_count == 1
+            }
+            pmml_ir::ir::CompoundOperator::Surrogate => {
+                // Surrogate: true if any predicate true or if missing values cause surrogate to be considered
+                // For v1, treat as Or but handle missing as false
+                predicates.iter().any(|p| eval_predicate(p, values))
+            }
         },
     }
 }

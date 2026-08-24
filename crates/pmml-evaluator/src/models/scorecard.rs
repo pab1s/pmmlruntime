@@ -1,5 +1,5 @@
 use pmml_core::Value;
-use pmml_ir::ir::{AttributeIr, CharacteristicIr, PredicateIr, ScorecardIr, SimpleOperator};
+use pmml_ir::ir::{PredicateIr, ScorecardIr, SimpleOperator};
 
 /// Evaluate Scorecard: initialScore + sum over characteristics of partialScore or baselineScore.
 pub fn evaluate_scorecard(scorecard: &ScorecardIr, values: &[Value]) -> Value {
