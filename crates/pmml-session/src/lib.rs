@@ -1,3 +1,4 @@
+pub mod arrow;
 pub mod env;
 pub mod options;
 pub mod providers;

@@ -2877,6 +2877,36 @@ fn parse_nearest_neighbor_model(
                                         inner2.clear();
                                     }
                                 }
+                                // TableLocator is a placeholder for external data (e.g., CSV/ARFF file).
+                                // For Arrow bridge, we handle it gracefully by treating it as empty InlineTable
+                                // (plan A4: handle TableLocator placeholder). No panic, just skip.
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "TableLocator" =>
+                                {
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "TableLocator" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Eof) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                    }
+                                    // intentionally leave `instances` empty — caller (arrow bridge)
+                                    // will produce an empty RecordBatch placeholder via
+                                    // `table_locator_placeholder_batch`. This keeps scoring from failing
+                                    // on TableLocator-only models.
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "TableLocator" =>
+                                {
+                                    // self-closing <TableLocator/> — also empty placeholder
+                                }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
                                         == "TrainingInstances" =>

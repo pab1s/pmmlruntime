@@ -10,3 +10,4 @@ anyhow = { workspace = true }
 smallvec = { workspace = true }
 bumpalo = { workspace = true }
 ahash = { workspace = true }
+rayon = { workspace = true }

@@ -259,6 +259,65 @@ impl Session {
         Ok(final_out)
     }
 
+    /// Batched run — owns batch to avoid per-row `HashMap` clone in caller's loop.
+    /// Dispatches to `ExecutionProvider` in parallel when `CpuBatched` is selected,
+    /// otherwise falls back to sequential. Clones `name_to_id` once, not per row.
+    /// Chunk size is 1024 rows (rayon will shard further by `num_cpus`).
+    pub fn run_batch(
+        &self,
+        batch: Vec<HashMap<String, Value>>,
+    ) -> Result<Vec<HashMap<String, Value>>> {
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
+        let is_batched = matches!(
+            self.options.execution_provider,
+            ExecutionProviderKind::CpuBatched
+        );
+        if is_batched {
+            use rayon::prelude::*;
+            // Use with_min_len to chunk tasks, amortizing rayon overhead for tiny rows (700ns tree).
+            // 1k rows -> with_min_len 256 gives ~4 tasks on 16 cores, each chunk serial inside thread.
+            let chunk_size = 256.max(batch.len() / rayon::current_num_threads().max(1));
+            let results: Result<Vec<_>> = batch
+                .into_par_iter()
+                .with_min_len(chunk_size)
+                .map(|input| self.run(input))
+                .collect();
+            results
+        } else {
+            batch.into_iter().map(|input| self.run(input)).collect()
+        }
+    }
+
+    /// Batched run with shared reference to batch (avoids moving). Useful for benches that
+    /// retain original batch Vec. Clones each row's map internally, but still benefits from
+    /// parallel dispatch when `CpuBatched`. Uses with_min_len to keep task granularity high.
+    pub fn run_batch_ref(
+        &self,
+        batch: &[HashMap<String, Value>],
+    ) -> Result<Vec<HashMap<String, Value>>> {
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
+        let is_batched = matches!(
+            self.options.execution_provider,
+            ExecutionProviderKind::CpuBatched
+        );
+        if is_batched {
+            use rayon::prelude::*;
+            let chunk_size = 256.max(batch.len() / rayon::current_num_threads().max(1));
+            let results: Result<Vec<_>> = batch
+                .par_iter()
+                .with_min_len(chunk_size)
+                .map(|input| self.run(input.clone()))
+                .collect();
+            results
+        } else {
+            batch.iter().map(|input| self.run(input.clone())).collect()
+        }
+    }
+
     /// Convenience: run with string values (coerced). Useful for CSV.
     pub fn run_from_strings(
         &self,
