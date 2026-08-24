@@ -4,13 +4,22 @@ Ir	mining_schema	MiningSchemaIr	single	MiningSchemaIr	flat Vec<FieldId> active
 Ir	derived_dag	Vec<DerivedFieldIr>	single	Vec<DerivedFieldIr>	DAG topo, bytecode Vec<Op> owned by Ir
 Ir	model	ModelIr	single	ModelIr	Box<TreeIr> flat Nodes
 RawPMML	header	Header	single	Box<Header>	only during lower()
-Interner	rodeo	Rodeo	single	Rodeo	only during lower(), not in hot path
-Interner	field_ids	HashMap<Box<str>,FieldId>	single	HashMap<Box<str>,FieldId>	lower cold only
+Interner	rodeo	Rodeo	single	Rodeo	only during lower(), not in Session hot path (dead fields removed: Session::rodeo/spur_to_id)
+Interner	field_ids	HashMap<Box<str>,FieldId>	single	AHashMap<String,FieldId>	lower cold + Session hot via ahash (zero-alloc Borrow<str>)
 Session	ir	Arc<Ir>	shared	Arc<Ir>	Send+Sync, clone is Arc clone
-Session	env	Arc<PmmlEnv>	shared	Arc<PmmlEnv>	pool + logger
-PmmlEnv	pool	rayon::ThreadPool	single	rayon::ThreadPool	created once per Env
-Run	values	Vec<Value>	shared	BumpVec<Value>	thread_local! arena, reset per run()
-Run	inputs	HashMap<FieldName,Value>	shared	SmallVec<[(FieldId,Value);16]>	SmallVec avoids alloc for N<=16
+Session	env	Arc<PmmlEnv>	shared	Arc<PmmlEnv>	pool + logger (PmmlEnv::name() keeps inner.name live)
+Session	provider	Box<dyn ExecutionProvider>	shared	Box<dyn ExecutionProvider>	CpuSerial vs CpuBatched (rayon), owns eval_row/eval_batch
+Session	name_to_id	AHashMap<String,FieldId>	shared	AHashMap<String,FieldId>	hot per row, Borrow<str> zero-alloc
+Session	name_to_id_std	HashMap<String,FieldId>	shared	HashMap<String,FieldId>	for Mining/GeneralRegression API (std)
+Session	symbol_str_to_id	HashMap<String,SymbolId>	shared	HashMap<String,SymbolId>	for Arrow Utf8→Discrete
+Session	output_fields	Vec<OutputFieldIr>	single	Vec<OutputFieldIr>	cached avoid per-row ModelIr match
+Session	symbol_names_vec	Vec<String>	single	Vec<String>	dense SymbolId→String for probability output
+Session	max_field_id	usize	single	usize	at least 16, for with_value_buffer size
+Batch	batch	Batch trait	single	dyn Batch	RowMajor Vec<HashMap> vs Columnar RecordBatch (Send+Sync)
+Batch	ctx	BatchCtx	single	BatchCtx{name_to_id, col_map, output_fields}	built per batch, no per-row alloc
+PmmlEnv	pool	rayon::ThreadPool	single	rayon::ThreadPool	created once per Env (future)
+Run	values	Vec<Value>	shared	Vec<Value>	thread_local! + stack 64 via with_value_buffer
+Run	inputs	HashMap<FieldName,Value>	shared	Vec<Value> indexed by FieldId	FieldId array not HashMap
 TreeIr	nodes	Vec<NodeIr>	single	Vec<NodeIr>	flat contiguo, Box<TreeIr> in Ir
 NodeIr	predicate	PredicateIr	single	PredicateIr	enum, inline
 Bytecode	ops	Vec<Op>	single	Vec<Op>	owned by DerivedFieldIr, eval via &[Op]

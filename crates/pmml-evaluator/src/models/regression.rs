@@ -88,7 +88,7 @@ pub fn evaluate_regression(reg: &RegressionIr, values: &[Value]) -> Value {
     }
 }
 
-fn apply_normalization(score: f64, method: RegressionNormalizationMethod) -> f64 {
+pub(crate) fn apply_normalization(score: f64, method: RegressionNormalizationMethod) -> f64 {
     match method {
         RegressionNormalizationMethod::None => score,
         RegressionNormalizationMethod::Softmax => 1.0 / (1.0 + (-score).exp()), // simplified sigmoid for single

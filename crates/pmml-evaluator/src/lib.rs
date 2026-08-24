@@ -1,6 +1,8 @@
 pub mod mining_schema;
 pub mod models;
 pub mod output;
+pub mod predicate;
+pub mod simd;
 pub mod targets;
 pub mod transform;
 

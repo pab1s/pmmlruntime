@@ -11,7 +11,7 @@ pub struct PmmlEnv {
 #[derive(Debug)]
 struct EnvInner {
     // In v2 this will hold rayon::ThreadPool, logger, telemetry.
-    // For v1, just a name.
+    // For v1, just a name (kept for OrtEnv parity; read via `name()` to avoid dead_code warnings).
     name: String,
 }
 
@@ -28,6 +28,11 @@ impl PmmlEnv {
         Self {
             inner: Arc::new(EnvInner { name: name.into() }),
         }
+    }
+
+    /// Name of the environment (for diagnostics). Reads `inner.name` to keep field live.
+    pub fn name(&self) -> &str {
+        &self.inner.name
     }
 }
 

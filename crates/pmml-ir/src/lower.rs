@@ -57,6 +57,33 @@ fn parse_simple_operator(op: &str) -> Result<SimpleOperator> {
     })
 }
 
+/// P3: Centralized field interning — replaces 15 duplicated get-or-intern blocks, single source of truth for synthetic field creation
+#[inline]
+fn get_or_intern_field(
+    name: &str,
+    data_type: DataType,
+    op_type: OpType,
+    interner: &mut Interner,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+) -> FieldId {
+    if let Some(&id) = field_name_to_id.get(name) {
+        id
+    } else {
+        let id = interner.intern_field(name);
+        field_name_to_id.insert(name.to_string(), id);
+        let meta = FieldMeta {
+            field_id: id,
+            name: name.to_string(),
+            data_type,
+            op_type,
+            values: vec![],
+        };
+        field_meta_map.insert(id, meta);
+        id
+    }
+}
+
 fn value_to_symbol_or_continuous(
     val_str: &str,
     data_type: DataType,
@@ -96,21 +123,14 @@ fn lower_predicate(
             operator,
             value,
         } => {
-            let fid = if let Some(&id) = field_name_to_id.get(field) {
-                id
-            } else {
-                let id = interner.intern_field(field);
-                field_name_to_id.insert(field.clone(), id);
-                let meta = FieldMeta {
-                    field_id: id,
-                    name: field.clone(),
-                    data_type: DataType::String,
-                    op_type: OpType::Categorical,
-                    values: vec![],
-                };
-                field_meta_map.insert(id, meta);
-                id
-            };
+            let fid = get_or_intern_field(
+                field,
+                DataType::String,
+                OpType::Categorical,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
             let meta = field_meta_map
                 .get(&fid)
                 .cloned()
@@ -138,21 +158,14 @@ fn lower_predicate(
             boolean_operator,
             array,
         } => {
-            let fid = if let Some(&id) = field_name_to_id.get(field) {
-                id
-            } else {
-                let id = interner.intern_field(field);
-                field_name_to_id.insert(field.clone(), id);
-                let meta = FieldMeta {
-                    field_id: id,
-                    name: field.clone(),
-                    data_type: DataType::String,
-                    op_type: OpType::Categorical,
-                    values: vec![],
-                };
-                field_meta_map.insert(id, meta);
-                id
-            };
+            let fid = get_or_intern_field(
+                field,
+                DataType::String,
+                OpType::Categorical,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
             let meta = field_meta_map
                 .get(&fid)
                 .cloned()

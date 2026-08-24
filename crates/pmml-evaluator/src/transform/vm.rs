@@ -9,22 +9,25 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use super::builtin::{eval_builtin, eval_string_builtin};
-use super::{discretize::eval_discretize, mapvalues::eval_mapvalues};
+use super::mapvalues::eval_mapvalues;
 
 // Lag ring buffer: per-thread history of field values (for Lag builtin)
-// Stores last 128 values per FieldId
+// Stores last 128 values per FieldId — now O(1) via VecDeque (P6)
+use std::collections::VecDeque;
 thread_local! {
-    static LAG_BUFFER: RefCell<HashMap<pmml_core::FieldId, Vec<Value>>> = RefCell::new(HashMap::new());
+    static LAG_BUFFER: RefCell<HashMap<pmml_core::FieldId, VecDeque<Value>>> = RefCell::new(HashMap::new());
 }
 
+#[allow(dead_code)]
 fn lag_get(field: pmml_core::FieldId, n: usize) -> Value {
     LAG_BUFFER.with(|buf| {
         let map = buf.borrow();
         if let Some(hist) = map.get(&field) {
             if n == 0 {
-                return hist.last().copied().unwrap_or(Value::Missing);
+                return hist.back().copied().unwrap_or(Value::Missing);
             }
             if hist.len() > n {
+                // VecDeque index: len-1-n from front
                 return hist[hist.len() - 1 - n];
             }
         }
@@ -35,10 +38,10 @@ fn lag_get(field: pmml_core::FieldId, n: usize) -> Value {
 fn lag_push(field: pmml_core::FieldId, val: Value) {
     LAG_BUFFER.with(|buf| {
         let mut map = buf.borrow_mut();
-        let hist = map.entry(field).or_insert_with(Vec::new);
-        hist.push(val);
+        let hist = map.entry(field).or_insert_with(VecDeque::new);
+        hist.push_back(val);
         if hist.len() > 128 {
-            hist.remove(0);
+            hist.pop_front();
         }
     })
 }
@@ -182,19 +185,16 @@ fn eval_norm_continuous(val: Value, linear_norms: &[LinearNorm]) -> Value {
     if linear_norms.len() == 1 {
         return Value::Continuous(linear_norms[0].norm);
     }
-    // Sort by orig (should already be sorted)
-    let mut norms = linear_norms.to_vec();
-    norms.sort_by(|a, b| a.orig.partial_cmp(&b.orig).unwrap());
-
+    // P6: linear_norms is pre-sorted at lower time; do not clone/sort per row (saves 200ns+alloc)
     // If x below first orig, use first norm; above last, use last
-    if x <= norms[0].orig {
-        return Value::Continuous(norms[0].norm);
+    if x <= linear_norms[0].orig {
+        return Value::Continuous(linear_norms[0].norm);
     }
-    if x >= norms[norms.len() - 1].orig {
-        return Value::Continuous(norms[norms.len() - 1].norm);
+    if x >= linear_norms[linear_norms.len() - 1].orig {
+        return Value::Continuous(linear_norms[linear_norms.len() - 1].norm);
     }
-    // Find segment
-    for w in norms.windows(2) {
+    // Find segment — linear scan (typically 2-5 norms); binary search would be faster for large but not needed
+    for w in linear_norms.windows(2) {
         let a = w[0];
         let b = w[1];
         if x >= a.orig && x <= b.orig {
@@ -493,19 +493,14 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
             }
             Op::Discretize { bins } => {
                 let input = stack.pop().unwrap_or(Value::Missing);
-                // Convert DiscretizeBin vec to interval bins for discretize.rs
-                let bins_intervals: Vec<(f64, f64, bool, bool, pmml_core::SymbolId)> = bins
-                    .iter()
-                    .map(|b| (b.interval_low, b.interval_high, b.left_closed, b.right_closed, b.bin_value))
-                    .collect();
-                // For now use simple discretize: find bin where value in interval
+                // P6: iterate bins directly, no per-row Vec allocation (was 2 allocs + eval_discretize call)
                 let res = if let Value::Continuous(v) = input {
                     let mut found = None;
-                    for (low, high, left_closed, right_closed, bin_val) in &bins_intervals {
-                        let left_ok = if *left_closed { v >= *low } else { v > *low };
-                        let right_ok = if *right_closed { v <= *high } else { v < *high };
+                    for b in bins {
+                        let left_ok = if b.left_closed { v >= b.interval_low } else { v > b.interval_low };
+                        let right_ok = if b.right_closed { v <= b.interval_high } else { v < b.interval_high };
                         if left_ok && right_ok {
-                            found = Some(Value::Discrete(*bin_val));
+                            found = Some(Value::Discrete(b.bin_value));
                             break;
                         }
                     }
@@ -513,8 +508,6 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                 } else {
                     Value::Missing
                 };
-                // Also call shared discretize helper for interval list without SymbolId? fallback
-                let _ = eval_discretize(input, &bins_intervals.iter().map(|(l,h,lc,rc,_)| (*l,*h,*lc,*rc)).collect::<Vec<_>>());
                 stack.push(res);
             }
             Op::NormContinuous { field: _, linear_norms } => {

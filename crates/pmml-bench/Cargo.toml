@@ -7,12 +7,15 @@ license.workspace = true
 [dependencies]
 pmml-core = { path = "../pmml-core" }
 pmml-session = { path = "../pmml-session" }
+pmml-evaluator = { path = "../pmml-evaluator" }
+pmml-ir = { path = "../pmml-ir" }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 criterion = { workspace = true }
 insta = { workspace = true }
 proptest = { workspace = true }
 arrow = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
