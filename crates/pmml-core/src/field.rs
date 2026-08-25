@@ -1,9 +1,26 @@
 //! PMML field-type enums derived from `pmml.xsd:4490`.
-//! All `FromStr` impls are case-sensitive per spec (lowercase).
+//!
+//! All `FromStr` impls are **case-sensitive per spec** (lowercase). Parsing `"String"`
+//! or `"DOUBLE"` returns `Err`. String values round-trip via [`DataType::as_str`]
+//! (and `OpType`/`MiningFunction`/`ResultFeature` equivalents).
+//!
+//! These enums are used in `pmml-ir::FieldMeta` and `pmml-evaluator` dispatch.
 
 use std::str::FromStr;
 
-/// PMML `DATATYPE` (16 values).
+/// PMML `DATATYPE` (16 values per `pmml.xsd`).
+///
+/// See `DataDictionary/DataField/@dataType`. The two `*Since\[0\]` variants are
+/// unsupported per JPMML and rejected early in `pmml-ir::lower`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::DataType;
+/// assert_eq!("double".parse::<DataType>().unwrap(), DataType::Double);
+/// assert_eq!(DataType::DateDaysSince1970.as_str(), "dateDaysSince[1970]");
+/// assert!("DOUBLE".parse::<DataType>().is_err()); // case-sensitive
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DataType {
     String,
@@ -52,6 +69,15 @@ impl FromStr for DataType {
 }
 
 impl DataType {
+    /// Returns the PMML XSD string for this variant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::DataType;
+    /// assert_eq!(DataType::String.as_str(), "string");
+    /// ```
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::String => "string",
@@ -74,13 +100,34 @@ impl DataType {
         }
     }
 
-    /// Whether this type is unsupported per JPMML (dateDaysSince[0] and dateTimeSecondsSince[0]).
+    /// Whether this type is unsupported per JPMML.
+    ///
+    /// Only `dateDaysSince[0]` and `dateTimeSecondsSince[0]` are unsupported
+    /// (epoch `0` has no defined calendar). All other variants return `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::DataType;
+    /// assert!(DataType::DateDaysSince0.is_unsupported());
+    /// assert!(!DataType::Double.is_unsupported());
+    /// ```
+    #[must_use]
     pub fn is_unsupported(self) -> bool {
         matches!(self, Self::DateDaysSince0 | Self::DateTimeSecondsSince0)
     }
 }
 
-/// PMML `OPTYPE` (3 values).
+/// PMML `OPTYPE` (3 values per `pmml.xsd`).
+///
+/// `categorical`/`ordinal` → [`crate::Value::Discrete`], `continuous` → [`crate::Value::Continuous`].
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::OpType;
+/// assert_eq!("continuous".parse::<OpType>().unwrap(), OpType::Continuous);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OpType {
     Categorical,
@@ -101,6 +148,8 @@ impl FromStr for OpType {
 }
 
 impl OpType {
+    /// Returns the PMML XSD string (`"categorical"`, `"ordinal"`, `"continuous"`).
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Categorical => "categorical",
@@ -110,7 +159,16 @@ impl OpType {
     }
 }
 
-/// PMML `MINING-FUNCTION` (7 values).
+/// PMML `MINING-FUNCTION` (7 values per `pmml.xsd`).
+///
+/// Maps to the model family; e.g., `TreeModel` typically has `classification` or `regression`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::MiningFunction;
+/// assert_eq!("classification".parse::<MiningFunction>().unwrap(), MiningFunction::Classification);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MiningFunction {
     AssociationRules,
@@ -138,7 +196,18 @@ impl FromStr for MiningFunction {
     }
 }
 
-/// PMML `RESULT-FEATURE` (26 values, spec 4.4).
+/// PMML `RESULT-FEATURE` (26 values per spec 4.4, `OutputField/@feature`).
+///
+/// Four values are unsupported per JPMML and `is_unsupported` returns `true`:
+/// `confidenceIntervalLower`, `confidenceIntervalUpper`, `standardError`, `standardDeviation`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::ResultFeature;
+/// assert_eq!("predictedValue".parse::<ResultFeature>().unwrap(), ResultFeature::PredictedValue);
+/// assert!(ResultFeature::StandardError.is_unsupported());
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ResultFeature {
     PredictedValue,
@@ -205,6 +274,8 @@ impl FromStr for ResultFeature {
 }
 
 impl ResultFeature {
+    /// Whether this feature is unsupported per JPMML (4 of 26).
+    #[must_use]
     pub fn is_unsupported(self) -> bool {
         matches!(
             self,

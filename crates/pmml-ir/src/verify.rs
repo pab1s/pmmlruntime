@@ -78,8 +78,10 @@ pub fn verify_raw(raw: &RawPmml) -> Result<()> {
 /// `none`). Lowering already coerces unknown strings to `nullPrediction`, so
 /// this is a defense-in-depth check.
 ///
-/// Returns `Ok(())` for all models today; reserved for future `ResultFeature`
-/// or `MiningFunction` rejection without changing call sites.
+/// # Errors
+///
+/// Currently always returns `Ok(())`; reserved for future `ResultFeature`
+/// or `MiningFunction` rejection (`PmmlError::UnsupportedMarkup`) without changing call sites.
 ///
 /// # Examples
 ///
@@ -111,6 +113,7 @@ pub fn verify_ir(ir: &Ir) -> Result<()> {
 /// let err = unsupported("AnomalyDetectionModel");
 /// assert!(err.to_string().contains("unsupported markup"));
 /// ```
+#[must_use]
 pub fn unsupported(feature: &str) -> PmmlError {
     PmmlError::UnsupportedMarkup(format!("{UNSUPPORTED_MSG}: {feature}"))
 }

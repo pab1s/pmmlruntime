@@ -443,8 +443,8 @@ fn topo_sort_derived_fields(raw_fields: &[RawDerivedField]) -> Vec<usize> {
         }
     }
     let mut q: VecDeque<usize> = VecDeque::new();
-    for i in 0..n {
-        if indeg[i] == 0 {
+    for (i, &d) in indeg.iter().enumerate().take(n) {
+        if d == 0 {
             q.push_back(i);
         }
     }
@@ -459,7 +459,7 @@ fn topo_sort_derived_fields(raw_fields: &[RawDerivedField]) -> Vec<usize> {
         }
     }
     if order.len() != n {
-        let mut remaining: Vec<usize> = (0..n).filter(|i| !order.contains(i)).collect();
+        let remaining: Vec<usize> = (0..n).filter(|i| !order.contains(i)).collect();
         order.extend(remaining);
     }
     order
@@ -471,15 +471,12 @@ fn lower_constant_to_symbol_or_continuous(
     interner: &mut Interner,
 ) -> SymbolIdOrContinuous {
     let dt_str = data_type.unwrap_or("string");
-    let is_numeric_type = matches!(dt_str, "integer" | "double" | "float" | "number");
-    if is_numeric_type {
-        if let Ok(f) = val.parse::<f64>() {
-            return SymbolIdOrContinuous::Continuous(f);
-        }
-    } else {
-        if let Ok(f) = val.parse::<f64>() {
-            return SymbolIdOrContinuous::Continuous(f);
-        }
+    let _is_numeric_type = matches!(dt_str, "integer" | "double" | "float" | "number");
+    if let Ok(f) = val.parse::<f64>() {
+        // For numeric types we return Continuous directly; for non-numeric we also
+        // try numeric parse first so "1.0" as string still coerces to Continuous
+        // (JPMML parity). Branch kept separate for future non-numeric fallback.
+        return SymbolIdOrContinuous::Continuous(f);
     }
     if val.is_empty() {
         SymbolIdOrContinuous::Missing
@@ -788,7 +785,10 @@ fn lower_expression_to_ops(
                     let out_val = row
                         .get(output_column)
                         .or_else(|| {
-                            let local = output_column.split(':').last().unwrap_or(output_column);
+                            let local = output_column
+                                .split(':')
+                                .next_back()
+                                .unwrap_or(output_column);
                             row.get(local)
                         })
                         .cloned()
@@ -825,7 +825,7 @@ fn lower_expression_to_ops(
                         let col = &pair.column;
                         let mut val = row.get(col).cloned().unwrap_or_default();
                         if val.is_empty() {
-                            let local = col.split(':').last().unwrap_or(col);
+                            let local = col.split(':').next_back().unwrap_or(col);
                             val = row.get(local).cloned().unwrap_or_default();
                         }
                         let sid = interner.intern_symbol(&val);
@@ -833,7 +833,10 @@ fn lower_expression_to_ops(
                     }
                     let mut out_val = row.get(output_column).cloned().unwrap_or_default();
                     if out_val.is_empty() {
-                        let local = output_column.split(':').last().unwrap_or(output_column);
+                        let local = output_column
+                            .split(':')
+                            .next_back()
+                            .unwrap_or(output_column);
                         out_val = row.get(local).cloned().unwrap_or_default();
                     }
                     let out_sid = interner.intern_symbol(&out_val);

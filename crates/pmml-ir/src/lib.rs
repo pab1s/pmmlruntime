@@ -33,6 +33,13 @@
 //! - `Ir.max_field_id` is at least 16 and `values: &mut [Value]` length is `max_field_id` vs `num_fields()+4`.
 //! - `verify_raw` handles `Extension` gracefully (stored not error) and captures `unsupported_model` for D1.
 
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::too_many_lines,
+    clippy::pedantic
+)]
+
 pub mod intern;
 pub mod ir;
 pub mod lower;

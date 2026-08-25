@@ -1,38 +1,91 @@
+//! `pmml-runtime` CLI — `inspect` / `run` / `verify` subcommands (`clap` 4.5 derive).
+//!
+//! Thin wrapper over `pmml_session` and `pmml_xml`/`pmml_ir` for file-based scoring.
+//! It mirrors `jpmml-evaluator` CLI but ONNX-style: `PmmlEnv` + `Session` + `Batch`.
+//! All I/O is via `std::fs`; Arrow `csv` bridging uses `pmml_session::arrow` for batch.
+//!
+//! # Commands
+//!
+//! - `inspect --model model.pmml` — prints `DataDictionary`, `MiningSchema`, `Output`, and `Ir` counts.
+//! - `run --model model.pmml [--input input.csv --output output.csv] [--batch batch.csv]` — single or batched scoring.
+//! - `verify --model model.pmml` — `unmarshal` → `verify_raw` → `lower` → `verify_ir` and reports `Tree` node count.
+//!
+//! # Performance
+//!
+//! `run --batch` uses `pmml_session::ExecutionProviderKind::CpuBatched` (rayon `par_chunks(256)`, fallback `<256` serial)
+//! and the `arrow` `csv` path for zero-copy input when possible.
+
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 
+/// CLI entry ( `pmml-runtime` v0.1.0, ONNX-style ).
+///
+/// `clap` derive with subcommands `Inspect` / `Run` / `Verify`. `PmmlEnv` is created once
+/// per invocation; `Session` is built via `Session::from_file`.
 #[derive(Parser)]
 #[command(name = "pmml-runtime", version, about = "PMML 4.4 runtime — ONNX-style", long_about = None)]
 struct Cli {
+    /// Subcommand (`inspect`, `run`, `verify`).
     #[command(subcommand)]
     command: Commands,
 }
 
+/// Subcommands for `pmml-runtime`.
 #[derive(Subcommand)]
 enum Commands {
-    /// Inspect PMML file (prints DataDictionary, MiningSchema)
+    /// Inspect PMML file (prints `DataDictionary`, `MiningSchema`).
+    ///
+    /// Reads `model` via `pmml_xml::unmarshal` and `pmml_ir::lower`, then prints `DataDictionary` fields,
+    /// `TreeModel` function/`missing_value_strategy`/`no_true_child_strategy`, mining schema, output, root node, and `Ir` counts.
     Inspect {
+        /// Path to `model.pmml` (e.g. `DecisionTreeIris.pmml`).
         #[arg(long)]
         model: String,
     },
-    /// Run scoring
+    /// Run scoring (single example or CSV batch).
+    ///
+    /// Without `--input`/`--batch` it scores a hard-coded Iris example (`Petal.Length=1.4`, `Petal.Width=0.2`).
+    /// With `--batch`/`--input` it reads CSV via `arrow::csv` or manual split, then `Session::run_batch` (batched) or `run`.
     Run {
+        /// Path to `model.pmml`.
         #[arg(long)]
         model: String,
+        /// CSV input path for batch (alias for `--batch` without `arrow` fast path).
         #[arg(long)]
         input: Option<String>,
+        /// Output CSV path (default `output.csv`).
         #[arg(long)]
         output: Option<String>,
-        /// Batch CSV input (alias for --input) — uses Arrow RecordBatch + run_batch (parallel)
+        /// Batch CSV input (alias for `--input`) — uses `RecordBatch` + `run_batch` (parallel `rayon`).
         #[arg(long)]
         batch: Option<String>,
     },
+    /// Verify PMML file (`unmarshal` → `verify` → `lower` → `verify_ir`).
+    ///
+    /// Reports `Tree` node count on success; errors are bubbled via `anyhow` with context (`unmarshal:` / `lower:`).
     Verify {
+        /// Path to `model.pmml`.
         #[arg(long)]
         model: String,
     },
 }
 
+/// Entry point — parses `Cli` via `clap::Parser` and dispatches to `inspect` / `run` / `verify`.
+///
+/// # Returns
+///
+/// `Ok(())` on success, `Err(anyhow)` on `unmarshal` / `lower` / IO failure. `clap` handles `--help`/`--version` before reaching here.
+///
+/// # Errors
+///
+/// Propagates via `anyhow`: `inspect`/`run`/`verify` errors are wrapped with `anyhow!` and cause non-zero exit.
+///
+/// # Examples
+///
+/// ```text
+/// // $ pmml-runtime inspect --model model.pmml
+/// // $ pmml-runtime run --model model.pmml --batch input.csv --output out.csv
+/// ```
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -51,6 +104,31 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Inspect a PMML file — print `DataDictionary`, `MiningSchema`, `Output`, root node, and `Ir`.
+///
+/// # Parameters
+///
+/// - `model`: path to PMML file.
+///
+/// # Returns
+///
+/// `Ok(())` after printing to `stdout`. `Err` if `std::fs::read` or `pmml_xml::unmarshal` fails.
+///
+/// # Errors
+///
+/// - `IO` if file read fails.
+/// - `Parse` / `UnsupportedMarkup` / `InvalidValue` from `unmarshal` / `lower` are mapped to `anyhow` with context.
+/// - Not an `Ir` `TreeModel` is reported as `No TreeModel (v1 only Tree supported)` but still prints `DataDictionary`.
+///
+/// # Panics
+///
+/// Does not panic; errors are returned.
+///
+/// # Examples
+///
+/// ```no_run
+/// pmml_cli::main(); // via `pmml-runtime inspect --model model.pmml`
+/// ```
 fn inspect(model: &str) -> anyhow::Result<()> {
     let bytes = std::fs::read(model)?;
     let raw = pmml_xml::unmarshal(&bytes).map_err(|e| anyhow::anyhow!("unmarshal: {e}"))?;
@@ -100,6 +178,37 @@ fn inspect(model: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Run scoring — single example or CSV batch.
+///
+/// Creates `PmmlEnv::new()` and `SessionOptions` ( `CpuBatched` if `--batch` or `input.is_some()`, else `CpuSerial`),
+/// then `Session::from_file`. For `input.is_some()` it treats `input` as CSV path and scores via `arrow::csv`
+/// → `RecordBatch` → `record_batch_to_value_maps` → `run_batch` (or manual `run_manual_batch` fallback). For
+/// `is_batch_flag` it uses the `arrow` path; otherwise manual line-split.
+///
+/// # Parameters
+///
+/// - `model`: path to `model.pmml`.
+/// - `input`: optional CSV path (from `--batch` or `--input`).
+/// - `output`: optional output path (default `output.csv`).
+/// - `is_batch_flag`: `true` if `--batch` was passed (selects `arrow` + `CpuBatched`).
+///
+/// # Returns
+///
+/// `Ok(())` after writing `output.csv` or printing single example. `Err` on `Session::from_file` / `run` / IO.
+///
+/// # Errors
+///
+/// - `PmmlError::Io` / `Parse` / `InvalidValue` mapped to `anyhow`.
+/// - CSV parse failure falls back to manual split but still returns `Err` if scoring fails.
+/// - Empty CSV returns `anyhow!("empty csv")` via `run_manual_batch`.
+///
+/// # Performance
+///
+/// Batch path shards via `rayon` `par_chunks(256)` and `BatchCtx::for_record_batch` zero-copy for `RecordBatch`.
+///
+/// # Panics
+///
+/// Does not panic; empty `batch` returns `Ok(Vec::new())` inside `Session` and is handled.
 fn run(
     model: &str,
     input: Option<&str>,
@@ -223,6 +332,25 @@ fn run(
     Ok(())
 }
 
+/// Manual CSV batch fallback — line-split → `Value::Continuous` / `Missing` → `Session::run_batch` → write `output.csv`.
+///
+/// Handles CSV without `arrow` (e.g. when `arrow::csv::Reader` failed). Splits header on `,`,
+/// then each line on `,` and `parse::<f64>` for numerics; empty → `Missing`, else `Continuous(f)`.
+///
+/// # Parameters
+///
+/// - `sess`: `&Session` (already loaded).
+/// - `csv_text`: full CSV text (header + rows).
+/// - `out_path`: path to write output CSV (`header,predictedValue` + rows).
+///
+/// # Returns
+///
+/// `Ok(())` after writing file; `Err` if `run_batch` or `fs::write` fails.
+///
+/// # Errors
+///
+/// - `anyhow!("empty csv")` if no header.
+/// - `PmmlError` from `run_batch` mapped to `anyhow`.
 fn run_manual_batch(
     sess: &pmml_session::Session,
     csv_text: &str,
@@ -279,6 +407,27 @@ fn run_manual_batch(
     Ok(())
 }
 
+/// Verify a PMML file (`unmarshal` → `verify_raw` → `lower` → `verify_ir`).
+///
+/// # Parameters
+///
+/// - `model`: path to `model.pmml`.
+///
+/// # Returns
+///
+/// `Ok(())` on success after printing `verify: … OK — Tree nodes=N`; `Err` with `anyhow` context on failure.
+///
+/// # Errors
+///
+/// - `IO` if `read` fails.
+/// - `Parse` / `UnsupportedMarkup` / `InvalidValue` from `verify_raw` / `lower` / `verify_ir` are wrapped as `verify_raw:` / `lower:` / `verify_ir:`.
+///
+/// # Examples
+///
+/// ```text
+/// // $ pmml-runtime verify --model model.pmml
+/// // verify: model.pmml OK — Tree nodes=5
+/// ```
 fn verify(model: &str) -> anyhow::Result<()> {
     let bytes = std::fs::read(model)?;
     let raw = pmml_xml::unmarshal(&bytes).map_err(|e| anyhow::anyhow!("unmarshal: {e}"))?;

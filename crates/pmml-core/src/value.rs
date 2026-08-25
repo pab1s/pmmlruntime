@@ -1,36 +1,113 @@
-//! Value types — hot path, zero-alloc, `Copy` friendly.
+//! Value types — hot path, zero-alloc, `Copy`-friendly.
+//!
+//! `pmml-session` materializes `&mut [Value]` indexed by [`FieldId`] for every row.
+//! For `<=64` fields the buffer is stack-allocated (L1-hot); larger models use a
+//! `thread_local!` heap buffer reused across rows. See `pmml-session::session::with_value_buffer`.
+//!
+//! [`FieldId`] is a `u32` newtype so `values[field.as_usize()]` is a single bounds check.
+//! [`SymbolId`] is the interned discrete value; `pmml-session` holds a dense
+//! `Vec<String>` for `SymbolId → String` to avoid `HashMap` in the hot path.
 
-/// Interned discrete value identifier. `u32::MAX` reserved for missing sentinel internally, not used in Value.
+/// Interned discrete value identifier.
+///
+/// Produced by `pmml-ir::Interner::intern_symbol` (cold) and carried as [`Value::Discrete`].
+/// `u32::MAX` is reserved for a missing sentinel internally and never appears in [`Value`].
+/// Dense `Vec<String>` in `pmml-session` maps `SymbolId.0 as usize` → display string.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::SymbolId;
+/// let a = SymbolId(0);
+/// let b = SymbolId(1);
+/// assert_ne!(a, b);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SymbolId(pub u32);
 
-/// Field identifier after interning `FIELD-NAME`. Index into `values[field_id]`.
+/// Field identifier after interning `FIELD-NAME`.
+///
+/// Stable `u32` assigned by `pmml-ir::Interner::intern_field` (cold). Hot path
+/// indexes `values[field_id.as_usize()]` — a single array lookup, no `HashMap`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::FieldId;
+/// let id = FieldId(2);
+/// assert_eq!(id.as_usize(), 2);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FieldId(pub u32);
 
 impl FieldId {
+    /// Convert to `usize` for array indexing. `const` so it can be used in const contexts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::FieldId;
+    /// let slot = FieldId(3).as_usize();
+    /// assert_eq!(slot, 3);
+    /// ```
+    #[must_use]
     pub const fn as_usize(self) -> usize {
         self.0 as usize
     }
 }
 
 /// PMML field value in the evaluator (hot path).
-/// `Missing` is an explicit variant — not `Option<Value>` — to avoid double wrapping.
+///
+/// `Missing` is an explicit variant, not `Option<Value>`, to avoid double wrapping
+/// and to keep `Value` `Copy` with a predictable discriminant. `pmml-evaluator`
+/// treats `Discrete` as an interned [`SymbolId`] and `Continuous` as canonical `f64`
+/// (PMML `double`/`float`/`integer` all coerce to `f64` here).
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{Value, SymbolId};
+/// let a = Value::Continuous(1.0);
+/// let b = Value::Discrete(SymbolId(2));
+/// assert!(!a.is_missing());
+/// assert_eq!(a.as_f64(), Some(1.0));
+/// assert_eq!(b.as_f64(), None);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Value {
-    /// Continuous numeric (f64 canonical — PMML `double`/`float`/`integer` all coerce to f64 here).
+    /// Continuous numeric (`f64` canonical — PMML `double`/`float`/`integer` all coerce here).
     Continuous(f64),
-    /// Discrete categorical/ordinal interned.
+    /// Discrete categorical/ordinal interned as [`SymbolId`].
     Discrete(SymbolId),
-    /// Missing / invalid after `MiningSchema` handling.
+    /// Missing / invalid after `MiningSchema` handling (outlier, invalid, or absent).
     Missing,
 }
 
 impl Value {
+    /// Returns `true` iff this is [`Value::Missing`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::Value;
+    /// assert!(Value::Missing.is_missing());
+    /// assert!(!Value::Continuous(1.0).is_missing());
+    /// ```
+    #[must_use]
     pub fn is_missing(self) -> bool {
         matches!(self, Value::Missing)
     }
 
+    /// Returns the inner `f64` if [`Value::Continuous`], else `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::Value;
+    /// assert_eq!(Value::Continuous(2.5).as_f64(), Some(2.5));
+    /// assert_eq!(Value::Missing.as_f64(), None);
+    /// ```
+    #[must_use]
     pub fn as_f64(self) -> Option<f64> {
         match self {
             Value::Continuous(v) => Some(v),
@@ -38,6 +115,16 @@ impl Value {
         }
     }
 
+    /// Approximate equality with tolerance `eps`, plus `NaN == NaN` and `Missing == Missing`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::Value;
+    /// assert!(Value::Continuous(1.0).approx_eq(Value::Continuous(1.0 + 1e-10), 1e-9));
+    /// assert!(!Value::Continuous(1.0).approx_eq(Value::Continuous(1.1), 1e-9));
+    /// ```
+    #[must_use]
     pub fn approx_eq(self, other: Self, eps: f64) -> bool {
         match (self, other) {
             (Value::Missing, Value::Missing) => true,
@@ -61,13 +148,14 @@ impl std::fmt::Display for Value {
 }
 
 #[cfg(test)]
+#[allow(clippy::pedantic)]
 mod tests {
     use super::*;
 
     #[test]
     fn missing_is_missing() {
         assert!(Value::Missing.is_missing());
-        assert!(!Value::Continuous(3.14).is_missing());
+        assert!(!Value::Continuous(2.71).is_missing());
     }
 
     #[test]

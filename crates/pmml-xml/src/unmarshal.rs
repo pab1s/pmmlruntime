@@ -87,7 +87,6 @@
 //! # Ok::<(), pmml_core::PmmlError>(())
 //! ```
 
-
 use crate::reader::new_reader;
 use pmml_core::error::{PmmlError, Result};
 use quick_xml::events::{BytesStart, Event};
@@ -2492,7 +2491,7 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
     let id = attr(start, "id");
     let score = attr(start, "score");
     let record_count = attr(start, "recordCount").and_then(|s| s.parse::<f64>().ok());
-    let _default_child = attr(start, "defaultChild");
+    let default_child = attr(start, "defaultChild");
 
     let mut predicate = RawPredicate::True; // default if none
     let mut predicate_set = false;
@@ -2693,7 +2692,7 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
         predicate,
         score_distributions,
         children,
-        default_child: _default_child,
+        default_child,
     })
 }
 
@@ -6859,7 +6858,7 @@ mod tests {
     #[test]
     fn depth_limit_enforced() {
         // Build xml with deep nesting >512 depth via nested nodes? Use PMML wrapper + deep a's
-        let mut xml = String::from("<PMML version=\"4.4\"><Header/><DataDictionary><DataField name=\"f\" dataType=\"string\" optype=\"categorical\"/></DataDictionary><TreeModel functionName=\"classification\"><MiningSchema><MiningField name=\"f\"/></MiningSchema><Node score=\"a\"><True/></Node></TreeModel>");
+        let xml = String::from("<PMML version=\"4.4\"><Header/><DataDictionary><DataField name=\"f\" dataType=\"string\" optype=\"categorical\"/></DataDictionary><TreeModel functionName=\"classification\"><MiningSchema><MiningField name=\"f\"/></MiningSchema><Node score=\"a\"><True/></Node></TreeModel>");
         // Not easy to test deep nesting via unmarshal directly; reader's depth limit tested in reader.rs
         // This test ensures unmarshal handles normal file without depth error
         let bytes = xml.into_bytes();

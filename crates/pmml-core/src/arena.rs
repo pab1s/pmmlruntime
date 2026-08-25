@@ -1,5 +1,16 @@
 //! Arena allocator — per-`run()` bump allocation, reset after each scoring.
-//! Mirrors ONNX Runtime `BFCArena` pattern: thread-local for serial, `BumpArena` for batched `par_iter`.
+//!
+//! Mirrors ONNX Runtime `BFCArena` pattern: a fast thread-local arena for serial
+//! `Session::run` and an owned [`BumpArena`] for batched [`rayon`] `par_iter` shards.
+//! The hot path for `<=64` fields avoids the arena entirely via a stack buffer
+//! in `pmml-session`; this module is the overflow and string-interning path.
+//!
+//! # Mental model
+//!
+//! - `THREAD_ARENA` is `thread_local!` — one `Bump` per thread, reset before and after each `with_arena` call.
+//! - [`BumpArena`] is an owned `Bump` that is `Send` (but not `Sync`) so it can be moved into rayon threads.
+//! - Hot `Value` buffers are currently `Vec<Value>` on the heap; the API mirrors `bumpalo::collections::Vec`
+//!   for a future zero-alloc switch without changing call sites.
 
 use bumpalo::Bump;
 use std::cell::RefCell;
@@ -8,7 +19,20 @@ thread_local! {
     static THREAD_ARENA: RefCell<Bump> = RefCell::new(Bump::new());
 }
 
-/// Execute `f` with a thread-local bump arena. Arena is reset after `f` returns.
+/// Execute `f` with a thread-local bump arena.
+///
+/// The arena is reset before `f` runs and again after it returns, retaining
+/// capacity for the next call. Allocations via `arena.alloc_*` live only until
+/// the next `with_arena` call on the same thread.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::arena::with_arena;
+/// let s = with_arena(|arena| arena.alloc_str("hello").to_string());
+/// assert_eq!(s, "hello");
+/// ```
+#[must_use]
 pub fn with_arena<R>(f: impl FnOnce(&mut Bump) -> R) -> R {
     THREAD_ARENA.with(|cell| {
         let mut arena = cell.borrow_mut();
@@ -20,8 +44,20 @@ pub fn with_arena<R>(f: impl FnOnce(&mut Bump) -> R) -> R {
     })
 }
 
-/// Scratch Vec that reuses arena allocation for `Value` buffers.
-/// For v1 we use `Vec<Value>` on heap but retain this helper for future `BumpVec`.
+/// Scratch `Vec` that conceptually reuses arena allocation for `Value` buffers.
+///
+/// For v1 this is a plain heap `Vec` — it documents intent for a future
+/// `bumpalo::collections::Vec` switch without changing call sites.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::arena::{with_arena, alloc_vec};
+/// with_arena(|arena| {
+///     let v = alloc_vec(arena, 4, 0u32);
+///     assert_eq!(v, vec![0, 0, 0, 0]);
+/// });
+/// ```
 pub fn alloc_vec<T>(arena: &Bump, len: usize, val: T) -> Vec<T>
 where
     T: Clone,
@@ -32,10 +68,25 @@ where
     vec![val; len]
 }
 
-/// `BumpArena` — owned `Bump` for per-batch / per-`par_iter` chunk allocation.
+/// Owned bump arena for per-batch / per-`par_iter` chunk allocation.
 ///
-/// Unlike `THREAD_ARENA`, this is `Send` when moved into `rayon` threads via `Send` bound on `Bump`.
-/// Usage pattern for batched scoring:
+/// Unlike the `thread_local!` `THREAD_ARENA`, this type owns its `Bump` and is
+/// `Send` so it can be moved into [`rayon`] threads. It is **not** `Sync`; do not
+/// share `&BumpArena` across threads without `&mut`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::arena::BumpArena;
+/// use rayon::prelude::*;
+/// let results: Vec<usize> = (0..4).into_par_iter().map(|_| {
+///     let arena = BumpArena::new();
+///     arena.alloc_value_buffer(8, pmml_core::Value::Missing).len()
+/// }).collect();
+/// assert_eq!(results, vec![8, 8, 8, 8]);
+/// ```
+///
+/// Usage pattern for batched scoring with reuse:
 ///
 /// ```ignore
 /// let mut arena = BumpArena::new();
@@ -51,46 +102,85 @@ pub struct BumpArena {
 }
 
 impl BumpArena {
-    /// Create a new arena with default capacity.
+    /// Create a new arena with default capacity (1 KB initial, grows geometrically).
+    #[must_use]
     pub fn new() -> Self {
         Self { bump: Bump::new() }
     }
 
-    /// Create with explicit capacity (bytes).
+    /// Create with explicit capacity in bytes. The bump will not reallocate
+    /// until that many bytes are consumed.
+    #[must_use]
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             bump: Bump::with_capacity(cap),
         }
     }
 
-    /// Access inner `Bump`.
+    /// Access the inner [`Bump`] for direct `alloc_*` calls.
+    #[must_use]
     pub fn bump(&self) -> &Bump {
         &self.bump
     }
 
-    /// Mutable access to inner `Bump`.
+    /// Mutable access to the inner [`Bump`].
     pub fn bump_mut(&mut self) -> &mut Bump {
         &mut self.bump
     }
 
-    /// Reset arena, retaining capacity.
+    /// Reset the arena, retaining its heap capacity for reuse.
+    ///
+    /// Does not deallocate; the next allocation reuses the same memory.
     pub fn reset(&mut self) {
         self.bump.reset();
     }
 
-    /// Allocate a `Vec<T>` of `len` cloned `val`. Memory is heap-allocated (not bump) for `T: Copy`
-    /// compatibility, but API mirrors `bumpalo::collections::Vec` for future zero-alloc switch.
-    /// For hot path `Value` buffers, use this per-chunk and reset after chunk completes.
+    /// Allocate a `Vec<Value>` of `len` clones of `val`.
+    ///
+    /// Currently heap-allocated for `T: Copy` compatibility, but the API
+    /// mirrors `bumpalo::collections::Vec` for a future zero-alloc switch.
+    /// Call [`reset`](Self::reset) after the chunk completes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::{Value, arena::BumpArena};
+    /// let arena = BumpArena::new();
+    /// let buf = arena.alloc_value_buffer(4, Value::Missing);
+    /// assert_eq!(buf.len(), 4);
+    /// ```
     pub fn alloc_value_buffer(&self, len: usize, val: crate::Value) -> Vec<crate::Value> {
         vec![val; len]
     }
 
-    /// Convenience: allocate bump-backed string (lives as long as arena).
+    /// Allocate a bump-backed `&str` that lives as long as the arena.
+    ///
+    /// The returned reference is valid until the next [`reset`](Self::reset).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::arena::BumpArena;
+    /// let arena = BumpArena::new();
+    /// let s = arena.alloc_str("hello");
+    /// assert_eq!(s, "hello");
+    /// ```
     pub fn alloc_str<'a>(&'a self, s: &str) -> &'a str {
         self.bump.alloc_str(s)
     }
 
-    /// Execute closure with mutable bump reference.
+    /// Reset the arena, run `f` with `&mut Bump`, then reset again.
+    ///
+    /// Convenience for scoped bump usage without manual `reset` calls.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmml_core::arena::BumpArena;
+    /// let mut arena = BumpArena::new();
+    /// let len = arena.with_bump(|b| b.alloc_str("hi").len());
+    /// assert_eq!(len, 2);
+    /// ```
     pub fn with_bump<R>(&mut self, f: impl FnOnce(&mut Bump) -> R) -> R {
         self.bump.reset();
         let r = f(&mut self.bump);
@@ -110,17 +200,18 @@ impl Default for BumpArena {
 unsafe impl Send for BumpArena {}
 
 #[cfg(test)]
+#[allow(clippy::pedantic)]
 mod tests {
     use super::*;
 
     #[test]
     fn arena_resets() {
-        with_arena(|arena| {
+        let _ = with_arena(|arena| {
             let _v = arena.alloc_str("hello");
             assert_eq!(_v, "hello");
         });
         // second run should not see previous allocation
-        with_arena(|arena| {
+        let _ = with_arena(|arena| {
             let _w = arena.alloc_str("world");
             assert_eq!(_w, "world");
         });

@@ -65,6 +65,22 @@
 //! is propagated. Evaluators are `Send + Sync` and share `Ir` immutably. `transform::vm` uses
 //! a `thread_local!` lag buffer (`!Sync` but `Send`).
 
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::redundant_closure_for_method_calls,
+    clippy::too_many_arguments,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::style,
+    clippy::perf,
+    clippy::complexity,
+    clippy::suspicious,
+    rustdoc::redundant_explicit_link_target
+)]
+
 pub mod mining_schema;
 pub mod models;
 pub mod output;

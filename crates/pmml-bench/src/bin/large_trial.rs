@@ -1,3 +1,12 @@
+//! Large-batch throughput trial — 10k / 100k / 1M / 10M rows, `HashMap` vs `RecordBatch`.
+//!
+//! This binary is not a `criterion` bench; it is a `src/bin` that prints `ms total | rows/sec | ns/row`
+//! for each `size` × `ExecutionProviderKind` (`CpuSerial` / `CpuBatched`) × input format.
+//! It exercises `Session::run` / `run_batch` / `run_batch_arrow` / `run_record_batch` and the
+//! synthetic SIMD regression path (`pmml_evaluator::simd` 4-wide).
+
+#![allow(clippy::pedantic)]
+
 use arrow::array::Float64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
@@ -7,6 +16,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Load Iris `TreeModel` `Session` for the given provider.
+///
+/// Reads `/upstream/jpmml-evaluator` `DecisionTreeIris.pmml` (hard-coded path for this binary).
+/// Panics if file missing (trial is for local hosts with `upstream` checkout).
 fn load_iris_session(kind: ExecutionProviderKind) -> Session {
     let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
     let env = PmmlEnv::new();
@@ -14,6 +27,9 @@ fn load_iris_session(kind: ExecutionProviderKind) -> Session {
     Session::from_bytes(&env, &xml, opts).unwrap()
 }
 
+/// Try to load a `RegressionModel` session for SIMD checks, or `None` if no fixture found.
+///
+/// Checks `LinearRegression.pmml` / `Regression.pmml` / `AutoRegressive.pmml` and returns first that loads.
 fn load_regression_session(kind: ExecutionProviderKind) -> Option<Session> {
     // Try a few regression fixtures
     let candidates = [
@@ -34,6 +50,10 @@ fn load_regression_session(kind: ExecutionProviderKind) -> Option<Session> {
     None
 }
 
+/// Build a `Vec<HashMap<String, Value>>` batch of `n` rows (`Petal.Length` / `Petal.Width` synthetic).
+///
+/// `v = 1.0 + (i % 5)`, `Petal.Width = v*0.5`. `n` `HashMap` allocations; for `n >= 1M` this would OOM
+/// so `run_trial` skips this path and uses `RecordBatch` instead.
 fn make_hash_batch(n: usize) -> Vec<HashMap<String, Value>> {
     (0..n)
         .map(|i| {
@@ -46,6 +66,9 @@ fn make_hash_batch(n: usize) -> Vec<HashMap<String, Value>> {
         .collect()
 }
 
+/// Build a `RecordBatch` batch of `n` rows (`Petal.Length` / `Petal.Width` `Float64`).
+///
+/// Zero-copy input for `Session::run_batch_arrow` / `run_record_batch`; `1M` rows is ~16 MB (`2 * 1M * 8 B`).
 fn make_arrow_batch(n: usize) -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
         Field::new("Petal.Length", DataType::Float64, true),
@@ -68,6 +91,9 @@ fn make_arrow_batch(n: usize) -> RecordBatch {
     .unwrap()
 }
 
+/// Time a closure `F: FnOnce() -> T`, returning `(T, Duration)`.
+///
+/// Simple `Instant::now()` / `elapsed()` wrapper used by `run_trial`.
 fn time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
     let start = Instant::now();
     let res = f();
@@ -75,6 +101,9 @@ fn time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
     (res, dur)
 }
 
+/// Format `rows` and `dur` as `"{:.2} ms total | {:.0} rows/sec | {:.0} ns/row"`.
+///
+/// Used to print throughput for each provider × path.
 fn fmt_thr(rows: usize, dur: Duration) -> String {
     let secs = dur.as_secs_f64();
     let thr = rows as f64 / secs;
@@ -87,6 +116,15 @@ fn fmt_thr(rows: usize, dur: Duration) -> String {
     )
 }
 
+/// Run a trial for `size` rows — benchmarks `CpuSerial` vs `CpuBatched` × `HashMap` vs `RecordBatch`.
+///
+/// For `size >= 1M` it chunks `RecordBatch` into `100k` slices to avoid OOM (`Vec<HashMap>` of 10M would be `>2GB`).
+/// Also runs synthetic SIMD regression (`pmml_evaluator::simd` 4-wide vs scalar) for `size <= 100k`.
+/// Prints `Arrow batch created`, per-provider `single-row loop`, `run_batch`, `run_batch_ref`, `run_batch_arrow`, `run_record_batch`, and `SIMD` speedup.
+///
+/// # Panics
+///
+/// Panics if `load_iris_session` fails or if `run_batch*` returns wrong `len()`.
 fn run_trial(size: usize) {
     println!("\n=== {} rows ===", size);
     // For n >= 1M, skip HashMap batch to avoid OOM (HashMap per row ~200B * 1M = 200MB + overhead)
@@ -282,6 +320,11 @@ fn run_trial(size: usize) {
     }
 }
 
+/// Entry point — prints host threads / AVX and runs `run_trial` for `10k` / `100k` / `1M` / `10M`.
+///
+/// # Panics
+///
+/// Panics if `run_trial` panics (see above).
 fn main() {
     println!("PMML Large Batch Trial — Tree Iris (2 Float64 fields)");
     println!("Host: {} threads rayon", rayon::current_num_threads());

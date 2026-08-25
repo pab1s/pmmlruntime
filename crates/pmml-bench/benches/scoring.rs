@@ -1,8 +1,19 @@
+//! Criterion benches for PMML scoring — `tree_iris_single` / `tree_iris_batch_1k_*`.
+//!
+//!mirrors `BENCHMARK.md` §3 (tiny-batch fallback) and §5 (Arrow wins at 100k). `criterion` `black_box`
+//! prevents elision; batch `1k` compares sequential `run` loop vs `run_batch` (`CpuBatched` `par_chunks(256)`).
+//! `load_iris()` reads `bench/pmml/DecisionTreeIris.pmml` relative to `CARGO_MANIFEST_DIR`; it panics if missing
+//! (bench harness only, not library).
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use pmml_core::Value;
 use pmml_session::{PmmlEnv, Session, SessionOptions};
 use std::collections::HashMap;
 
+/// Load Iris `TreeModel` session for benches (cold path, unwraps for bench harness).
+///
+/// Reads `CARGO_MANIFEST_DIR/../../bench/pmml/DecisionTreeIris.pmml` and `Session::from_bytes` with `default()` (`CpuSerial`).
+/// Panics if file missing (so bench setup fails fast rather than silent skip).
 fn load_iris() -> Session {
     let manifest = env!("CARGO_MANIFEST_DIR");
     let path = std::path::Path::new(manifest).join("../../bench/pmml/DecisionTreeIris.pmml");
@@ -11,6 +22,10 @@ fn load_iris() -> Session {
     Session::from_bytes(&env, &bytes, SessionOptions::default()).unwrap()
 }
 
+/// Bench single-row `run` (`Petal.Length=1.4`, `Petal.Width=0.2` → `setosa`).
+///
+/// Measures hot-path `with_value_buffer` stack `64` + `eval_tree` (~402 ns). `black_box` on inputs/outputs
+/// prevents optimizer from eliding `run`.
 fn bench_single(c: &mut Criterion) {
     let sess = load_iris();
     c.bench_function("tree_iris_single", |b| {
@@ -27,6 +42,10 @@ fn bench_single(c: &mut Criterion) {
     });
 }
 
+/// Bench `1k` rows sequential via `for m in &batch { run(m.clone()) }`.
+///
+/// Baseline without `rayon`; `batch` is `Vec<HashMap>` sized `1000` with synthetic `1.0 + (i%5)`.
+/// Used to show `815 µs` sequential vs ` <400 µs` batched in `BENCHMARK.md`.
 fn bench_batch_1k(c: &mut Criterion) {
     let sess = load_iris();
     let batch: Vec<HashMap<String, Value>> = (0..1000)
@@ -48,6 +67,15 @@ fn bench_batch_1k(c: &mut Criterion) {
     });
 }
 
+/// Bench `1k` rows parallel via `Session::run_batch` / `run_batch_ref` (`CpuBatched`).
+///
+/// Creates a `CpuBatched` `Session` (same Iris PMML, `ExecutionProviderKind::CpuBatched`) and a `1k` `Vec<HashMap>` batch.
+/// Benches `run_batch(batch.clone())` (clone per iter) and `run_batch_ref(&batch)` (no clone, preserves bench batch).
+/// Expect `<400 µs` (~2× vs sequential) because `n=1000` shards into `par_chunks(256)`.
+///
+/// # Panics
+///
+/// Panics if Iris PMML missing (bench setup).
 fn bench_batch_1k_parallel(c: &mut Criterion) {
     // Batched provider with rayon par_iter chunk 1k — expects < 400 µs (2× vs 815 µs sequential)
     let env = PmmlEnv::new();

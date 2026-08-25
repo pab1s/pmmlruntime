@@ -3,13 +3,20 @@
 //! Design mirrors ONNX Runtime `OrtValue` + `OrtIoBinding`:
 //! - `Batch` is the single logical input type, with two physical layouts:
 //!   * `RowMajor` (`Vec<HashMap<String,Value>>` / `&[HashMap]`) — JPMML compat, ergonomic for single row
-//!   * `Columnar` (`RecordBatch`) — Arrow zero-copy, for >10k rows (16.5M rows/s)
+//!   * `Columnar` (`RecordBatch`) — Arrow zero-copy, for `>10k` rows (16.5M rows/s)
 //! - `BatchCtx` holds `Session`'s `name_to_id`/`symbol_str_to_id`/`Ir` refs to avoid per-row allocation
-//! - `ExecutionProvider::eval_batch` shards via rayon; `Session` only materializes `Value[FieldId]`
+//! - `ExecutionProvider::eval_batch` shards via `rayon`; `Session` only materializes `Value[FieldId]`
 //!
 //! If Arrow is always better, why not only Arrow? See `docs/PORTING.md` E1 and `BENCHMARK.md` §5:
-//! Arrow wins at 100k (61ns/row) but loses for single row (conversion >1µs) and needs schema agreement.
+//! Arrow wins at 100k (61ns/row) but loses for single row (conversion `>1µs`) and needs schema agreement.
 //! `Collection`/`List` (Association) and Python `dict` map naturally to `HashMap`. So keep both, provider picks.
+//!
+//! # What belongs here
+//!
+//! - [`BatchFormat`] — hint for provider (`RowMajor` vs `Columnar`).
+//! - [`BatchCtx`] — no-per-row-alloc context (refs to `Session` caches + `Ir` + `col_map` for `RecordBatch`).
+//! - [`Batch`] trait — object-safe `Send+Sync` with `materialize_row` to `Value[FieldId]`.
+//! - [`BatchResult`] — `Rows(Vec<HashMap>)` or `Columnar(RecordBatch)`, with helpers to convert.
 
 use crate::arrow::value_maps_to_record_batch;
 use ahash::AHashMap;
@@ -23,31 +30,69 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Hint for provider to choose SIMD/parallel strategy.
+///
+/// `RowMajor` is `Vec<HashMap<String, Value>>` (JPMML compat, ergonomic). `Columnar` is `RecordBatch`
+/// (Arrow zero-copy, best at `>10k` rows). Provider's [`preferred_format`](crate::providers::ExecutionProvider::preferred_format)
+/// hints, but `Session` keeps both so callers aren't forced into Arrow for single rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchFormat {
+    /// Row-major: `Vec<HashMap<String, Value>>` or `&[HashMap]`.
     RowMajor,
+    /// Columnar: `RecordBatch`.
     Columnar,
 }
 
 /// Context for materialization — refs to `Session`'s caches, no per-row alloc.
+///
+/// Built by `Session::run_batch*` and passed to `ExecutionProvider::eval_batch` and `Batch::materialize_row`.
+/// For `RecordBatch` it precomputes `col_map: Vec<(FieldId, column_index)>` so materialization is a direct
+/// array lookup without `HashMap` per row.
+///
+/// All refs are borrowed from `Session` + `Ir`; `BatchCtx` itself is not `Send` due to lifetimes, but
+/// `Batch` impls for `RecordBatch` read `col_map` without mutation, and `rayon` shards capture `&BatchCtx: Sync` via scoped closure.
+///
+/// # Examples
+///
+/// ```no_run
+/// use pmml_session::batch::BatchCtx;
+/// # let ctx: BatchCtx = unimplemented!();
+/// let needed = ctx.max_field_id;
+/// # let _ = needed;
+/// ```
 pub struct BatchCtx<'a> {
+    /// `field name → FieldId` hot map (`AHashMap` for 3× vs `SipHash`).
     pub name_to_id: &'a AHashMap<String, FieldId>,
+    /// `field name → FieldId` std map for `MiningModel`/`GeneralRegression` evaluator (cached).
     pub name_to_id_std: &'a HashMap<String, FieldId>,
+    /// `String → SymbolId` forward map for categorical `Utf8` → `Discrete`.
     pub symbol_str_to_id: &'a HashMap<String, SymbolId>,
+    /// `SymbolId → String` reverse map (dense `symbol_names` from `Ir`).
     pub symbol_names: &'a HashMap<SymbolId, String>,
+    /// Immutable lowered model (for `MiningSchema` etc.).
     pub ir: &'a Ir,
+    /// `max(FieldId)+1` clamped to at least 16, size for `values` slice.
     pub max_field_id: usize,
     // Precomputed for RecordBatch: (FieldId, column index)
     // For RowMajor batches this is empty.
+    /// Precomputed `FieldId → column index` for `RecordBatch` (empty for `RowMajor`).
     pub col_map: Vec<(FieldId, usize)>,
     // For output mapping
+    /// Cached `OutputFieldIr` slice (pre-resolved, avoids per-row `ModelIr` match).
     pub output_fields: &'a [pmml_ir::ir::OutputFieldIr],
+    /// Target field name if known (inserted alongside `predictedValue`).
     pub target_name: Option<&'a String>,
+    /// Dense `SymbolId.0 as usize → String` (cache-line friendly for probability output).
     pub symbol_names_vec: &'a [String],
 }
 
 impl<'a> BatchCtx<'a> {
-    /// Build ctx for a generic batch (no col_map).
+    /// Build ctx for a generic batch (no `col_map`).
+    ///
+    /// Used for `Vec<HashMap>` / `&[HashMap]` where `materialize_row` looks up `name_to_id` per key.
+    ///
+    /// # Parameters
+    ///
+    /// All refs are from `Session` caches + `Ir`; `max_field_id` vs `num_fields()+4` is precomputed by `Session`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         name_to_id: &'a AHashMap<String, FieldId>,
@@ -74,7 +119,15 @@ impl<'a> BatchCtx<'a> {
         }
     }
 
-    /// Build ctx for RecordBatch — precompute col_map (FieldId → column index).
+    /// Build ctx for `RecordBatch` — precompute `col_map` (`FieldId → column index`).
+    ///
+    /// Iterates `batch.schema().fields()` and keeps only columns whose name is in `name_to_id`.
+    /// This avoids `HashMap<String, Value>` per row; `materialize_row` then reads `Float64Array`/`StringArray`
+    /// directly.
+    ///
+    /// # Parameters
+    ///
+    /// - `batch`: `RecordBatch` whose `Schema` field names are matched against `name_to_id`.
     #[allow(clippy::too_many_arguments)]
     pub fn for_record_batch(
         name_to_id: &'a AHashMap<String, FieldId>,
@@ -110,18 +163,60 @@ impl<'a> BatchCtx<'a> {
 }
 
 /// Logical batch — row-major or columnar. Object-safe for `&dyn Batch`.
+///
+/// Implementors are `Send + Sync` so `ExecutionProvider::eval_batch` can shard with `rayon`.
+/// The hot method is `materialize_row`, which fills `values[FieldId]` for one row.
+/// `BatchCtx` carries `name_to_id` / `col_map` so materialization needs no per-row `HashMap` clone for `RecordBatch`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_session::batch::{Batch, BatchCtx};
+/// use pmml_core::Value;
+/// use std::collections::HashMap;
+/// // Vec<HashMap> batch
+/// let batch = vec![{ let mut m=HashMap::new(); m.insert("x".into(), Value::Continuous(1.0)); m }];
+/// assert_eq!(batch.len(), 1);
+/// assert_eq!(batch.format(), pmml_session::batch::BatchFormat::RowMajor);
+/// ```
 pub trait Batch: Send + Sync {
+    /// Number of rows in the batch.
     fn len(&self) -> usize;
+    /// `true` if `len() == 0`.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Physical layout hint (`RowMajor` vs `Columnar`).
     fn format(&self) -> BatchFormat;
     /// Materialize `row` into `values[FieldId.as_usize()] = Value`.
     /// `values` is already zeroed with `Missing`; impl only overwrites known fields.
+    ///
+    /// # Parameters
+    ///
+    /// - `row`: row index `0..len()`.
+    /// - `values`: `&mut [Value]` sized to `ctx.max_field_id`, initialized to `Missing`.
+    /// - `ctx`: refs to `name_to_id` / `col_map` / `symbol_str_to_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Ok(())` always in current impls (missing columns become `Missing`), but
+    /// future impls could return `PmmlError::InvalidValue` for type mismatches.
     fn materialize_row(&self, row: usize, values: &mut [Value], ctx: &BatchCtx) -> Result<()>;
 }
 
 /// Result of a batch execution.
+///
+/// `Rows` is `Vec<HashMap>` (row-major output), `Columnar` is `RecordBatch` (when caller wants Arrow output).
+/// `Session::run_batch` always returns `Rows` for now; `run_record_batch` converts via `into_record_batch`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_session::batch::BatchResult;
+/// use std::collections::HashMap;
+/// let br = BatchResult::Rows(vec![]);
+/// assert!(br.is_empty());
+/// ```
 pub enum BatchResult {
     /// Row-major `Vec<HashMap>` — used for `Vec<HashMap>` inputs and Arrow inputs that still output rows.
     Rows(Vec<HashMap<String, Value>>),
@@ -130,16 +225,27 @@ pub enum BatchResult {
 }
 
 impl BatchResult {
+    /// Number of rows in the result.
     pub fn len(&self) -> usize {
         match self {
             BatchResult::Rows(v) => v.len(),
             BatchResult::Columnar(b) => b.num_rows(),
         }
     }
+    /// `true` if `len() == 0`.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
     /// Convert `Rows` to `RecordBatch` via `value_maps_to_record_batch`.
+    ///
+    /// # Parameters
+    ///
+    /// - `schema`: Arrow schema for output columns.
+    /// - `symbol_names`: optional `SymbolId → String` for `Discrete` resolution.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(RecordBatch)` or `Err(PmmlError::InvalidValue)` if `RecordBatch::try_new` fails.
     pub fn into_record_batch(
         self,
         schema: Arc<arrow::datatypes::Schema>,
@@ -151,7 +257,11 @@ impl BatchResult {
             BatchResult::Columnar(b) => Ok(b),
         }
     }
-    /// Unwrap `Rows` for backward compat.
+    /// Unwrap `Rows` for backward compat; `Columnar` is converted via `record_batch_to_value_maps`.
+    ///
+    /// # Returns
+    ///
+    /// `Vec<HashMap<String, Value>>` one per row.
     pub fn into_rows(self) -> Vec<HashMap<String, Value>> {
         match self {
             BatchResult::Rows(v) => v,
