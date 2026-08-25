@@ -9,10 +9,7 @@ name = "pmml-runtime"
 path = "src/main.rs"
 
 [dependencies]
-pmml-core = { path = "../pmml-core" }
-pmml-session = { path = "../pmml-session" }
-pmml-xml = { path = "../pmml-xml" }
-pmml-ir = { path = "../pmml-ir" }
+pmmlruntime = { path = "../pmmlruntime" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
