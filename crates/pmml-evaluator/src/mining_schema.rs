@@ -11,7 +11,7 @@
 //!
 //! - [`apply_mining_schema`] — the single public entry point that copies a sparse
 //!   caller map into a dense `&mut [Value]` indexed by [`FieldId`].
-//! - Private helpers [`is_valid_value`], [`coerce_value`], [`parse_replacement`] that
+//! - Private helpers `is_valid_value`, `coerce_value`, `parse_replacement` that
 //!   encapsulate categorical validity and numeric coercion. They are `#[allow(dead_code)]`
 //!   until the IR carries full interval / symbol maps for precise coercion.
 //!
@@ -194,7 +194,7 @@ fn parse_replacement(
 ///
 /// 1. **Missing handling** — when the raw value is [`Value::Missing`], apply
 ///    [`MissingValueTreatment`] and `missingValueReplacement` (numeric parse as `f64`).
-/// 2. **Validity / coercion** — [`is_valid_value`] plus `DataType` check; on invalid,
+/// 2. **Validity / coercion** — `is_valid_value` plus `DataType` check; on invalid,
 ///    apply [`InvalidValueTreatment`] (`ReturnInvalid` → error, `AsMissing` → missing + replacement,
 ///    `AsValue` → invalid-value replacement, `AsIs` → keep).
 /// 3. **Outlier handling** — for valid [`Value::Continuous`], apply [`OutlierTreatment`]

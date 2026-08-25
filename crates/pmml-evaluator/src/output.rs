@@ -4,7 +4,7 @@
 //! Four features are unsupported per JPMML (`confidenceIntervalLower`,
 //! `confidenceIntervalUpper`, `standardError`, `standardDeviation`) and are
 //! mapped to [`Value::Missing`] in non-strict mode or to
-//! [`PmmlError::UnsupportedMarkup`] in strict mode.
+//! [`pmml_core::error::PmmlError::UnsupportedMarkup`] in strict mode.
 //!
 //! # What belongs here
 //!
@@ -121,7 +121,7 @@ pub fn build_output(
 /// - `predicted`: Predicted [`Value`] from `evaluate_*`.
 /// - `probabilities_str`: `category_name → probability` (from `evaluate_*_with_probs`).
 /// - `probabilities_sid`: `SymbolId → probability` (interned form, preferred when available).
-/// - `values`: Dense `&[Value]` indexed by [`FieldId`]; used with `target_field` for `residual`.
+/// - `values`: Dense `&[Value]` indexed by [`pmml_core::FieldId`]; used with `target_field` for `residual`.
 /// - `target_field`: Field whose `values[target_field]` is the expected value for `residual`. `None` → residual is `Missing`.
 /// - `symbol_names`: `SymbolId → display string` for reverse lookup of `probabilities_str`.
 /// - `field_names`: Unused currently; reserved for future `OutputField/@field` dereference. Pass an empty map.
@@ -360,7 +360,7 @@ pub fn build_output_with_context(
 /// Like [`build_output`] but validates that no [`OutputFieldIr`] uses
 /// `is_unsupported() == true` (`standardError`, `standardDeviation`,
 /// `confidenceIntervalLower`, `confidenceIntervalUpper`). On violation it
-/// returns `Err(PmmlError::UnsupportedMarkup)` instead of producing `Missing`.
+/// returns `Err(pmml_core::error::PmmlError::UnsupportedMarkup)` instead of producing `Missing`.
 ///
 /// # Parameters
 ///

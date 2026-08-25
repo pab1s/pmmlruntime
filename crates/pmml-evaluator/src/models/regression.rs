@@ -9,7 +9,7 @@
 //! # What belongs here
 //!
 //! - [`evaluate_regression`] — public scoring entry point.
-//! - [`apply_normalization`](crate::models::regression::apply_normalization) — internal normalization helper (`Softmax`/`Logit`/`Probit`).
+//! - `apply_normalization` — internal normalization helper (`Softmax`/`Logit`/`Probit`, `pub(crate)`).
 //!
 //! # Invariants
 //!
