@@ -293,6 +293,7 @@ mod tests {
                 data_type: pmml_core::field::DataType::Double,
                 op_type: pmml_core::field::OpType::Continuous,
                 values: vec![],
+                ..Default::default()
             },
             FieldMeta {
                 field_id: pmml_core::FieldId(1),
@@ -300,6 +301,7 @@ mod tests {
                 data_type: pmml_core::field::DataType::String,
                 op_type: pmml_core::field::OpType::Categorical,
                 values: vec![],
+                ..Default::default()
             },
         ];
         let schema = data_dictionary_to_schema(&fields);

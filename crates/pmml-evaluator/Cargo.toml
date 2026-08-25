@@ -17,4 +17,6 @@ smallvec = { workspace = true }
 memchr = { workspace = true }
 libm = { workspace = true }
 statrs = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
 wide = { workspace = true, optional = true }

@@ -21,6 +21,34 @@ pub struct RawMiningField {
     pub name: String,
     pub usage_type: Option<String>, // target, active (default)
     pub importance: Option<f64>,
+    pub outliers: Option<String>,
+    pub low_value: Option<String>,
+    pub high_value: Option<String>,
+    pub missing_value_replacement: Option<String>,
+    pub missing_value_treatment: Option<String>,
+    pub invalid_value_treatment: Option<String>,
+    pub invalid_value_replacement: Option<String>,
+    pub op_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawTargetValue {
+    pub value: Option<String>,
+    pub display_value: Option<String>,
+    pub prior_probability: Option<f64>,
+    pub default_value: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawTarget {
+    pub field: Option<String>,
+    pub op_type: Option<String>,
+    pub cast_integer: Option<String>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub rescale_constant: Option<f64>,
+    pub rescale_factor: Option<f64>,
+    pub target_values: Vec<RawTargetValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +56,18 @@ pub struct RawOutputField {
     pub name: String,
     pub feature: Option<String>,
     pub value: Option<String>,
+    pub target_field: Option<String>,
+    pub data_type: Option<String>,
+    pub op_type: Option<String>,
+    pub rule_feature: Option<String>,
+    pub algorithm: Option<String>,
+    pub rank: Option<i32>,
+    pub rank_basis: Option<String>,
+    pub rank_order: Option<String>,
+    pub is_multi_valued: Option<String>,
+    pub segment_id: Option<String>,
+    pub is_final_result: Option<bool>,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,7 +77,9 @@ pub struct RawTreeModel {
     pub no_true_child_strategy: Option<String>,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub root: RawNode,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,9 +110,11 @@ pub struct RawRegressionModel {
     pub target_field_name: Option<String>,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub regression_tables: Vec<RawRegressionTable>,
     pub normalization_method: Option<String>,
     pub model_name: Option<String>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,7 +144,9 @@ pub struct RawMiningModel {
     pub mining_schema: Vec<RawMiningField>,
     pub segmentation: Option<RawSegmentation>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub model_name: Option<String>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -127,8 +173,10 @@ pub struct RawScorecard {
     pub reason_code_algorithm: Option<String>,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub characteristics: Vec<RawCharacteristic>,
     pub baseline_method: Option<String>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -151,9 +199,11 @@ pub struct RawClusteringModel {
     pub number_of_clusters: Option<usize>,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub comparison_measure: Option<RawComparisonMeasure>,
     pub clustering_fields: Vec<String>,
     pub clusters: Vec<RawCluster>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,8 +238,10 @@ pub struct RawNaiveBayesModel {
     pub threshold: f64,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub bayes_inputs: Vec<RawBayesInput>,
     pub bayes_output_counts: Vec<RawTargetValueCount>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -204,9 +256,11 @@ pub struct RawNearestNeighborModel {
     pub number_of_neighbors: usize,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub instance_fields: Vec<RawInstanceField>,
     pub instances: Vec<std::collections::HashMap<String, String>>,
     pub knn_inputs: Vec<String>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -214,10 +268,12 @@ pub struct RawSupportVectorMachineModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub vector_fields: Vec<RawVectorField>,
     pub vector_instances: Vec<RawVectorInstance>,
     pub support_vector_machine: Option<RawSupportVectorMachine>,
     pub kernel_gamma: Option<f64>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -225,10 +281,12 @@ pub struct RawNeuralNetwork {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub neural_inputs: Vec<RawNeuralInput>,
     pub neural_layers: Vec<RawNeuralLayer>,
     pub model_name: Option<String>,
     pub activation_function: Option<String>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -264,6 +322,7 @@ pub struct RawGeneralRegressionModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub model_type: Option<String>,
     pub target_variable_name: Option<String>,
     pub target_reference_category: Option<String>,
@@ -272,6 +331,7 @@ pub struct RawGeneralRegressionModel {
     pub covariates: Vec<String>,
     pub pp_matrix: Vec<RawPPCell>,
     pub param_matrix: Vec<RawPCell>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -300,9 +360,11 @@ pub struct RawAssociationModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub items: Vec<RawItem>,
     pub itemsets: Vec<RawItemset>,
     pub rules: Vec<RawAssociationRule>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -325,7 +387,9 @@ pub struct RawRuleSetModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
     pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
     pub rule_set: Option<RawRuleSet>,
+    pub local_derived_fields: Vec<RawDerivedField>,
 }
 
 #[derive(Debug, Clone)]
@@ -390,6 +454,7 @@ pub struct RawNode {
     pub predicate: RawPredicate,
     pub score_distributions: Vec<RawScoreDistribution>,
     pub children: Vec<RawNode>,
+    pub default_child: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -426,6 +491,112 @@ pub struct RawExtension {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawParameterField {
+    pub name: String,
+    pub data_type: Option<String>,
+    pub op_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawLinearNorm {
+    pub orig: f64,
+    pub norm: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawInterval {
+    pub closure: String,
+    pub left_margin: Option<f64>,
+    pub right_margin: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawDiscretizeBin {
+    pub bin_value: String,
+    pub interval: RawInterval,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawFieldColumnPair {
+    pub field: String,
+    pub column: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawDefineFunction {
+    pub name: String,
+    pub data_type: Option<String>,
+    pub op_type: Option<String>,
+    pub param_fields: Vec<RawParameterField>,
+    pub derived_fields: Vec<RawDerivedField>,
+    pub body: Option<RawExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawDerivedField {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub data_type: String,
+    pub op_type: String,
+    pub expression: RawExpression,
+}
+
+#[derive(Debug, Clone)]
+pub enum RawExpression {
+    Constant { data_type: Option<String>, value: String },
+    FieldRef { field: String, map_missing_to: Option<String> },
+    NormContinuous {
+        field: String,
+        map_missing_to: Option<String>,
+        default_value: Option<String>,
+        outliers: Option<String>,
+        linear_norms: Vec<RawLinearNorm>,
+    },
+    NormDiscrete {
+        field: String,
+        value: String,
+        map_missing_to: Option<String>,
+        default_value: Option<String>,
+    },
+    Discretize {
+        field: String,
+        map_missing_to: Option<String>,
+        default_value: Option<String>,
+        data_type: Option<String>,
+        bins: Vec<RawDiscretizeBin>,
+    },
+    MapValues {
+        map_missing_to: Option<String>,
+        default_value: Option<String>,
+        output_column: String,
+        field_column_pairs: Vec<RawFieldColumnPair>,
+        inline_table: Vec<std::collections::HashMap<String, String>>,
+    },
+    TextIndex {
+        field: String,
+        map_missing_to: Option<String>,
+        text: Box<RawExpression>,
+        search_term: Box<RawExpression>,
+        is_case_sensitive: bool,
+        max_levenstein_distance: Option<usize>,
+        word_separator: Option<String>,
+        tokenize: bool,
+    },
+    Aggregate {
+        field: String,
+        function: String,
+        group_field: Option<String>,
+    },
+    Apply {
+        function: String,
+        map_missing_to: Option<String>,
+        default_value: Option<String>,
+        args: Vec<RawExpression>,
+    },
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
 pub struct RawPmml {
     pub data_dictionary: Vec<RawDataField>,
     pub tree_model: Option<RawTreeModel>,
@@ -440,6 +611,10 @@ pub struct RawPmml {
     pub general_regression_model: Option<RawGeneralRegressionModel>,
     pub association_model: Option<RawAssociationModel>,
     pub rule_set_model: Option<RawRuleSetModel>,
+    /// TransformationDictionary derived fields (global)
+    pub transformation_dictionary: Vec<RawDerivedField>,
+    /// TransformationDictionary define functions
+    pub define_functions: Vec<RawDefineFunction>,
     /// Vendor extensions (gracefully stored, not yet evaluated)
     pub extensions: Vec<RawExtension>,
     /// Unsupported model tag if PMML contains e.g. AnomalyDetectionModel, BaselineModel, etc.
@@ -470,6 +645,742 @@ fn tag_name(e: &BytesStart) -> String {
     String::from_utf8_lossy(e.name().as_ref()).into_owned()
     // quick-xml 0.37: e.name().as_ref() is already local name when no prefix; default xmlns doesn't prefix.
     // If namespace prefix present, local_name would strip. But PMML uses default ns, so fine.
+}
+// ---------- Expression helpers for TransformationDictionary ----------
+
+fn parse_constant(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+    let data_type = attr(start, "dataType");
+    let mut value = String::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Text(t)) => {
+                let txt = t.unescape().map(|c| c.into_owned()).unwrap_or_default();
+                let trimmed = txt.trim();
+                if !trimmed.is_empty() {
+                    value = trimmed.to_string();
+                } else if value.is_empty() && !txt.is_empty() {
+                    value = txt.trim().to_string();
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Constant" => break,
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawExpression::Constant { data_type, value })
+}
+
+fn parse_constant_empty(start: &BytesStart) -> RawExpression {
+    let data_type = attr(start, "dataType");
+    RawExpression::Constant { data_type, value: String::new() }
+}
+
+fn parse_field_ref(start: &BytesStart) -> Result<RawExpression> {
+    let field = attr_required(start, "field", "FieldRef")?;
+    let map_missing_to = attr(start, "mapMissingTo");
+    Ok(RawExpression::FieldRef { field, map_missing_to })
+}
+
+fn parse_norm_continuous(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+    let field = attr_required(start, "field", "NormContinuous")?;
+    let map_missing_to = attr(start, "mapMissingTo");
+    let default_value = attr(start, "defaultValue");
+    let outliers = attr(start, "outliers");
+    let mut linear_norms = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "LinearNorm" => {
+                let orig = attr(&inner, "orig").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                let norm = attr(&inner, "norm").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                linear_norms.push(RawLinearNorm { orig, norm });
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "LinearNorm" => break,
+                        Ok(Event::Empty(_)) => break,
+                        _ => {}
+                    }
+                    inner2.clear();
+                    break;
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "LinearNorm" => {
+                let orig = attr(&inner, "orig").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                let norm = attr(&inner, "norm").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                linear_norms.push(RawLinearNorm { orig, norm });
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "NormContinuous" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawExpression::NormContinuous { field, map_missing_to, default_value, outliers, linear_norms })
+}
+
+fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+    let map_missing_to = attr(start, "mapMissingTo");
+    let default_value = attr(start, "defaultValue");
+    let output_column = attr(start, "outputColumn").unwrap_or_default();
+    let mut field_column_pairs = Vec::new();
+    let mut inline_table: Vec<std::collections::HashMap<String, String>> = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "FieldColumnPair" => {
+                        let field = attr_required(&inner, "field", "FieldColumnPair")?;
+                        let column = attr_required(&inner, "column", "FieldColumnPair")?;
+                        field_column_pairs.push(RawFieldColumnPair { field, column });
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "FieldColumnPair" => break,
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                            break;
+                        }
+                    }
+                    "InlineTable" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(row_start)) if tag_name(&row_start) == "row" => {
+                                    let mut row: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                                    let mut row_buf = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut row_buf) {
+                                            Ok(Event::Start(cell)) => {
+                                                let col = tag_name(&cell);
+                                                let mut cell_buf = Vec::new();
+                                                let mut text = String::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut cell_buf) {
+                                                        Ok(Event::Text(t)) => {
+                                                            text = t.unescape().map(|c| c.into_owned()).unwrap_or_default();
+                                                        }
+                                                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == col => break,
+                                                        _ => {}
+                                                    }
+                                                    cell_buf.clear();
+                                                }
+                                                row.insert(col, text);
+                                            }
+                                            Ok(Event::Empty(cell)) => {
+                                                let col = tag_name(&cell);
+                                                row.insert(col, String::new());
+                                            }
+                                            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "row" => break,
+                                            _ => {}
+                                        }
+                                        row_buf.clear();
+                                    }
+                                    inline_table.push(row);
+                                }
+                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "InlineTable" => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                                }
+                                Ok(Event::Empty(_)) => {},
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                }
+                                Ok(Event::Empty(_)) => {},
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "FieldColumnPair" {
+                    let field = attr_required(&inner, "field", "FieldColumnPair")?;
+                    let column = attr_required(&inner, "column", "FieldColumnPair")?;
+                    field_column_pairs.push(RawFieldColumnPair { field, column });
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "MapValues" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawExpression::MapValues { map_missing_to, default_value, output_column, field_column_pairs, inline_table })
+}
+
+fn parse_discretize(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+    let field = attr_required(start, "field", "Discretize")?;
+    let map_missing_to = attr(start, "mapMissingTo");
+    let default_value = attr(start, "defaultValue");
+    let data_type = attr(start, "dataType");
+    let mut bins = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "DiscretizeBin" => {
+                let bin_value = attr_required(&inner, "binValue", "DiscretizeBin")?;
+                let mut interval = RawInterval { closure: "closedOpen".into(), left_margin: None, right_margin: None };
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(iv)) if tag_name(&iv) == "Interval" => {
+                            interval.closure = attr(&iv, "closure").unwrap_or_else(|| "closedOpen".into());
+                            interval.left_margin = attr(&iv, "leftMargin").and_then(|s| s.parse::<f64>().ok());
+                            interval.right_margin = attr(&iv, "rightMargin").and_then(|s| s.parse::<f64>().ok());
+                            let mut skip = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut skip) {
+                                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Interval" => break,
+                                    Ok(Event::Empty(_)) => break,
+                                    _ => {}
+                                }
+                                skip.clear();
+                                break;
+                            }
+                        }
+                        Ok(Event::Empty(iv)) if tag_name(&iv) == "Interval" => {
+                            interval.closure = attr(&iv, "closure").unwrap_or_else(|| "closedOpen".into());
+                            interval.left_margin = attr(&iv, "leftMargin").and_then(|s| s.parse::<f64>().ok());
+                            interval.right_margin = attr(&iv, "rightMargin").and_then(|s| s.parse::<f64>().ok());
+                        }
+                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DiscretizeBin" => break,
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+                bins.push(RawDiscretizeBin { bin_value, interval });
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Discretize" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawExpression::Discretize { field, map_missing_to, default_value, data_type, bins })
+}
+
+fn parse_apply(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+    let function = attr_required(start, "function", "Apply")?;
+    let map_missing_to = attr(start, "mapMissingTo");
+    let default_value = attr(start, "defaultValue");
+    let mut args = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                let expr = parse_expression_from_start(reader, &inner, &tag)?;
+                args.push(expr);
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                let expr = parse_expression_empty(&inner, &tag)?;
+                args.push(expr);
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Apply" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawExpression::Apply { function, map_missing_to, default_value, args })
+}
+
+fn parse_expression_empty(start: &BytesStart, tag: &str) -> Result<RawExpression> {
+    Ok(match tag {
+        "Constant" => parse_constant_empty(start),
+        "FieldRef" => parse_field_ref(start)?,
+        "NormDiscrete" => {
+            let field = attr_required(start, "field", "NormDiscrete")?;
+            let value = attr_required(start, "value", "NormDiscrete")?;
+            let map_missing_to = attr(start, "mapMissingTo");
+            let default_value = attr(start, "defaultValue");
+            RawExpression::NormDiscrete { field, value, map_missing_to, default_value }
+        }
+        "NormContinuous" => {
+            let field = attr(start, "field").unwrap_or_default();
+            RawExpression::NormContinuous { field, map_missing_to: None, default_value: None, outliers: None, linear_norms: vec![] }
+        }
+        _ => RawExpression::Unknown,
+    })
+}
+
+fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart, tag: &str) -> Result<RawExpression> {
+    match tag {
+        "Constant" => parse_constant(reader, start),
+        "FieldRef" => {
+            let expr = parse_field_ref(start)?;
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "FieldRef" => break,
+                    _ => {}
+                }
+                buf.clear();
+                break;
+            }
+            Ok(expr)
+        }
+        "NormContinuous" => parse_norm_continuous(reader, start),
+        "NormDiscrete" => {
+            let field = attr_required(start, "field", "NormDiscrete")?;
+            let value = attr_required(start, "value", "NormDiscrete")?;
+            let map_missing_to = attr(start, "mapMissingTo");
+            let default_value = attr(start, "defaultValue");
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "NormDiscrete" => break,
+                    _ => {}
+                }
+                buf.clear();
+                break;
+            }
+            Ok(RawExpression::NormDiscrete { field, value, map_missing_to, default_value })
+        }
+        "Discretize" => parse_discretize(reader, start),
+        "MapValues" => parse_map_values(reader, start),
+        "Apply" => parse_apply(reader, start),
+        "TextIndex" => {
+            let field = attr(start, "field").unwrap_or_default();
+            let mut depth = 1usize;
+            let mut buf = Vec::new();
+            let mut text_expr: Option<RawExpression> = None;
+            let mut search_expr: Option<RawExpression> = None;
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(inner)) => {
+                        let t = tag_name(&inner);
+                        if t == "FieldRef" || t == "Constant" || t == "Apply" {
+                            let e = parse_expression_from_start(reader, &inner, &t)?;
+                            if text_expr.is_none() { text_expr = Some(e); } else { search_expr = Some(e); }
+                        } else { depth += 1; }
+                    }
+                    Ok(Event::Empty(inner)) => {
+                        let t = tag_name(&inner);
+                        if t == "FieldRef" || t == "Constant" {
+                            let e = parse_expression_empty(&inner, &t)?;
+                            if text_expr.is_none() { text_expr = Some(e); } else { search_expr = Some(e); }
+                        }
+                    }
+                    Ok(Event::End(end)) => {
+                        depth -= 1;
+                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "TextIndex" { break; }
+                    }
+                    _ => {}
+                }
+                buf.clear();
+            }
+            if let (Some(txt), Some(search)) = (text_expr, search_expr) {
+                Ok(RawExpression::TextIndex { field, map_missing_to: None, text: Box::new(txt), search_term: Box::new(search), is_case_sensitive: false, max_levenstein_distance: None, word_separator: None, tokenize: false })
+            } else { Ok(RawExpression::Unknown) }
+        }
+        "Aggregate" => {
+            let field = attr(start, "field").unwrap_or_default();
+            let function = attr(start, "function").unwrap_or_else(|| "average".into());
+            let group_field = attr(start, "groupField");
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Aggregate" => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawExpression::Aggregate { field, function, group_field })
+        }
+        _ => {
+            let mut depth = 1usize;
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(_)) => depth += 1,
+                    Ok(Event::End(end)) => {
+                        depth -= 1;
+                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                    }
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawExpression::Unknown)
+        }
+    }
+}
+
+fn parse_derived_field(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawDerivedField> {
+    let name = attr_required(start, "name", "DerivedField")?;
+    let display_name = attr(start, "displayName");
+    let data_type = attr(start, "dataType").unwrap_or_else(|| "string".into());
+    let op_type = attr(start, "optype").unwrap_or_else(|| "continuous".into());
+    let mut expression: Option<RawExpression> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "Extension" {
+                    let mut depth = 1usize;
+                    let mut inner2 = Vec::new();
+                    loop {
+                        match reader.read_event_into(&mut inner2) {
+                            Ok(Event::Start(_)) => depth += 1,
+                            Ok(Event::End(end)) => {
+                                depth -= 1;
+                                if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                            }
+                            _ => {}
+                        }
+                        inner2.clear();
+                    }
+                    continue;
+                }
+                if ["Constant","FieldRef","NormContinuous","NormDiscrete","Discretize","MapValues","TextIndex","Aggregate","Apply"].contains(&tag.as_str()) {
+                    let expr = parse_expression_from_start(reader, &inner, &tag)?;
+                    if expression.is_none() { expression = Some(expr); }
+                } else {
+                    let mut depth = 1usize;
+                    let mut inner2 = Vec::new();
+                    loop {
+                        match reader.read_event_into(&mut inner2) {
+                            Ok(Event::Start(_)) => depth += 1,
+                            Ok(Event::End(end)) => {
+                                depth -= 1;
+                                if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                            }
+                            _ => {}
+                        }
+                        inner2.clear();
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if ["Constant","FieldRef","NormDiscrete"].contains(&tag.as_str()) {
+                    let expr = parse_expression_empty(&inner, &tag)?;
+                    if expression.is_none() { expression = Some(expr); }
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DerivedField" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let expr = expression.unwrap_or(RawExpression::Unknown);
+    Ok(RawDerivedField { name, display_name, data_type, op_type, expression: expr })
+}
+
+fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawDefineFunction> {
+    let name = attr_required(start, "name", "DefineFunction")?;
+    let data_type = attr(start, "dataType");
+    let op_type = attr(start, "optype");
+    let mut param_fields = Vec::new();
+    let mut derived_fields = Vec::new();
+    let mut body: Option<RawExpression> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "ParameterField" => {
+                        let p_name = attr_required(&inner, "name", "ParameterField")?;
+                        let p_data_type = attr(&inner, "dataType");
+                        let p_op_type = attr(&inner, "optype");
+                        param_fields.push(RawParameterField { name: p_name, data_type: p_data_type, op_type: p_op_type });
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "ParameterField" => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                            break;
+                        }
+                    }
+                    "DerivedField" => {
+                        let df = parse_derived_field(reader, &inner)?;
+                        derived_fields.push(df);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        if ["Constant","FieldRef","NormContinuous","NormDiscrete","Discretize","MapValues","TextIndex","Aggregate","Apply"].contains(&tag.as_str()) {
+                            if body.is_none() {
+                                let expr = parse_expression_from_start(reader, &inner, &tag)?;
+                                body = Some(expr);
+                            } else {
+                                let mut depth = 1usize;
+                                let mut inner2 = Vec::new();
+                                loop {
+                                    match reader.read_event_into(&mut inner2) {
+                                        Ok(Event::Start(_)) => depth += 1,
+                                        Ok(Event::End(end)) => {
+                                            depth -= 1;
+                                            if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                        }
+                                        _ => {}
+                                    }
+                                    inner2.clear();
+                                }
+                            }
+                        } else {
+                            let mut depth = 1usize;
+                            let mut inner2 = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner2) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                    }
+                                    _ => {}
+                                }
+                                inner2.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "ParameterField" {
+                    let p_name = attr_required(&inner, "name", "ParameterField")?;
+                    let p_data_type = attr(&inner, "dataType");
+                    let p_op_type = attr(&inner, "optype");
+                    param_fields.push(RawParameterField { name: p_name, data_type: p_data_type, op_type: p_op_type });
+                } else if ["Constant","FieldRef","NormDiscrete"].contains(&tag.as_str()) && body.is_none() {
+                    let expr = parse_expression_empty(&inner, &tag)?;
+                    body = Some(expr);
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DefineFunction" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawDefineFunction { name, data_type, op_type, param_fields, derived_fields, body })
+}
+
+fn parse_transformation_dictionary(reader: &mut quick_xml::Reader<&[u8]>, _start: &BytesStart) -> Result<(Vec<RawDefineFunction>, Vec<RawDerivedField>)> {
+    let mut define_functions = Vec::new();
+    let mut derived_fields = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "DefineFunction" => {
+                        let df = parse_define_function(reader, &inner)?;
+                        define_functions.push(df);
+                    }
+                    "DerivedField" => {
+                        let df = parse_derived_field(reader, &inner)?;
+                        derived_fields.push(df);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "TransformationDictionary" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok((define_functions, derived_fields))
+}
+
+fn parse_local_transformations(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<RawDerivedField>> {
+    let mut derived_fields = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "DerivedField" => {
+                let df = parse_derived_field(reader, &inner)?;
+                derived_fields.push(df);
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "LocalTransformations" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(derived_fields)
+}
+
+
+
+
+fn parse_mining_field(e: &BytesStart) -> Result<RawMiningField> {
+    let name = attr_required(e, "name", "MiningField")?;
+    let usage_type = attr(e, "usageType");
+    let importance = attr(e, "importance").and_then(|s| s.parse::<f64>().ok());
+    let outliers = attr(e, "outliers").or_else(|| attr(e, "outlierTreatment"));
+    let low_value = attr(e, "lowValue");
+    let high_value = attr(e, "highValue");
+    let missing_value_replacement = attr(e, "missingValueReplacement");
+    let missing_value_treatment = attr(e, "missingValueTreatment");
+    let invalid_value_treatment = attr(e, "invalidValueTreatment");
+    let invalid_value_replacement = attr(e, "invalidValueReplacement");
+    let op_type = attr(e, "opType");
+    Ok(RawMiningField {
+        name,
+        usage_type,
+        importance,
+        outliers,
+        low_value,
+        high_value,
+        missing_value_replacement,
+        missing_value_treatment,
+        invalid_value_treatment,
+        invalid_value_replacement,
+        op_type,
+    })
+}
+
+fn parse_output_field(e: &BytesStart) -> Result<RawOutputField> {
+    let name = attr_required(e, "name", "OutputField")?;
+    let feature = attr(e, "feature");
+    let value = attr(e, "value");
+    let target_field = attr(e, "targetField");
+    let data_type = attr(e, "dataType");
+    let op_type = attr(e, "opType");
+    let rule_feature = attr(e, "ruleFeature");
+    let algorithm = attr(e, "algorithm");
+    let rank = attr(e, "rank").and_then(|s| s.parse::<i32>().ok());
+    let rank_basis = attr(e, "rankBasis");
+    let rank_order = attr(e, "rankOrder");
+    let is_multi_valued = attr(e, "isMultiValued");
+    let segment_id = attr(e, "segmentId");
+    let is_final_result = attr(e, "isFinalResult").map(|s| s == "true");
+    let display_name = attr(e, "displayName");
+    Ok(RawOutputField {
+        name,
+        feature,
+        value,
+        target_field,
+        data_type,
+        op_type,
+        rule_feature,
+        algorithm,
+        rank,
+        rank_basis,
+        rank_order,
+        is_multi_valued,
+        segment_id,
+        is_final_result,
+        display_name,
+    })
+}
+
+fn parse_target(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawTarget> {
+    let field = attr(start, "field");
+    let op_type = attr(start, "opType");
+    let cast_integer = attr(start, "castInteger");
+    let rescale_constant = attr(start, "rescaleConstant").and_then(|s| s.parse::<f64>().ok());
+    let rescale_factor = attr(start, "rescaleFactor").and_then(|s| s.parse::<f64>().ok());
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Target" => break,
+            Ok(Event::Empty(_)) => break,
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTarget { field, op_type, cast_integer, min: None, max: None, rescale_constant, rescale_factor, target_values: vec![] })
+}
+
+fn parse_targets(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<RawTarget>> {
+    let mut targets = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Target" => {
+                let t = parse_target(reader, &inner)?;
+                targets.push(t);
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Target" => {
+                let t = parse_target(reader, &inner)?;
+                targets.push(t);
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Targets" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(targets)
 }
 
 fn parse_simple_predicate(e: &BytesStart) -> Result<RawPredicate> {
@@ -539,6 +1450,7 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
     let id = attr(start, "id");
     let score = attr(start, "score");
     let record_count = attr(start, "recordCount").and_then(|s| s.parse::<f64>().ok());
+    let default_child = attr(start, "defaultChild");
 
     let mut predicate = RawPredicate::True; // default if none
     let mut predicate_set = false;
@@ -739,6 +1651,7 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
         predicate,
         score_distributions,
         children,
+        default_child: None,
     })
 }
 
@@ -754,6 +1667,7 @@ fn parse_tree_model(
     let mut mining_schema = Vec::new();
     let mut output = Vec::new();
     let mut root: Option<RawNode> = None;
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -768,15 +1682,8 @@ fn parse_tree_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    let importance = attr(&inner_e, "importance")
-                                        .and_then(|s| s.parse::<f64>().ok());
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     // consume end
                                     let mut skip = Vec::new();
                                     loop {
@@ -798,15 +1705,8 @@ fn parse_tree_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    let importance = attr(&inner_e, "importance")
-                                        .and_then(|s| s.parse::<f64>().ok());
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -827,14 +1727,8 @@ fn parse_tree_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -855,14 +1749,8 @@ fn parse_tree_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -879,11 +1767,14 @@ fn parse_tree_model(
                         let node = parse_node(reader, &e)?;
                         root = Some(node);
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {
-                        // skip LocalTransformations, ModelStats, Targets, Extension, etc for v1
+                        // skip ModelStats, Targets, Extension, etc for v1
                         // Need to consume subtree if it's Start
-                        if tag == "LocalTransformations"
-                            || tag == "Targets"
+                        if tag == "Targets"
                             || tag == "ModelStats"
                             || tag == "ModelExplanation"
                         {
@@ -930,7 +1821,9 @@ fn parse_tree_model(
         no_true_child_strategy,
         mining_schema,
         output,
+        targets: Vec::new(),
         root,
+        local_derived_fields
     })
 }
 
@@ -1070,6 +1963,7 @@ fn parse_regression_model(
     let mut mining_schema = Vec::new();
     let mut output = Vec::new();
     let mut regression_tables = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -1083,15 +1977,8 @@ fn parse_regression_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    let importance = attr(&inner_e, "importance")
-                                        .and_then(|s| s.parse::<f64>().ok());
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1111,15 +1998,8 @@ fn parse_regression_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    let importance = attr(&inner_e, "importance")
-                                        .and_then(|s| s.parse::<f64>().ok());
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -1140,14 +2020,8 @@ fn parse_regression_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1167,14 +2041,8 @@ fn parse_regression_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -1190,8 +2058,12 @@ fn parse_regression_model(
                         let tbl = parse_regression_table(reader, &e)?;
                         regression_tables.push(tbl);
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {
-                        if tag == "LocalTransformations" || tag == "Targets" || tag == "ModelStats"
+                        if tag == "Targets" || tag == "ModelStats"
                         {
                             let mut depth = 1usize;
                             let mut inner = Vec::new();
@@ -1231,9 +2103,11 @@ fn parse_regression_model(
         target_field_name,
         mining_schema,
         output,
+        targets: Vec::new(),
         regression_tables,
         normalization_method,
         model_name,
+        local_derived_fields
     })
 }
 
@@ -1362,11 +2236,13 @@ fn parse_segment(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> R
                         let rm = RawRegressionModel {
                             function_name,
                             target_field_name: None,
-                            mining_schema: vec![],
-                            output: vec![],
+                            mining_schema: Vec::new(),
+                            output: Vec::new(),
+                            targets: Vec::new(),
                             regression_tables,
                             normalization_method: None,
                             model_name: None,
+                            local_derived_fields: Vec::new(),
                         };
                         model = Some(RawSegmentModel::Regression(rm));
                     }
@@ -1437,6 +2313,7 @@ fn parse_mining_model(
     let mut mining_schema = Vec::new();
     let mut output = Vec::new();
     let mut segmentation: Option<RawSegmentation> = None;
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -1450,13 +2327,8 @@ fn parse_mining_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1476,13 +2348,8 @@ fn parse_mining_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -1506,14 +2373,8 @@ fn parse_mining_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1533,14 +2394,8 @@ fn parse_mining_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -1552,8 +2407,12 @@ fn parse_mining_model(
                             inner.clear();
                         }
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {
-                        if tag == "LocalTransformations" || tag == "Targets" {
+                        if tag == "Targets" {
                             let mut depth = 1usize;
                             let mut inner = Vec::new();
                             loop {
@@ -1590,7 +2449,9 @@ fn parse_mining_model(
         mining_schema,
         segmentation,
         output,
+        targets: Vec::new(),
         model_name,
+        local_derived_fields
     })
 }
 
@@ -1609,6 +2470,7 @@ fn parse_scorecard(
     let mut mining_schema = Vec::new();
     let mut output = Vec::new();
     let mut characteristics = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -1622,13 +2484,8 @@ fn parse_scorecard(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1639,7 +2496,7 @@ fn parse_scorecard(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -1648,13 +2505,8 @@ fn parse_scorecard(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    let usage_type = attr(&inner_e, "usageType");
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type,
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -1674,14 +2526,8 @@ fn parse_scorecard(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1701,14 +2547,8 @@ fn parse_scorecard(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    let feature = attr(&inner_e, "feature");
-                                    let value = attr(&inner_e, "value");
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature,
-                                        value,
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -1880,6 +2720,10 @@ fn parse_scorecard(
                             inner.clear();
                         }
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -1899,6 +2743,8 @@ fn parse_scorecard(
         output,
         characteristics,
         baseline_method,
+        targets: vec![],
+        local_derived_fields
     })
 }
 
@@ -1915,6 +2761,7 @@ fn parse_clustering_model(
     let mut comparison_measure: Option<RawComparisonMeasure> = None;
     let mut clustering_fields = Vec::new();
     let mut clusters = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -1928,12 +2775,8 @@ fn parse_clustering_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1944,7 +2787,7 @@ fn parse_clustering_model(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -1953,12 +2796,8 @@ fn parse_clustering_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -1978,12 +2817,8 @@ fn parse_clustering_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature: attr(&inner_e, "feature"),
-                                        value: attr(&inner_e, "value"),
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2003,12 +2838,8 @@ fn parse_clustering_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature: attr(&inner_e, "feature"),
-                                        value: attr(&inner_e, "value"),
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -2103,6 +2934,10 @@ fn parse_clustering_model(
                         }
                         clusters.push(RawCluster { name, array });
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -2123,9 +2958,11 @@ fn parse_clustering_model(
         number_of_clusters,
         mining_schema,
         output,
+        targets: Vec::new(),
         comparison_measure,
         clustering_fields,
         clusters,
+        local_derived_fields
     })
 }
 
@@ -2141,6 +2978,7 @@ fn parse_naive_bayes_model(
     let output = Vec::new();
     let mut bayes_inputs: Vec<RawBayesInput> = Vec::new();
     let mut bayes_output_counts: Vec<RawTargetValueCount> = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -2154,12 +2992,8 @@ fn parse_naive_bayes_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2170,7 +3004,7 @@ fn parse_naive_bayes_model(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -2179,12 +3013,8 @@ fn parse_naive_bayes_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -2659,6 +3489,10 @@ fn parse_naive_bayes_model(
                             inner.clear();
                         }
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -2677,8 +3511,10 @@ fn parse_naive_bayes_model(
         threshold,
         mining_schema,
         output,
+        targets: Vec::new(),
         bayes_inputs,
         bayes_output_counts,
+        local_derived_fields
     })
 }
 
@@ -2695,6 +3531,7 @@ fn parse_nearest_neighbor_model(
     let mut instance_fields: Vec<RawInstanceField> = Vec::new();
     let mut instances: Vec<std::collections::HashMap<String, String>> = Vec::new();
     let mut knn_inputs = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -2708,12 +3545,8 @@ fn parse_nearest_neighbor_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2724,7 +3557,7 @@ fn parse_nearest_neighbor_model(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -2733,12 +3566,8 @@ fn parse_nearest_neighbor_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -2968,12 +3797,8 @@ fn parse_nearest_neighbor_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature: attr(&inner_e, "feature"),
-                                        value: attr(&inner_e, "value"),
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2993,12 +3818,8 @@ fn parse_nearest_neighbor_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "OutputField")?;
-                                    output.push(RawOutputField {
-                                        name,
-                                        feature: attr(&inner_e, "feature"),
-                                        value: attr(&inner_e, "value"),
-                                    });
+                                    let of = parse_output_field(&inner_e)?;
+output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -3009,6 +3830,10 @@ fn parse_nearest_neighbor_model(
                             }
                             inner.clear();
                         }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
                     }
                     _ => {}
                 }
@@ -3028,9 +3853,11 @@ fn parse_nearest_neighbor_model(
         number_of_neighbors,
         mining_schema,
         output,
+        targets: Vec::new(),
         instance_fields,
         instances,
         knn_inputs,
+        local_derived_fields
     })
 }
 
@@ -3049,6 +3876,7 @@ fn parse_general_regression_model(
     let mut covariates = Vec::new();
     let mut pp_matrix = Vec::new();
     let mut param_matrix = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -3062,12 +3890,8 @@ fn parse_general_regression_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -3078,7 +3902,7 @@ fn parse_general_regression_model(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -3087,12 +3911,8 @@ fn parse_general_regression_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -3430,6 +4250,10 @@ fn parse_general_regression_model(
                             inner.clear();
                         }
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -3447,6 +4271,7 @@ fn parse_general_regression_model(
         function_name,
         mining_schema,
         output,
+        targets: Vec::new(),
         model_type,
         target_variable_name,
         target_reference_category,
@@ -3455,6 +4280,7 @@ fn parse_general_regression_model(
         covariates,
         pp_matrix,
         param_matrix,
+        local_derived_fields
     })
 }
 
@@ -3469,6 +4295,7 @@ fn parse_support_vector_machine_model(
     let mut vector_instances = Vec::new();
     let mut support_vector_machine: Option<RawSupportVectorMachine> = None;
     let mut kernel_gamma: Option<f64> = None;
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -3482,12 +4309,8 @@ fn parse_support_vector_machine_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -3498,7 +4321,7 @@ fn parse_support_vector_machine_model(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -3507,12 +4330,8 @@ fn parse_support_vector_machine_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -3882,6 +4701,10 @@ fn parse_support_vector_machine_model(
                             absolute_value: abs_val,
                         });
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -3899,10 +4722,12 @@ fn parse_support_vector_machine_model(
         function_name,
         mining_schema,
         output,
+        targets: Vec::new(),
         vector_fields,
         vector_instances,
         support_vector_machine,
         kernel_gamma,
+        local_derived_fields
     })
 }
 
@@ -3917,6 +4742,7 @@ fn parse_neural_network(
     let output = Vec::new();
     let mut neural_inputs: Vec<RawNeuralInput> = Vec::new();
     let mut neural_layers: Vec<RawNeuralLayer> = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -3930,12 +4756,8 @@ fn parse_neural_network(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -3946,7 +4768,7 @@ fn parse_neural_network(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -3955,12 +4777,8 @@ fn parse_neural_network(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -4131,6 +4949,10 @@ fn parse_neural_network(
                             neurons,
                         });
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -4150,6 +4972,8 @@ fn parse_neural_network(
         neural_layers,
         model_name,
         activation_function,
+        targets: vec![],
+        local_derived_fields,
     })
 }
 
@@ -4163,6 +4987,7 @@ fn parse_association_model(
     let mut items = Vec::new();
     let mut itemsets = Vec::new();
     let mut rules = Vec::new();
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -4176,12 +5001,8 @@ fn parse_association_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -4192,7 +5013,7 @@ fn parse_association_model(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -4201,12 +5022,8 @@ fn parse_association_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -4314,6 +5131,10 @@ fn parse_association_model(
                             break;
                         }
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -4358,9 +5179,11 @@ fn parse_association_model(
         function_name,
         mining_schema,
         output,
+        targets: Vec::new(),
         items,
         itemsets,
         rules,
+        local_derived_fields
     })
 }
 
@@ -4372,6 +5195,7 @@ fn parse_rule_set_model(
     let mut mining_schema = Vec::new();
     let output = Vec::new();
     let mut rule_set: Option<RawRuleSet> = None;
+    let mut local_derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -4385,12 +5209,8 @@ fn parse_rule_set_model(
                                 Ok(Event::Start(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -4401,7 +5221,7 @@ fn parse_rule_set_model(
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                                            _ => {}
+                        _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -4410,12 +5230,8 @@ fn parse_rule_set_model(
                                 Ok(Event::Empty(inner_e))
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
-                                    let name = attr_required(&inner_e, "name", "MiningField")?;
-                                    mining_schema.push(RawMiningField {
-                                        name,
-                                        usage_type: attr(&inner_e, "usageType"),
-                                        importance: None,
-                                    });
+                                    let mf = parse_mining_field(&inner_e)?;
+mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -4531,6 +5347,10 @@ fn parse_rule_set_model(
                             rules,
                         });
                     }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
                     _ => {}
                 }
             }
@@ -4546,7 +5366,9 @@ fn parse_rule_set_model(
         function_name,
         mining_schema,
         output,
+        targets: Vec::new(),
         rule_set,
+        local_derived_fields
     })
 }
 
@@ -4567,6 +5389,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
     let mut general_regression_model: Option<RawGeneralRegressionModel> = None;
     let mut association_model: Option<RawAssociationModel> = None;
     let mut rule_set_model: Option<RawRuleSetModel> = None;
+    let mut transformation_dictionary: Vec<RawDerivedField> = Vec::new();
+    let mut define_functions: Vec<RawDefineFunction> = Vec::new();
     let mut buf = Vec::new();
 
     let mut extensions: Vec<RawExtension> = Vec::new();
@@ -4721,6 +5545,15 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         let nn = parse_neural_network(&mut reader, &e)?;
                         neural_network = Some(nn);
                     }
+                    "TransformationDictionary" => {
+                        let (funcs, fields) = parse_transformation_dictionary(&mut reader, &e)?;
+                        define_functions.extend(funcs);
+                        transformation_dictionary.extend(fields);
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(&mut reader)?;
+                        transformation_dictionary.extend(fields);
+                    }
                     "Extension" => {
                         // Gracefully capture vendor extension, do not error
                         let mut ext = parse_extension(&e);
@@ -4871,6 +5704,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
         general_regression_model,
         association_model,
         rule_set_model,
+        transformation_dictionary,
+        define_functions,
         extensions,
         unsupported_model,
     })

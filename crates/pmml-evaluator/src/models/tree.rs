@@ -1,8 +1,7 @@
-//! TreeModel evaluation — flat Node traversal with ONNX-style branchless predicates.
-//! P5: iterative loop, shared predicate module, no recursion.
+//! TreeModel evaluation — flat Node traversal with branchless predicates.
 
 use pmml_core::Value;
-use pmml_ir::ir::{NoTrueChildStrategy, TreeIr};
+use pmml_ir::ir::{MissingValueStrategy, NoTrueChildStrategy, TreeIr};
 
 use crate::predicate::eval_predicate;
 
@@ -17,7 +16,8 @@ fn score_to_value(score: &Option<pmml_ir::ir::SymbolIdOrContinuous>) -> Option<V
 
 /// Evaluate TreeIr given flat `values` array.
 /// Iterative, no recursion, branch-friendly.
-/// Returns predicted Value (Discrete for classification, Continuous for regression).
+/// Handles missingValueStrategy (LastPrediction, NullPrediction, DefaultChild) and noTrueChildStrategy.
+/// DefaultChild uses NodeIr.default_child index when no child predicate is true.
 pub fn evaluate_tree(tree: &TreeIr, values: &[Value]) -> Value {
     if tree.nodes.is_empty() {
         return Value::Missing;
@@ -42,6 +42,29 @@ pub fn evaluate_tree(tree: &TreeIr, values: &[Value]) -> Value {
             continue;
         } else {
             if !node.children.is_empty() {
+                // No true child — handle missingValueStrategy for DefaultChild
+                if tree.missing_value_strategy == MissingValueStrategy::DefaultChild {
+                    if let Some(dc_idx) = node.default_child {
+                        if node.children.contains(&dc_idx) {
+                            last = cur;
+                            idx = dc_idx;
+                            continue;
+                        }
+                    }
+                }
+                if tree.missing_value_strategy == MissingValueStrategy::LastPrediction {
+                    return cur.unwrap_or(Value::Missing);
+                }
+                if tree.missing_value_strategy == MissingValueStrategy::NullPrediction
+                    || tree.missing_value_strategy == MissingValueStrategy::None
+                {
+                    match tree.no_true_child_strategy {
+                        NoTrueChildStrategy::ReturnLastPrediction => {
+                            return cur.unwrap_or(Value::Missing)
+                        }
+                        NoTrueChildStrategy::ReturnNullPrediction => return Value::Missing,
+                    }
+                }
                 match tree.no_true_child_strategy {
                     NoTrueChildStrategy::ReturnLastPrediction => {
                         return cur.unwrap_or(Value::Missing)
@@ -74,6 +97,7 @@ mod tests {
                     score: Some(SymbolIdOrContinuous::Symbol(SymbolId(0))), // A placeholder
                     predicate: PredicateIr::True,
                     children: vec![1, 2],
+                    default_child: None,
                     score_distributions: vec![],
                 },
                 NodeIr {
@@ -85,6 +109,7 @@ mod tests {
                         value: SymbolIdOrContinuous::Continuous(2.45),
                     },
                     children: vec![],
+                    default_child: None,
                     score_distributions: vec![],
                 },
                 NodeIr {
@@ -96,6 +121,7 @@ mod tests {
                         value: SymbolIdOrContinuous::Continuous(2.45),
                     },
                     children: vec![],
+                    default_child: None,
                     score_distributions: vec![],
                 },
             ],

@@ -12,6 +12,71 @@ pub struct FieldMeta {
     pub data_type: DataType,
     pub op_type: OpType,
     pub values: Vec<SymbolId>, // allowed discrete values (for validation)
+    // MiningSchema per-field treatments (JPMML: invalid/outlier/missing per MiningField)
+    pub invalid_value_treatment: InvalidValueTreatment,
+    pub invalid_value_replacement: Option<String>,
+    pub missing_value_replacement: Option<String>,
+    pub missing_value_treatment: MissingValueTreatment,
+    pub outlier_treatment: OutlierTreatment,
+    pub low_value: Option<f64>,
+    pub high_value: Option<f64>,
+}
+
+impl Default for FieldMeta {
+    fn default() -> Self {
+        Self {
+            field_id: FieldId(0),
+            name: String::new(),
+            data_type: DataType::String,
+            op_type: OpType::Categorical,
+            values: vec![],
+            invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+            invalid_value_replacement: None,
+            missing_value_replacement: None,
+            missing_value_treatment: MissingValueTreatment::AsIs,
+            outlier_treatment: OutlierTreatment::AsIs,
+            low_value: None,
+            high_value: None,
+        }
+    }
+}
+
+/// MiningSchema treatment enums — per PMML XSD (OUTLIER-TREATMENT-METHOD, INVALID-VALUE-TREATMENT-METHOD, MISSING-VALUE-TREATMENT-METHOD)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutlierTreatment {
+    AsIs,
+    AsMissingValues,
+    AsExtremeValues,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidValueTreatment {
+    ReturnInvalid,
+    AsIs,
+    AsMissing,
+    AsValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingValueTreatment {
+    AsIs,
+    AsMean,
+    AsMode,
+    AsMedian,
+    AsValue,
+    ReturnInvalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MiningFieldUsageType {
+    Active,
+    Predicted,
+    Target,
+    Supplementary,
+    Group,
+    Order,
+    FrequencyWeight,
+    AnalysisWeight,
 }
 
 /// MiningSchema IR — flat.
@@ -19,8 +84,8 @@ pub struct FieldMeta {
 pub struct MiningSchemaIr {
     pub active_fields: Vec<FieldId>, // fields with usageType != target
     pub target_field: Option<FieldId>,
-    pub field_metas: Vec<FieldMeta>, // one per active+target
-    pub missing_value_replacement: Option<String>, // per field, simplified global?
+    pub field_metas: Vec<FieldMeta>, // one per active+target (with per-field treatments)
+    pub missing_value_replacement: Option<String>, // per field, simplified global (kept for backward compat)
 }
 
 /// DerivedField IR — bytecode for expression.
@@ -34,6 +99,18 @@ pub struct DerivedFieldIr {
 }
 
 /// Bytecode for Apply/MapValues etc — evaluated by vm::eval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LagAggregate {
+    None,
+    Avg,
+    Min,
+    Max,
+    Sum,
+    Product,
+    Median,
+    Stddev,
+}
+
 #[derive(Debug, Clone)]
 pub enum Op {
     PushField(FieldId),
@@ -41,9 +118,17 @@ pub enum Op {
     CallBuiltin(BuiltinId, u8), // builtin + arity
     JumpIfMissing { target: usize },
     MapValues { table: Vec<(SymbolId, SymbolId)>, default: Option<SymbolId> },
-    Discretize { bins: Vec<DiscretizeBin> },
+    MapValuesMulti {
+        inputs: Vec<FieldId>,
+        table: Vec<(Vec<SymbolId>, SymbolId)>,
+        default: Option<SymbolId>,
+    },
+    Discretize { bins: Vec<DiscretizeBin>, default_value: Option<SymbolId>, map_missing_to: Option<SymbolId> },
     NormContinuous { field: FieldId, linear_norms: Vec<LinearNorm> },
-    // Aggregate, TextIndex, Lag are modeled as CallBuiltin with dedicated BuiltinIds
+    NormDiscrete { field: FieldId, value: SymbolId, map_missing_to: Option<f64> },
+    Lag { field: FieldId, n: usize, aggregate: LagAggregate },
+    // Aggregate, TextIndex are modeled as CallBuiltin with dedicated BuiltinIds
+    CallDefine { name: String, arity: u8 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -96,18 +181,37 @@ pub enum BuiltinId {
     Sinh,
     Cosh,
     Tanh,
-    // Min/Max
+    // Min/Max + statistical aggregates
     Min,
     Max,
+    Median,
+    ProductOp,
+    SumOp,
+    AvgOp,
+    Mean,
+    StdDev,
+    Variance,
+    // Modulo / rounding
+    Modulo,
+    Rint,
+    Expm1,
+    Hypot,
+    Ln1p,
+    Atan2,
+    Cbrt,
+    Sign,
     // String
     Uppercase,
     Lowercase,
     Substring,
     TrimBlanks,
+    NormalizeSpace,
     Concat,
     StringLength,
     Replace,
     Matches,
+    FormatNumber,
+    FormatDatetime,
     // TextIndex (distinct from string)
     TextIndex,
     // Aggregate (count/sum/avg/min/max over inline table or batch)
@@ -116,8 +220,29 @@ pub enum BuiltinId {
     AggregateAvg,
     AggregateMin,
     AggregateMax,
+    AggregateMultiset,
     // Temporal / Sequence
     Lag,
+    // Date / time builtins (chrono)
+    DateDaysSinceYear,
+    DateSecondsSinceYear,
+    DateSecondsSinceMidnight,
+    DateDaysSince1960,
+    DateDaysSince1970,
+    DateDaysSince1980,
+    DateTimeSecondsSince1960,
+    DateTimeSecondsSince1970,
+    DateTimeSecondsSince1980,
+    DateTimeSecondsSince0,
+    TimeSeconds,
+    // Distribution (statrs / libm)
+    NormalCdf,
+    NormalPdf,
+    NormalIdf,
+    StdNormalCdf,
+    StdNormalPdf,
+    StdNormalIdf,
+    ErfOp,
     // Norm
     NormContinuousOp,
     NormDiscreteOp,
@@ -134,6 +259,9 @@ pub enum BuiltinId {
     IsMissing,
     IsNotMissing,
     IsValid,
+    IsNotValid,
+    IsIn,
+    IsNotIn,
     // Conditional
     If,
     // Misc
@@ -492,6 +620,9 @@ pub enum MissingValueStrategy {
     NullPrediction,
     DefaultChild,
     None,
+    // Explicitly unsupported per JPMML (must throw UnsupportedMarkup, not fallback)
+    WeightedConfidence,
+    AggregateNodes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -506,6 +637,8 @@ pub struct NodeIr {
     pub score: Option<SymbolIdOrContinuous>,
     pub predicate: PredicateIr,
     pub children: Vec<usize>, // indices into TreeIr::nodes
+    /// Index of default child for missingValueStrategy=DefaultChild (JPMML parity)
+    pub default_child: Option<usize>,
     pub score_distributions: Vec<ScoreDistributionIr>,
 }
 
@@ -555,12 +688,69 @@ pub struct ScoreDistributionIr {
     pub record_count: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CastIntegerMethod {
+    Round,
+    Ceiling,
+    Floor,
+}
+
+#[derive(Debug, Clone)]
+pub struct TargetValueIr {
+    pub value: Option<SymbolId>,
+    pub value_str: Option<String>,
+    pub display_value: Option<String>,
+    pub prior_probability: Option<f64>,
+    pub default_value: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TargetIr {
-    pub field: FieldId,
+    pub field: Option<FieldId>,
+    pub field_name: String,
+    pub op_type: Option<OpType>,
     pub rescale_constant: f64,
     pub rescale_factor: f64,
-    pub cast_integer: bool,
+    pub cast_integer: bool, // kept for backward compat (true if any cast)
+    pub cast_method: Option<CastIntegerMethod>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub target_values: Vec<TargetValueIr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleFeature {
+    Antecedent,
+    Consequent,
+    Rule,
+    RuleId,
+    Confidence,
+    Support,
+    Lift,
+    Leverage,
+    Affinity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Algorithm {
+    Recommendation,
+    ExclusiveRecommendation,
+    RuleAssociation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RankBasis {
+    Confidence,
+    Support,
+    Lift,
+    Leverage,
+    Affinity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RankOrder {
+    Descending,
+    Ascending,
 }
 
 #[derive(Debug, Clone)]
@@ -568,7 +758,23 @@ pub struct OutputFieldIr {
     pub name: String,
     pub feature: ResultFeature,
     pub value: Option<SymbolId>,
-    pub field: Option<FieldId>, // for probability etc
+    pub field: Option<FieldId>, // for probability etc (field containing category)
+    pub target_field: Option<FieldId>,
+    pub data_type: Option<DataType>,
+    pub op_type: Option<OpType>,
+    pub rule_feature: Option<RuleFeature>,
+    pub algorithm: Option<Algorithm>,
+    pub rank: i32,
+    pub rank_basis: RankBasis,
+    pub rank_order: RankOrder,
+    pub is_multi_valued: bool,
+    pub segment_id: Option<String>,
+    pub is_final_result: bool,
+    pub display_name: Option<String>,
+    // For transformedValue/decision: optional expression bytecode (evaluated via vm)
+    // Minimal: store raw expression not yet compiled; evaluator may use it if present.
+    // For now keep None — future: Vec<Op>
+    pub expression_bytecode: Option<Vec<Op>>,
 }
 
 #[derive(Debug, Clone)]
