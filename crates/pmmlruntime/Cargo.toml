@@ -1,0 +1,24 @@
+[package]
+name = "pmmlruntime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Rust port of JPMML Evaluator — PMML 4.4 runtime (single-crate facade)"
+keywords = ["pmml", "jpmml", "onnx", "scoring", "machine-learning"]
+categories = ["science"]
+
+[dependencies]
+pmml-core = { path = "../pmml-core" }
+pmml-xml = { path = "../pmml-xml" }
+pmml-ir = { path = "../pmml-ir" }
+pmml-evaluator = { path = "../pmml-evaluator" }
+pmml-session = { path = "../pmml-session" }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+default = []
+simd = ["pmml-session/simd", "pmml-evaluator/simd"]

@@ -9,6 +9,7 @@ members = [
   "crates/pmml-bench",
   "crates/pmml-python",
   "crates/pmml-cli",
+  "crates/pmmlruntime",
 ]
 resolver = "2"
 
