@@ -3,15 +3,15 @@
 //! This binary is not a `criterion` bench; it is a `src/bin` that prints `ms total | rows/sec | ns/row`
 //! for each `size` × `ExecutionProviderKind` (`CpuSerial` / `CpuBatched`) × input format.
 //! It exercises `Session::run` / `run_batch` / `run_batch_arrow` / `run_record_batch` and the
-//! synthetic SIMD regression path (`pmml_evaluator::simd` 4-wide).
+//! synthetic SIMD regression path (`pmmlruntime::engine::simd` 4-wide).
 
 #![allow(clippy::pedantic)]
 
 use arrow::array::Float64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
-use pmml_core::Value;
-use pmml_session::{ExecutionProviderKind, PmmlEnv, Session, SessionOptions};
+use pmmlruntime::base::Value;
+use pmmlruntime::session::{ExecutionProviderKind, PmmlEnv, Session, SessionOptions};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,7 +119,7 @@ fn fmt_thr(rows: usize, dur: Duration) -> String {
 /// Run a trial for `size` rows — benchmarks `CpuSerial` vs `CpuBatched` × `HashMap` vs `RecordBatch`.
 ///
 /// For `size >= 1M` it chunks `RecordBatch` into `100k` slices to avoid OOM (`Vec<HashMap>` of 10M would be `>2GB`).
-/// Also runs synthetic SIMD regression (`pmml_evaluator::simd` 4-wide vs scalar) for `size <= 100k`.
+/// Also runs synthetic SIMD regression (`pmmlruntime::engine::simd` 4-wide vs scalar) for `size <= 100k`.
 /// Prints `Arrow batch created`, per-provider `single-row loop`, `run_batch`, `run_batch_ref`, `run_batch_arrow`, `run_record_batch`, and `SIMD` speedup.
 ///
 /// # Panics
@@ -263,10 +263,10 @@ fn run_trial(size: usize) {
             // For proper SIMD we need a real regression fixture with Float64 fields. Let's just try a simple synthetic regression via pmml-evaluator simd direct test
             // For now, test the simd module directly with synthetic regression model
             {
-                use pmml_core::FieldId;
-                use pmml_ir::ir::*;
+                use pmmlruntime::base::FieldId;
+                use pmmlruntime::ir::*;
                 let f0 = FieldId(0);
-                let reg = pmml_ir::ir::RegressionIr {
+                let reg = pmmlruntime::ir::RegressionIr {
                     function_name: "regression".into(),
                     mining_schema: MiningSchemaIr {
                         active_fields: vec![f0],
@@ -293,11 +293,12 @@ fn run_trial(size: usize) {
                     (0..n).map(|i| vec![Value::Continuous(i as f64)]).collect();
                 let refs: Vec<&[Value]> = rows.iter().map(|r| r.as_slice()).collect();
                 let start = Instant::now();
-                let simd_out = pmml_evaluator::simd::evaluate_regression_batch_simd(&reg, &refs);
+                let simd_out =
+                    pmmlruntime::engine::simd::evaluate_regression_batch_simd(&reg, &refs);
                 let dur = start.elapsed();
                 let scalar_start = Instant::now();
                 let scalar_out =
-                    pmml_evaluator::simd::evaluate_regression_batch_scalar(&reg, &refs);
+                    pmmlruntime::engine::simd::evaluate_regression_batch_scalar(&reg, &refs);
                 let scalar_dur = scalar_start.elapsed();
                 assert_eq!(simd_out, scalar_out);
                 let speedup = if dur.as_secs_f64() > 0.0 {

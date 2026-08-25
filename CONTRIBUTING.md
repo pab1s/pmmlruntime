@@ -11,13 +11,13 @@ Gitflow: `main` (protected) ← `development` (protected) ← `feature/*` / `cho
 ```sh
 git checkout development && git pull
 cargo fmt --check
-cargo clippy -p pmmlruntime -- -W clippy::pedantic -D warnings
-cargo clippy -p pmmlruntime --all-targets -- -W clippy::pedantic || true
-cargo check -p pmmlruntime
-cargo test -p pmmlruntime
+cargo clippy --workspace -- -W clippy::pedantic -D warnings
+cargo clippy --workspace --all-targets -- -W clippy::pedantic || true
+cargo check --workspace
+cargo test --workspace
 cargo test -p pmmlruntime --test all_fixtures -- --nocapture # 45/45
 cargo test -p pmmlruntime --doc
-cargo doc -p pmmlruntime --no-deps
+cargo doc --workspace --no-deps
 ```
 
 ## Workflow
@@ -32,17 +32,17 @@ cargo doc -p pmmlruntime --no-deps
 - All `pub` items need rustdoc: purpose, params, return, `# Errors`, `# Panics`, `# Safety` for `unsafe`, `# Performance` when material, links, and executable `# Examples` (` ```rust ` not `ignore`).
 - Crate/module docs answer: What belongs here? Why does this module exist? How does it relate to neighbors? What should a user import? Keep `docs/ARCHITECTURE.md` for internals, `cargo doc` for API.
 - Before stating a guarantee, verify in implementation/tests/spec — never invent complexity/bounds/thread-safety.
-- Generated docs must build: `cargo doc -p pmmlruntime --no-deps` 0 warnings (17 `redundant_explicit_links` allowed), `cargo test -p pmmlruntime --doc` passes.
+- Generated docs must build: `cargo doc --workspace --no-deps` 0 unresolved (17 `redundant_explicit_links` allowed), `cargo test -p pmmlruntime --doc` passes.
 
 ## Validation gates (1.0)
 
 | Gate | Command | Threshold |
 |---|---|---|
 | `fmt` | `cargo fmt --check` | 0 diff |
-| `clippy` | `cargo clippy -p pmmlruntime -- -W clippy::pedantic -D warnings` | 0 warnings |
-| `check` | `cargo check -p pmmlruntime` | green |
-| `test` | `cargo test -p pmmlruntime` + `cargo test -p pmmlruntime --test all_fixtures` | pass, 45/45 `all_fixtures` |
-| `doc` | `cargo test -p pmmlruntime --doc` + `cargo doc -p pmmlruntime --no-deps` | pass, 0 unresolved (17 redundant allowed) |
+| `clippy` | `cargo clippy --workspace -- -W clippy::pedantic -D warnings` | 0 warnings |
+| `check` | `cargo check --workspace` | green |
+| `test` | `cargo test --workspace` + `cargo test -p pmmlruntime --test all_fixtures` | pass, 45/45 `all_fixtures` |
+| `doc` | `cargo test -p pmmlruntime --doc` + `cargo doc --workspace --no-deps` | pass, 0 unresolved (17 redundant allowed) |
 | `bench` | `cargo bench -p pmml-bench -- --sample-size 30` | `≤800 ns` single, `≤500µs` batched |
 
 ## Links

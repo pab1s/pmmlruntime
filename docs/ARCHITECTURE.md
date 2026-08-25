@@ -28,7 +28,7 @@ use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 // re-exports also at crate root: use pmmlruntime::{Value, Session, PmmlEnv};
 ```
 
-Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=MIT OR Apache-2.0`, `members = ["crates/pmmlruntime"]`.
+Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=MIT OR Apache-2.0`, `members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]` (single lib + tools, old `pmml-*` heritage removed).
 
 ## 2. Data & control flow
 
@@ -144,6 +144,7 @@ Gate `cargo bench -p pmml-bench -- --sample-size 30` must be `≤800 ns` single,
 | Batch | `Batch` trait `RowMajor Vec<HashMap>` + `Columnar RecordBatch` (provider picks) | Only Arrow | Single row `HashMap` 402ns < Arrow >1µs + schema agreement; `Collection`/`List` (Association) and Python `dict` map naturally to `HashMap` |
 | Model strategy | Option A port `pmml-model` to Rust (this repo) | Option B JNI bridge `jni` crate | Removes JVM forever, single binary, WASM-ready, MIT/Apache-2.0 not AGPL; JNI keeps XML correctness for free but needs JVM at runtime |
 | License | `MIT OR Apache-2.0` (workspace) | `TBD` (README old) + upstream `AGPL-3.0` dual BSD | Transpilation ≠ relicense; green-field port can be MIT/Apache-2.0 before first code commit (now decided) |
-| Crate layout | single `pmmlruntime` with `base/xml/ir/engine/session` modules | 9-crate workspace `pmml-core/xml/ir/evaluator/session/...` | ONNX Runtime inspiration: one `cargo add pmmlruntime`, one `cargo doc` page, <20k LOC; easier for users, workspace+facade is also valid but `pmml-*` heritage is `jpmml-evaluator` clone; `publish=false` heritage is redundant |
+| Crate layout | single `pmmlruntime` with `base/xml/ir/engine/session` modules + tools `pmml-cli`/`pmml-bench` as separate workspace members | 9-crate workspace `pmml-core/xml/ir/evaluator/session/...` | ONNX Runtime inspiration: one `cargo add pmmlruntime`, one `cargo doc` page, <20k LOC; easier for users, workspace+facade is also valid but `pmml-*` heritage is `jpmml-evaluator` clone; `publish=false` heritage is redundant. Tools stay separate members (not `src/bin`) to avoid bloating lib with `clap`/`criterion`. |
+| `base` naming | `base` (`crate::base::{Value,FieldId,PmmlError,DataType}`, internals `arena/field/value/error`) | `core` (shadows `::core`), `types`/`common` (too narrow, `arena` is not a type) | `base` avoids `::core` shadowing, already used after merge, covers `arena`+`error`+`field`+`value`; `types` would exclude `arena`/`error`, `common` is vague. Documented in `crates/pmmlruntime/src/base/mod.rs`. |
 
 Ver `OWNERSHIP.tsv` for per-field ownership; `BENCHMARK.md` for Java vs Rust tables; `PLAN.md` for Bun anchor `535k Zig` → `50k hand + 20k generated` mechanical.

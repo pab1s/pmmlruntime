@@ -18,7 +18,9 @@ pmmlruntime = { version = "0.1.0" }
 
 ```sh
 cargo add pmmlruntime
-cargo add --dev pmml-bench   # criterion benches (optional, not in single-crate members)
+# workspace members: pmmlruntime (lib) + pmml-cli (bin) + pmml-bench (benches)
+cargo run -p pmml-cli -- --help
+cargo bench -p pmml-bench --bench scoring
 ```
 
 **Smallest useful example**
@@ -50,12 +52,11 @@ Also via re-exports at crate root:
 use pmmlruntime::{Value, Session, PmmlEnv};
 ```
 
-CLI:
+CLI (workspace member):
 
 ```sh
 cargo run -p pmml-cli -- inspect --model bench/pmml/DecisionTreeIris.pmml
 cargo run -p pmml-cli -- run --model bench/pmml/DecisionTreeIris.pmml --input input.csv --output output.csv
-# Note: pmml-cli is not in the single-crate members by default; add `members = ["crates/pmmlruntime", "crates/pmml-cli"]` or run via `cargo run --manifest-path crates/pmml-cli/Cargo.toml`
 ```
 
 **Links**
@@ -79,13 +80,13 @@ cargo run -p pmml-cli -- run --model bench/pmml/DecisionTreeIris.pmml --input in
 
 ```sh
 cargo fmt --check
-cargo clippy -p pmmlruntime -- -W clippy::pedantic -D warnings
-cargo check -p pmmlruntime
-cargo test -p pmmlruntime
+cargo clippy --workspace -- -W clippy::pedantic -D warnings
+cargo check --workspace
+cargo test --workspace
 cargo test -p pmmlruntime --test all_fixtures -- --nocapture # 45/45
 cargo test -p pmmlruntime --doc
-cargo doc -p pmmlruntime --no-deps
-cargo bench -p pmml-bench --bench scoring -- --sample-size 30  # if pmml-bench added to members
+cargo doc --workspace --no-deps
+cargo bench -p pmml-bench --bench scoring -- --sample-size 30
 ```
 
 MSRV `1.78`, `edition=2021`, `license=MIT OR Apache-2.0`.

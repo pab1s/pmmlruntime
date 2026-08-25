@@ -6,8 +6,8 @@
 //! (bench harness only, not library).
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use pmml_core::Value;
-use pmml_session::{PmmlEnv, Session, SessionOptions};
+use pmmlruntime::base::Value;
+use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use std::collections::HashMap;
 
 /// Load Iris `TreeModel` session for benches (cold path, unwraps for bench harness).
@@ -80,7 +80,7 @@ fn bench_batch_1k_parallel(c: &mut Criterion) {
     // Batched provider with rayon par_iter chunk 1k — expects < 400 µs (2× vs 815 µs sequential)
     let env = PmmlEnv::new();
     let opts = SessionOptions::default()
-        .execution_provider(pmml_session::ExecutionProviderKind::CpuBatched);
+        .execution_provider(pmmlruntime::session::ExecutionProviderKind::CpuBatched);
     let manifest = env!("CARGO_MANIFEST_DIR");
     let path = std::path::Path::new(manifest).join("../../bench/pmml/DecisionTreeIris.pmml");
     let bytes = std::fs::read(path).unwrap();

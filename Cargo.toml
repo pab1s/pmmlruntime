@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pmmlruntime"]
+members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]
 resolver = "2"
 
 [workspace.package]

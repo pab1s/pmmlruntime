@@ -306,8 +306,3 @@ pub unsafe extern "C" fn PmmlReleaseSession(session: *mut PmmlSession) {
         let _ = Box::from_raw(session);
     }
 }
-
-/// Placeholder to keep crate non-empty when C API is not linked.
-///
-/// Used by tests / docs to ensure crate builds.
-pub fn placeholder() {}

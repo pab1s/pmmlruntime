@@ -55,34 +55,9 @@ pub mod python;
 pub mod session;
 pub mod xml;
 
-// Re-exports for ergonomic `use pmmlruntime::{Session, Value, PmmlEnv}` and backwards compat with `pmml_*` paths.
+// Re-exports for ergonomic `use pmmlruntime::{Session, Value, PmmlEnv}`.
 pub use base::{FieldId, PmmlError, Result, SymbolId, Value};
 pub use session::{PmmlEnv, Session, SessionOptions};
 
 /// Crate version (workspace `0.1.0`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Placeholder so `cargo doc` does not flag the crate as empty.
-pub fn placeholder() {}
-
-// Keep `pmml_*` aliases for code that still uses `crate::base::` etc. during migration — will be removed in 0.2.
-#[doc(hidden)]
-pub mod pmml_core {
-    pub use crate::base::*;
-}
-#[doc(hidden)]
-pub mod pmml_xml {
-    pub use crate::xml::*;
-}
-#[doc(hidden)]
-pub mod pmml_ir {
-    pub use crate::ir::*;
-}
-#[doc(hidden)]
-pub mod pmml_evaluator {
-    pub use crate::engine::*;
-}
-#[doc(hidden)]
-pub mod pmml_session {
-    pub use crate::session::*;
-}
