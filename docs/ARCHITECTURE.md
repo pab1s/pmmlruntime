@@ -2,7 +2,7 @@
 
 > `0.1.0` · single crate `pmmlruntime` · `13,642` LOC Rust · `pmml.xsd:4,490` · `BENCHMARK.md` tables for 45 fixtures
 
-This document is the contributor-facing internals. For API contracts see `cargo doc --open`; for porting map see `docs/PORTING.md` + `docs/OWNERSHIP.tsv`.
+This document is the contributor-facing internals. For API contracts see `cargo doc --open`.
 
 ## 1. Crate topology — single crate with modules (was 9 crates, now merged ONNX Runtime-style)
 
