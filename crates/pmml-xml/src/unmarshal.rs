@@ -1,5 +1,92 @@
-//! Raw PMML structures + unmarshal from XML bytes (quick-xml, hardened).
-//! v1 focuses on DataDictionary + TreeModel (DecisionTreeIris). Other models stub.
+//! Raw PMML structures and hardened `quick-xml` 0.37 unmarshaling.
+//!
+//! This module is the **cold path**: `bytes: &[u8]` → [`unmarshal`] → [`RawPmml`] → `pmml_ir::lower` → `Ir`.
+//! It is a ~5.8 kLOC `quick-xml` pull parser that mirrors `pmml.xsd:4490` and
+//! `org.jpmml.model` — 304 elements, mixed attribute/element ordering, and
+//! vendor `Extension` payloads — without `serde`.
+//!
+//! # What belongs here
+//!
+//! - [`unmarshal`] — the single entry point `bytes -> Result<RawPmml>` that drives
+//!   `quick_xml::Reader` via [`crate::reader::new_reader`] (100 MB / 512 depth / XXE hardened).
+//! - `Raw*` structs — verbatim PMML markup (`RawDataField`, `RawTreeModel`, `RawRegressionModel`,
+//!   `RawMiningModel`, `RawScorecard`, `RawClusteringModel`, `RawNaiveBayesModel`,
+//!   `RawNearestNeighborModel`, `RawSupportVectorMachineModel`, `RawGeneralRegressionModel`,
+//!   `RawAssociationModel`, `RawRuleSetModel`, `RawNeuralNetwork`, plus `TransformationDictionary` / `Extension`).
+//! - Helper `parse_*` functions (private) that walk `Start`/`Empty`/`End` events. No IR or scoring logic.
+//!
+//! # Why `quick-xml` pull parser not `serde`
+//!
+//! PMML XSD has `Extension` vendor payloads and ordering-sensitive `MiningSchema` / `Output` /
+//! `Targets`. The pull parser gives precise control over depth/XXE and avoids `serde`'s
+//! `serialize` overhead for the cold path (68 µs for Iris 2.9 KB).
+//!
+//! # Supported PMML subset
+//!
+//! - `DataDictionary` — all `DataField` + `Value`.
+//! - 12 model types: `TreeModel`, `RegressionModel`, `MiningModel` (with `Segmentation`),
+//!   `Scorecard`, `ClusteringModel`, `NaiveBayesModel`, `NearestNeighborModel`,
+//!   `SupportVectorMachineModel`, `GeneralRegressionModel`, `AssociationModel`,
+//!   `RuleSetModel`, `NeuralNetwork`. Each keeps its own `MiningSchema`, `Output`, `Targets`
+//!   and `LocalTransformations` (`Vec<RawDerivedField>`).
+//! - `TransformationDictionary` — `DerivedField` + `DefineFunction` + expression tree (`RawExpression`).
+//! - `Extension` — gracefully stored as [`RawExtension`] (`extender`/`name`/`value`/`content`), not evaluated.
+//! - Unsupported markup — 8 `pmml.xsd` models (`AnomalyDetectionModel`, `BaselineModel`,
+//!   `BayesianNetworkModel`, `GaussianProcessModel`, `SequenceModel`, `TextModel`,
+//!   `TimeSeriesModel`, `ModelComposition`/`CenterFields`) plus any `*Model` suffix are captured as
+//!   `RawPmml::unsupported_model: Option<String>` for `pmml_ir::verify_raw` to reject with
+//!   `UnsupportedMarkup`.
+//!
+//! `pmml.xsd` defines ~4490 lines; this file is ~5758 LOC, 1:1 with the schema's ordering.
+//!
+//! # Security
+//!
+//! Delegates to [`crate::reader::new_reader`] for file cap `100 MB`, depth tracking (`512` is
+//! enforced by `PmmlReader` when used, but `unmarshal` also handles deeply nested `Node` chains
+//! via iterative loops), and XXE hardening (`quick-xml` 0.37 never expands entities, so
+//! `<!ENTITY xxe SYSTEM "file:///etc/passwd">` stays literal).
+//!
+//! # Performance
+//!
+//! Cold path only. Hot scoring (`pmml-evaluator`) never touches `quick-xml`. Measured `68 µs`
+//! for `DecisionTreeIris.pmml` (2.9 KB) on x86_64; cost scales linearly with document size.
+//!
+//! # What to import
+//!
+//! Most callers need only [`unmarshal`] and [`RawPmml`]:
+//!
+//! ```
+//! use pmml_xml::unmarshal;
+//! let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
+//! let raw = unmarshal(xml)?;
+//! assert_eq!(raw.data_dictionary.len(), 1);
+//! assert!(raw.tree_model.is_some());
+//! # Ok::<(), pmml_core::PmmlError>(())
+//! ```
+//!
+//! Lowering to the hot path (in `pmml-ir`):
+//!
+//! ```ignore
+//! use pmml_xml::unmarshal;
+//! let raw = unmarshal(include_bytes!("path/to/DecisionTreeIris.pmml"))?;
+//! let ir = pmml_ir::lower(raw)?;
+//! # Ok::<(), pmml_core::PmmlError>(())
+//! ```
+//!
+//! XXE is blocked — entities are not expanded:
+//!
+//! ```
+//! use pmml_xml::unmarshal;
+//! let xxe = br#"<?xml version="1.0"?><!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]><PMML version="4.4"><Header/><DataDictionary><DataField name="f" dataType="string" optype="categorical"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="f"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
+//! let res = unmarshal(xxe);
+//! // either Ok (entity ignored) or Err, but never leaks file content
+//! match res {
+//!     Ok(raw) => assert!(raw.data_dictionary.iter().all(|df| !df.name.contains("root:"))),
+//!     Err(e) => assert!(!e.to_string().contains("root:")),
+//! }
+//! # Ok::<(), pmml_core::PmmlError>(())
+//! ```
+
 
 use crate::reader::new_reader;
 use pmml_core::error::{PmmlError, Result};
@@ -9,6 +96,19 @@ use std::str;
 // ---------- Raw structures ----------
 
 #[derive(Debug, Clone)]
+/// Raw `DataField` from `DataDictionary` — mirrors `pmml.xsd:DataField`.
+///
+/// Stored verbatim from `<DataField name dataType optype>` plus child `<Value>` domain.
+/// Type coercion to [`pmml_core::DataType`] and [`pmml_core::OpType`] happens in `pmml_ir::lower`.
+///
+/// # Fields
+///
+/// - `name`: PMML `name` — canonical field identifier, keys `MiningField` and `FieldRef`.
+/// - `data_type`: raw `dataType` string (`"double"`, `"integer"`, `"string"`, `"boolean"`, …). Not yet validated.
+/// - `op_type`: raw `optype` (`"continuous"` / `"categorical"` / `"ordinal"`). Guides scoring and discretization.
+/// - `values`: discrete domain from child `<Value value="…">` elements, in document order. Empty for continuous fields.
+///
+/// See also [`RawPmml::data_dictionary`] and [`RawMiningField`].
 pub struct RawDataField {
     pub name: String,
     pub data_type: String,
@@ -17,6 +117,25 @@ pub struct RawDataField {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `MiningField` from `MiningSchema` — mirrors `pmml.xsd:MiningField` (11 attributes).
+///
+/// Describes how a `DataField` participates in a specific model. All non-`name` attributes
+/// are optional and default per `pmml.xsd` when absent.
+///
+/// # Fields
+///
+/// - `name`: references a `DataField` / `DerivedField` name.
+/// - `usage_type`: `usageType` (`"active"`, `"predicted"`, `"target"`, `"supplementary"`). `None` means `"active"`.
+/// - `importance`: `importance` — model-specific feature importance, if provided.
+/// - `outliers`: `outliers` / `outlierTreatment` strategy (`"asIs"`, `"asMissingValues"`, `"asExtremeValues"`).
+/// - `low_value` / `high_value`: `lowValue` / `highValue` — valid range; out-of-range handling is `outliers`.
+/// - `missing_value_replacement`: `missingValueReplacement` — literal substituted for missing input before scoring.
+/// - `missing_value_treatment`: `missingValueTreatment` (`"asIs"`, `"asMean"`, etc.).
+/// - `invalid_value_treatment`: `invalidValueTreatment` (`"returnInvalid"`, `"asMissing"`).
+/// - `invalid_value_replacement`: `invalidValueReplacement` — literal for invalid values.
+/// - `op_type`: `opType` override for this model (`None` inherits from `DataField`).
+///
+/// See [`RawTreeModel::mining_schema`], [`RawRegressionModel::mining_schema`] etc.
 pub struct RawMiningField {
     pub name: String,
     pub usage_type: Option<String>, // target, active (default)
@@ -32,6 +151,18 @@ pub struct RawMiningField {
 }
 
 #[derive(Debug, Clone)]
+/// A single `<TargetValue>` entry inside `<Targets>` / `<Target>`.
+///
+/// Defines discrete target statistics used by classification.
+///
+/// # Fields
+///
+/// - `value`: `value` — discrete label (e.g. `"setosa"`).
+/// - `display_value`: `displayValue` — human label, if any.
+/// - `prior_probability`: `priorProbability` — prior `P(class)`.
+/// - `default_value`: `defaultValue` — fallback prediction when model yields `Missing`.
+///
+/// See [`RawTarget::target_values`].
 pub struct RawTargetValue {
     pub value: Option<String>,
     pub display_value: Option<String>,
@@ -40,6 +171,22 @@ pub struct RawTargetValue {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `<Target>` from `<Targets>` — mirrors `pmml.xsd:Target`.
+///
+/// Post-processing for a predicted field (`rescale`, `castInteger`, `min`/`max` clipping).
+/// Most PMML files omit `Targets`; the evaluator synthesizes defaults.
+///
+/// # Fields
+///
+/// - `field`: `field` — target field name (references `MiningField` with `usageType="predicted"`).
+/// - `op_type`: `opType` override (`"continuous"` / `"categorical"`).
+/// - `cast_integer`: `castInteger` (`"true"` → round to integer after rescaling).
+/// - `min` / `max`: clipping bounds; `None` means unbounded.
+/// - `rescale_constant` / `rescale_factor`: `rescaleConstant` + `rescaleFactor * x` applied post-model.
+/// - `target_values`: discrete `<TargetValue>` list, in document order.
+///
+/// Currently `min`/`max` are not populated by the parser (always `None`); see `parse_target` note.
+/// See [`RawPmml`] and `pmml_ir::lower` for rescaling.
 pub struct RawTarget {
     pub field: Option<String>,
     pub op_type: Option<String>,
@@ -52,6 +199,21 @@ pub struct RawTarget {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `<OutputField>` from `<Output>` — mirrors `pmml.xsd:OutputField` (16 attributes).
+///
+/// Defines a computed output column (e.g. `predictedValue`, `probability`, `clusterId`).
+/// All attributes except `name` are optional per `pmml.xsd`.
+///
+/// # Fields
+///
+/// - `name`: `name` — output column identifier; may be referenced as a field in later expressions.
+/// - `feature`: `feature` (`"predictedValue"`, `"predictedDisplayValue"`, `"probability"`, `"clusterId"`, …).
+/// - `value` / `target_field`: `value` and `targetField` — for `probability` / `residual` the target label / field.
+/// - `data_type` / `op_type`: `dataType` / `opType` of the output; `None` inherits from the target field.
+/// - `rule_feature` / `algorithm` / `rank` / `rank_basis` / `rank_order` / `is_multi_valued` / `segment_id` / `is_final_result` / `display_name`:
+///   advanced PMML 4.4 attributes for `MiningModel` / `Scorecard` ensembles and result ranking. Rarely set; `None` means default.
+///
+/// See `pmml-ir` output lowering and [`RawTreeModel::output`].
 pub struct RawOutputField {
     pub name: String,
     pub feature: Option<String>,
@@ -71,6 +233,23 @@ pub struct RawOutputField {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `TreeModel` — mirrors `pmml.xsd:TreeModel`.
+///
+/// A decision tree with a single scoring function. This is the most common model
+/// in the test corpus (`DecisionTreeIris`).
+///
+/// # Fields
+///
+/// - `function_name`: `functionName` (`"classification"`, `"regression"`, …) — determines result handling.
+/// - `missing_value_strategy` / `no_true_child_strategy`: `missingValueStrategy` / `noTrueChildStrategy`
+///   (`"lastPrediction"`, `"defaultChild"`, …). `None` means JPMML default.
+/// - `mining_schema`: `MiningSchema` — ordered `MiningField` list, first `predicted` is the target.
+/// - `output`: `Output` — `OutputField` list; may be empty (evaluator synthesizes `predictedValue`).
+/// - `targets`: `Targets` — post-processing; currently always empty (see `RawTarget`).
+/// - `root`: root [`RawNode`] — the `True`/`SimplePredicate` guarded tree. Always present.
+/// - `local_derived_fields`: `LocalTransformations` `DerivedField` list valid only inside this model.
+///
+/// See [`RawNode`], [`RawPredicate`], and [`RawPmml::tree_model`].
 pub struct RawTreeModel {
     pub function_name: String,
     pub missing_value_strategy: Option<String>,
@@ -83,6 +262,11 @@ pub struct RawTreeModel {
 }
 
 #[derive(Debug, Clone)]
+/// A `<NumericPredictor>` inside `RegressionTable` — `name * coefficient * x^exponent`.
+///
+/// Built from attributes `name`, `coefficient` (default `0.0`), `exponent` (default `1`).
+///
+/// See [`RawRegressionTable::numeric_predictors`].
 pub struct RawNumericPredictor {
     pub name: String,
     pub exponent: i32,
@@ -90,6 +274,17 @@ pub struct RawNumericPredictor {
 }
 
 #[derive(Debug, Clone)]
+/// A `<CategoricalPredictor>` inside `RegressionTable`.
+///
+/// Encodes a single discrete coefficient: when `field == value` the `coefficient` is added.
+///
+/// # Fields
+///
+/// - `name`: `name` — field name.
+/// - `value`: `value` — discrete value to match.
+/// - `coefficient`: `coefficient` — additive term.
+///
+/// See [`RawRegressionTable::categorical_predictors`].
 pub struct RawCategoricalPredictor {
     pub name: String,
     pub value: String,
@@ -97,6 +292,17 @@ pub struct RawCategoricalPredictor {
 }
 
 #[derive(Debug, Clone)]
+/// A `<RegressionTable>` — one intercept plus predictor lists.
+///
+/// A `RegressionModel` may have one table (regression) or one per `targetCategory` (classification with `normalizationMethod`).
+///
+/// # Fields
+///
+/// - `intercept`: `intercept` attribute (default `0.0`).
+/// - `target_category`: `targetCategory` — discrete label this table predicts; `None` for regression / single-table classification.
+/// - `numeric_predictors` / `categorical_predictors`: predictors in document order.
+///
+/// See [`RawRegressionModel`].
 pub struct RawRegressionTable {
     pub intercept: f64,
     pub target_category: Option<String>,
@@ -105,6 +311,18 @@ pub struct RawRegressionTable {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `RegressionModel` — mirrors `pmml.xsd:RegressionModel`.
+///
+/// Linear / logistic regression with optional classification `normalizationMethod` (`"softmax"`, `"logit"`, `"exp"`, …).
+///
+/// # Fields
+///
+/// - `function_name` / `target_field_name` / `normalization_method` / `model_name`: attributes `functionName`, `targetFieldName`, `normalizationMethod`, `modelName`.
+/// - `mining_schema` / `output` / `targets`: standard model header.
+/// - `regression_tables`: one or more [`RawRegressionTable`]s; at least one.
+/// - `local_derived_fields`: `LocalTransformations`.
+///
+/// See [`RawRegressionTable`] and [`RawPmml::regression_model`].
 pub struct RawRegressionModel {
     pub function_name: String,
     pub target_field_name: Option<String>,
@@ -118,6 +336,16 @@ pub struct RawRegressionModel {
 }
 
 #[derive(Debug, Clone)]
+/// A `<Segment>` inside `Segmentation` — one sub-model with a predicate guard.
+///
+/// # Fields
+///
+/// - `id`: `id` attribute, if any.
+/// - `predicate`: guard [`RawPredicate`] — `True` / `SimplePredicate` / `CompoundPredicate`. Only rows satisfying it are scored by `model`.
+/// - `model`: the embedded model — currently `Tree` or `Regression` (`RawSegmentModel`).
+/// - `weight`: `weight` (default `1.0`) — used by `multipleModelMethod="weightedAverage"` / `"weightedMajorityVote"`.
+///
+/// See [`RawSegmentation`] and [`RawMiningModel`].
 pub struct RawSegment {
     pub id: Option<String>,
     pub predicate: RawPredicate,
@@ -126,12 +354,27 @@ pub struct RawSegment {
 }
 
 #[derive(Debug, Clone)]
+/// The model embedded in a [`RawSegment`] — currently `Tree` or `Regression`.
+///
+/// Matches PMML `MiningModel` `Segmentation` where each `Segment` may contain a
+/// `TreeModel` or `RegressionModel` (and historically an inline `Regression` element).
 pub enum RawSegmentModel {
     Tree(RawTreeModel),
     Regression(RawRegressionModel),
 }
 
 #[derive(Debug, Clone)]
+/// Raw `<Segmentation>` inside `MiningModel`.
+///
+/// Combines `Segment`s with a `multipleModelMethod`.
+///
+/// # Fields
+///
+/// - `multiple_model_method`: `multipleModelMethod` (`"modelChain"`, `"majorityVote"`, `"weightedAverage"`, …).
+/// - `missing_prediction_treatment`: `missingPredictionTreatment` (`"returnMissing"`, `"continue"`, …).
+/// - `segments`: ordered [`RawSegment`] list.
+///
+/// See [`RawMiningModel::segmentation`].
 pub struct RawSegmentation {
     pub multiple_model_method: String,
     pub missing_prediction_treatment: Option<String>,
@@ -139,6 +382,19 @@ pub struct RawSegmentation {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `MiningModel` — mirrors `pmml.xsd:MiningModel`.
+///
+/// An ensemble that segments input and combines sub-models. Currently only `Segmentation`
+/// is materialized; other children (`Targets`, `ModelStats`) are skipped.
+///
+/// # Fields
+///
+/// - `function_name` / `model_name`: `functionName` / `modelName`.
+/// - `mining_schema` / `output` / `targets`: standard header.
+/// - `segmentation`: optional [`RawSegmentation`].
+/// - `local_derived_fields`: `LocalTransformations`.
+///
+/// See [`RawSegment`] and [`RawPmml::mining_model`].
 pub struct RawMiningModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
@@ -150,6 +406,17 @@ pub struct RawMiningModel {
 }
 
 #[derive(Debug, Clone)]
+/// A `<Characteristic>`/`<Attribute>` inside `Scorecard`.
+///
+/// Each `Attribute` contributes a `partialScore` when its predicate matches.
+///
+/// # Fields
+///
+/// - `partial_score`: `partialScore` — additive term.
+/// - `predicate`: guard [`RawPredicate`].
+/// - `reason_code`: `reasonCode` — explanatory code.
+///
+/// See [`RawCharacteristic`] and [`RawScorecard`].
 pub struct RawAttribute {
     pub partial_score: f64,
     pub predicate: RawPredicate,
@@ -157,6 +424,17 @@ pub struct RawAttribute {
 }
 
 #[derive(Debug, Clone)]
+/// A `<Characteristic>` inside `Scorecard`.
+///
+/// Groups `Attribute`s for one input field.
+///
+/// # Fields
+///
+/// - `name`: `name` — logical characteristic name.
+/// - `reason_code`: `reasonCode`.
+/// - `baseline_score` / `attributes`: `baselineScore` and [`RawAttribute`] list.
+///
+/// See [`RawScorecard::characteristics`].
 pub struct RawCharacteristic {
     pub name: String,
     pub reason_code: Option<String>,
@@ -165,6 +443,17 @@ pub struct RawCharacteristic {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `Scorecard` — mirrors `pmml.xsd:Scorecard`.
+///
+/// A points-based model: `initialScore` plus `Characteristic`/`Attribute` partial scores.
+///
+/// # Fields
+///
+/// - `model_name` / `function_name` / `initial_score` / `use_reason_codes` / `reason_code_algorithm` / `baseline_method`:
+///   scorecard attributes.
+/// - `mining_schema` / `output` / `targets` / `characteristics` / `local_derived_fields`: standard header plus scorecard body.
+///
+/// See [`RawPmml::scorecard`].
 pub struct RawScorecard {
     pub model_name: Option<String>,
     pub function_name: String,
@@ -180,18 +469,44 @@ pub struct RawScorecard {
 }
 
 #[derive(Debug, Clone)]
+/// A `<Cluster>` inside `ClusteringModel`.
+///
+/// # Fields
+///
+/// - `name`: `name` — cluster identifier.
+/// - `array`: `Array` numeric centroid / center in document order.
+///
+/// See [`RawClusteringModel::clusters`].
 pub struct RawCluster {
     pub name: String,
     pub array: Vec<f64>,
 }
 
 #[derive(Debug, Clone)]
+/// `<ComparisonMeasure>` inside `ClusteringModel`.
+///
+/// Describes distance vs similarity.
+///
+/// # Fields
+///
+/// - `kind`: `kind` (`"distance"` or `"similarity"`).
+/// - `compare_function`: `compareFunction` (`"squaredEuclidean"`, `"cosine"`, …) if materialized; currently `None`.
+///
+/// See [`RawClusteringModel::comparison_measure`].
 pub struct RawComparisonMeasure {
     pub kind: String,
     pub compare_function: Option<String>,
 }
 
 #[derive(Debug, Clone)]
+/// Raw `ClusteringModel` — mirrors `pmml.xsd:ClusteringModel` (k-means / distribution).
+///
+/// # Fields
+///
+/// - `model_name` / `function_name` / `model_class` / `number_of_clusters`: `modelName`, `functionName`, `modelClass`, `numberOfClusters`.
+/// - `mining_schema` / `output` / `targets` / `comparison_measure` / `clustering_fields` / `clusters` / `local_derived_fields`.
+///
+/// See [`RawCluster`] and [`RawPmml::clustering_model`].
 pub struct RawClusteringModel {
     pub model_name: Option<String>,
     pub function_name: String,
@@ -207,12 +522,31 @@ pub struct RawClusteringModel {
 }
 
 #[derive(Debug, Clone)]
+/// A `<TargetValueCount>` — a target label and its `count`.
+///
+/// Used by `NaiveBayesModel` (`BayesOutput`, `PairCounts`) and `MiningModel`.
+///
+/// # Fields
+///
+/// - `value`: `value` — discrete label.
+/// - `count`: `count` — observed frequency (default `0.0`).
+///
+/// See [`RawNaiveBayesModel`].
 pub struct RawTargetValueCount {
     pub value: String,
     pub count: f64,
 }
 
 #[derive(Debug, Clone)]
+/// A `<BayesInput>` — per-field Bayes statistics for `NaiveBayesModel`.
+///
+/// # Fields
+///
+/// - `field_name`: `fieldName` — input field.
+/// - `target_value_stats`: `TargetValueStats` / `TargetValueStat` list (Gaussian params for continuous fields).
+/// - `pair_counts`: `PairCounts` list (discrete co-occurrence counts).
+///
+/// See [`RawNaiveBayesModel::bayes_inputs`].
 pub struct RawBayesInput {
     pub field_name: String,
     pub target_value_stats: Vec<RawTargetValueStat>,
@@ -220,6 +554,14 @@ pub struct RawBayesInput {
 }
 
 #[derive(Debug, Clone)]
+/// A `<TargetValueStat>` — Gaussian `mean`/`variance` for one target value.
+///
+/// # Fields
+///
+/// - `value`: `value` — target label.
+/// - `gaussian_mean` / `gaussian_variance`: `mean` / `variance` of `GaussianDistribution`.
+///
+/// See [`RawBayesInput::target_value_stats`].
 pub struct RawTargetValueStat {
     pub value: String,
     pub gaussian_mean: Option<f64>,
@@ -227,12 +569,28 @@ pub struct RawTargetValueStat {
 }
 
 #[derive(Debug, Clone)]
+/// `<PairCounts>` — discrete co-occurrence counts for a single `BayesInput` value.
+///
+/// # Fields
+///
+/// - `value`: `value` — input field's discrete value.
+/// - `target_counts`: one [`RawTargetValueCount`] per target label.
+///
+/// See [`RawBayesInput::pair_counts`].
 pub struct RawPairCounts {
     pub value: String,
     pub target_counts: Vec<RawTargetValueCount>,
 }
 
 #[derive(Debug, Clone)]
+/// Raw `NaiveBayesModel` — mirrors `pmml.xsd:NaiveBayesModel`.
+///
+/// # Fields
+///
+/// - `function_name` / `threshold`: `functionName`, `threshold` (default `0.0`).
+/// - `mining_schema` / `output` / `targets` / `bayes_inputs` / `bayes_output_counts` / `local_derived_fields`.
+///
+/// See [`RawPmml::naive_bayes_model`].
 pub struct RawNaiveBayesModel {
     pub function_name: String,
     pub threshold: f64,
@@ -245,12 +603,33 @@ pub struct RawNaiveBayesModel {
 }
 
 #[derive(Debug, Clone)]
+/// An `<InstanceField>` inside `NearestNeighborModel`.
+///
+/// Maps a model field to an `InlineTable` column.
+///
+/// # Fields
+///
+/// - `field`: `field` — model field name.
+/// - `column`: `column` — column name in `InlineTable`.
+///
+/// See [`RawNearestNeighborModel::instance_fields`].
 pub struct RawInstanceField {
     pub field: String,
     pub column: String,
 }
 
 #[derive(Debug, Clone)]
+/// Raw `NearestNeighborModel` (k-NN) — mirrors `pmml.xsd:NearestNeighborModel`.
+///
+/// K nearest neighbors with `TrainingInstances` as an `InlineTable` or `TableLocator` placeholder.
+///
+/// # Fields
+///
+/// - `function_name` / `number_of_neighbors`: `functionName`, `numberOfNeighbors`.
+/// - `mining_schema` / `output` / `targets` / `instance_fields` / `instances` / `knn_inputs` / `local_derived_fields`.
+/// - `instances`: `InlineTable` rows as `HashMap<column, value>`; empty when `TableLocator` is used (Arrow bridge produces an empty `RecordBatch` placeholder).
+///
+/// See [`RawPmml::nearest_neighbor_model`].
 pub struct RawNearestNeighborModel {
     pub function_name: String,
     pub number_of_neighbors: usize,
@@ -264,6 +643,14 @@ pub struct RawNearestNeighborModel {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `SupportVectorMachineModel` — mirrors `pmml.xsd:SupportVectorMachineModel`.
+///
+/// # Fields
+///
+/// - `function_name` / `mining_schema` / `output` / `targets` / `vector_fields` / `vector_instances` / `support_vector_machine` / `kernel_gamma` / `local_derived_fields`.
+/// - `kernel_gamma`: `gamma` of `RadialBasisKernelType` if present.
+///
+/// See [`RawPmml::support_vector_machine_model`].
 pub struct RawSupportVectorMachineModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
@@ -277,6 +664,17 @@ pub struct RawSupportVectorMachineModel {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `NeuralNetwork` — mirrors `pmml.xsd:NeuralNetwork`.
+///
+/// Feed-forward network with `NeuralInputs` and `NeuralLayer`s. Activation functions are
+/// strings (`"logistic"`, `"tanh"`, `"softmax"` …) carried verbatim for `pmml-ir` to map.
+///
+/// # Fields
+///
+/// - `function_name` / `model_name` / `activation_function`: `functionName`, `modelName`, `activationFunction`.
+/// - `mining_schema` / `output` / `targets` / `neural_inputs` / `neural_layers` / `local_derived_fields`.
+///
+/// See [`RawNeuralInput`], [`RawNeuralLayer`], and [`RawPmml::neural_network`].
 pub struct RawNeuralNetwork {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
@@ -290,12 +688,32 @@ pub struct RawNeuralNetwork {
 }
 
 #[derive(Debug, Clone)]
+/// A `<Parameter>` inside `GeneralRegressionModel` `ParameterList`.
+///
+/// # Fields
+///
+/// - `name`: `name`.
+/// - `label`: `label` — exposition label, if any.
+///
+/// See [`RawGeneralRegressionModel::parameters`].
 pub struct RawParameter {
     pub name: String,
     pub label: Option<String>,
 }
 
 #[derive(Debug, Clone)]
+/// A `Predictor` factor inside `GeneralRegressionModel` `FactorList`.
+///
+/// Categorical predictor with contrast matrix.
+///
+/// # Fields
+///
+/// - `name`: predictor name.
+/// - `categories`: `Category` `value` list.
+/// - `matrix`: `Matrix` / `Array` contrast matrix rows.
+/// - `contrast_type`: `contrastMatrixType` (`"Indicator"`, `"Contrast"`, …).
+///
+/// See [`RawGeneralRegressionModel::factors`].
 pub struct RawFactor {
     pub name: String,
     pub categories: Vec<String>,
@@ -304,6 +722,17 @@ pub struct RawFactor {
 }
 
 #[derive(Debug, Clone)]
+/// A `<PPCell>` inside `GeneralRegressionModel` `PPMatrix`.
+///
+/// Maps a `Predictor` `value` to a `Parameter`.
+///
+/// # Fields
+///
+/// - `value`: `value`.
+/// - `predictor_name`: `predictorName`.
+/// - `parameter_name`: `parameterName`.
+///
+/// See [`RawGeneralRegressionModel::pp_matrix`].
 pub struct RawPPCell {
     pub value: String,
     pub predictor_name: String,
@@ -311,6 +740,17 @@ pub struct RawPPCell {
 }
 
 #[derive(Debug, Clone)]
+/// A `<PCell>` inside `GeneralRegressionModel` `ParamMatrix`.
+///
+/// One regression coefficient for a parameter (and optional target category).
+///
+/// # Fields
+///
+/// - `target_category`: `targetCategory` — classification label; `None` for regression.
+/// - `parameter_name`: `parameterName`.
+/// - `beta`: `beta` — coefficient.
+///
+/// See [`RawGeneralRegressionModel::param_matrix`].
 pub struct RawPCell {
     pub target_category: Option<String>,
     pub parameter_name: String,
@@ -318,6 +758,15 @@ pub struct RawPCell {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `GeneralRegressionModel` — mirrors `pmml.xsd:GeneralRegressionModel`.
+///
+/// Generalized linear model with `ParameterList` / `FactorList` / `CovariateList` / `PPMatrix` / `ParamMatrix`.
+///
+/// # Fields
+///
+/// - `function_name` / `model_type` / `target_variable_name` / `target_reference_category` / `mining_schema` / `output` / `targets` / `parameters` / `factors` / `covariates` / `pp_matrix` / `param_matrix` / `local_derived_fields`.
+///
+/// See [`RawPmml::general_regression_model`].
 pub struct RawGeneralRegressionModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
@@ -335,18 +784,43 @@ pub struct RawGeneralRegressionModel {
 }
 
 #[derive(Debug, Clone)]
+/// An `<Item>` inside `AssociationModel`.
+///
+/// # Fields
+///
+/// - `id`: `id`.
+/// - `value`: `value` — item's literal value (often `"field=value"`).
+///
+/// See [`RawAssociationModel::items`].
 pub struct RawItem {
     pub id: String,
     pub value: String,
 }
 
 #[derive(Debug, Clone)]
+/// An `<Itemset>` — a set of `ItemRef`s inside `AssociationModel`.
+///
+/// # Fields
+///
+/// - `id`: `id`.
+/// - `item_refs`: `itemRef` list.
+///
+/// See [`RawAssociationModel::itemsets`].
 pub struct RawItemset {
     pub id: String,
     pub item_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
+/// An `<AssociationRule>` — antecedent → consequent with `support`/`confidence`/`lift`.
+///
+/// # Fields
+///
+/// - `antecedent`: `antecedent` `Itemset` id.
+/// - `consequent`: `consequent` `Itemset` id.
+/// - `support` / `confidence` / `lift`: rule metrics.
+///
+/// See [`RawAssociationModel::rules`].
 pub struct RawAssociationRule {
     pub antecedent: String,
     pub consequent: String,
@@ -356,6 +830,13 @@ pub struct RawAssociationRule {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `AssociationModel` — mirrors `pmml.xsd:AssociationModel` (market-basket).
+///
+/// # Fields
+///
+/// - `function_name` / `mining_schema` / `output` / `targets` / `items` / `itemsets` / `rules` / `local_derived_fields`.
+///
+/// See [`RawPmml::association_model`].
 pub struct RawAssociationModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
@@ -368,6 +849,15 @@ pub struct RawAssociationModel {
 }
 
 #[derive(Debug, Clone)]
+/// A `<SimpleRule>` inside `RuleSetModel`.
+///
+/// # Fields
+///
+/// - `id`: `id`.
+/// - `score`: `score` — predicted label when `predicate` matches.
+/// - `predicate`: rule guard [`RawPredicate`].
+///
+/// See [`RawRuleSet`].
 pub struct RawSimpleRule {
     pub id: Option<String>,
     pub score: String,
@@ -375,6 +865,15 @@ pub struct RawSimpleRule {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `<RuleSet>` inside `RuleSetModel`.
+///
+/// # Fields
+///
+/// - `record_count` / `nb_correct`: `recordCount` / `nbCorrect` — training stats.
+/// - `default_score`: `defaultScore` — prediction when no rule fires.
+/// - `rules`: ordered [`RawSimpleRule`] list. Order matters for `firstHit` semantics.
+///
+/// See [`RawRuleSetModel`].
 pub struct RawRuleSet {
     pub record_count: Option<f64>,
     pub nb_correct: Option<f64>,
@@ -383,6 +882,15 @@ pub struct RawRuleSet {
 }
 
 #[derive(Debug, Clone)]
+/// Raw `RuleSetModel` — mirrors `pmml.xsd:RuleSetModel`.
+///
+/// Rule-based classifier with ordered `SimpleRule`s.
+///
+/// # Fields
+///
+/// - `function_name` / `mining_schema` / `output` / `targets` / `rule_set` / `local_derived_fields`.
+///
+/// See [`RawPmml::rule_set_model`].
 pub struct RawRuleSetModel {
     pub function_name: String,
     pub mining_schema: Vec<RawMiningField>,
@@ -393,12 +901,29 @@ pub struct RawRuleSetModel {
 }
 
 #[derive(Debug, Clone)]
+/// A `<Con>` (connection) inside `Neuron` — weighted edge from another neuron / input.
+///
+/// # Fields
+///
+/// - `from`: `from` — source id (a `NeuralInput` id or another `Neuron` id).
+/// - `weight`: `weight`.
+///
+/// See [`RawNeuron`].
 pub struct RawCon {
     pub from: String,
     pub weight: f64,
 }
 
 #[derive(Debug, Clone)]
+/// A `<Neuron>` inside `NeuralLayer`.
+///
+/// # Fields
+///
+/// - `id`: `id`.
+/// - `bias`: `bias` (optional).
+/// - `cons`: `Con` list — incoming weighted connections.
+///
+/// See [`RawNeuralLayer`].
 pub struct RawNeuron {
     pub id: String,
     pub bias: Option<f64>,
@@ -406,12 +931,29 @@ pub struct RawNeuron {
 }
 
 #[derive(Debug, Clone)]
+/// A `<NeuralInput>` — maps a model field to a network input.
+///
+/// # Fields
+///
+/// - `id`: `id` — network-internal identifier.
+/// - `field`: `field` — model field name (from `DerivedField` / `FieldRef`).
+///
+/// See [`RawNeuralNetwork::neural_inputs`].
 pub struct RawNeuralInput {
     pub id: String,
     pub field: String,
 }
 
 #[derive(Debug, Clone)]
+/// A `<NeuralLayer>` — one layer of `Neurons` in `NeuralNetwork`.
+///
+/// # Fields
+///
+/// - `number_of_neurons`: `numberOfNeurons`.
+/// - `activation_function`: `activationFunction` for this layer (inherits model-level if `None`).
+/// - `neurons`: ordered [`RawNeuron`] list.
+///
+/// See [`RawNeuralNetwork::neural_layers`].
 pub struct RawNeuralLayer {
     pub number_of_neurons: Option<usize>,
     pub activation_function: Option<String>,
@@ -419,16 +961,39 @@ pub struct RawNeuralLayer {
 }
 
 #[derive(Debug, Clone)]
+/// A `<SupportVector>` inside `SupportVectorMachine`.
+///
+/// # Fields
+///
+/// - `vector_id`: `vectorId` — references a `VectorInstance` id.
+///
+/// See [`RawSupportVectorMachine`].
 pub struct RawSupportVector {
     pub vector_id: String,
 }
 
 #[derive(Debug, Clone)]
+/// A `<Coefficient>` inside `Coefficients` of `SupportVectorMachine`.
+///
+/// # Fields
+///
+/// - `value`: `value` — coefficient for the corresponding `SupportVector`.
+///
+/// See [`RawSupportVectorMachine::coefficients`].
 pub struct RawCoefficient {
     pub value: f64,
 }
 
 #[derive(Debug, Clone)]
+/// Raw `<SupportVectorMachine>` inside `SupportVectorMachineModel`.
+///
+/// # Fields
+///
+/// - `support_vectors`: `SupportVectors` list.
+/// - `coefficients`: `Coefficients` list (parallel to `support_vectors`).
+/// - `absolute_value`: `absoluteValue` of `Coefficients`.
+///
+/// See [`RawSupportVectorMachineModel::support_vector_machine`].
 pub struct RawSupportVectorMachine {
     pub support_vectors: Vec<RawSupportVector>,
     pub coefficients: Vec<RawCoefficient>,
@@ -436,17 +1001,48 @@ pub struct RawSupportVectorMachine {
 }
 
 #[derive(Debug, Clone)]
+/// A `FieldRef` inside `VectorDictionary` `VectorFields`.
+///
+/// # Fields
+///
+/// - `field`: field name.
+///
+/// See [`RawSupportVectorMachineModel::vector_fields`].
 pub struct RawVectorField {
     pub field: String,
 }
 
 #[derive(Debug, Clone)]
+/// A `<VectorInstance>` in `VectorDictionary`.
+///
+/// # Fields
+///
+/// - `id`: `id`.
+/// - `array`: `Array` dense values (or de-sparsified from `REAL-SparseArray`).
+///
+/// See [`RawSupportVectorMachineModel::vector_instances`].
 pub struct RawVectorInstance {
     pub id: String,
     pub array: Vec<f64>,
 }
 
 #[derive(Debug, Clone)]
+/// A `<Node>` in `TreeModel` — mirrors `pmml.xsd:Node`.
+///
+/// Recursive tree node with a predicate, optional `ScoreDistribution`s, and children.
+///
+/// # Fields
+///
+/// - `id`: `id` attribute.
+/// - `score`: `score` — predicted label / value when this node is the winning leaf.
+/// - `record_count`: `recordCount` — training rows reaching this node.
+/// - `predicate`: node guard [`RawPredicate`] — `True` (root), `SimplePredicate`, `CompoundPredicate`, `SimpleSetPredicate`.
+/// - `score_distributions`: `ScoreDistribution` list — per-class `recordCount`.
+/// - `children`: child `Node`s, in document order.
+/// - `default_child`: `defaultChild` — id of the default child for JPMML's `DefaultChild` handling.
+///
+/// Missing `predicate` defaults to `True` (defensive). `default_child` is `None` when absent.
+/// See [`RawTreeModel::root`] and [`RawPredicate`].
 pub struct RawNode {
     pub id: Option<String>,
     pub score: Option<String>,
@@ -458,6 +1054,9 @@ pub struct RawNode {
 }
 
 #[derive(Debug, Clone)]
+/// A node / rule predicate — mirrors `pmml.xsd:Predicate`.
+///
+/// Used by [`RawNode`], [`RawSegment`], [`RawScorecard`], and [`RawRuleSet`].
 pub enum RawPredicate {
     True,
     Simple {
@@ -477,12 +1076,31 @@ pub enum RawPredicate {
 }
 
 #[derive(Debug, Clone)]
+/// A `<ScoreDistribution>` inside `Node`.
+///
+/// # Fields
+///
+/// - `value`: `value` — discrete label.
+/// - `record_count`: `recordCount` — rows with that label at this node.
+///
+/// See [`RawNode::score_distributions`].
 pub struct RawScoreDistribution {
     pub value: String,
     pub record_count: f64,
 }
 
 #[derive(Debug, Clone)]
+/// Raw `<Extension>` — vendor payload, gracefully stored, not evaluated.
+///
+/// PMML allows `Extension` anywhere. This runtime keeps the first-level `extender`/`name`/`value`
+/// and optional `content` text; unknown vendor markup is ignored rather than rejected.
+///
+/// # Fields
+///
+/// - `extender` / `name` / `value`: attributes `extender`, `name`, `value`.
+/// - `content`: text content inside `<Extension>`, if any.
+///
+/// See [`RawPmml::extensions`].
 pub struct RawExtension {
     pub extender: Option<String>,
     pub name: Option<String>,
@@ -491,6 +1109,14 @@ pub struct RawExtension {
 }
 
 #[derive(Debug, Clone)]
+/// A `<ParameterField>` inside `DefineFunction`.
+///
+/// # Fields
+///
+/// - `name`: `name`.
+/// - `data_type` / `op_type`: `dataType` / `opType`, if specified.
+///
+/// See [`RawDefineFunction::param_fields`].
 pub struct RawParameterField {
     pub name: String,
     pub data_type: Option<String>,
@@ -498,12 +1124,30 @@ pub struct RawParameterField {
 }
 
 #[derive(Debug, Clone)]
+/// A `<LinearNorm>` inside `NormContinuous`.
+///
+/// Defines a linear interpolation point.
+///
+/// # Fields
+///
+/// - `orig`: `orig` — original value.
+/// - `norm`: `norm` — normalized value.
+///
+/// See [`RawExpression::NormContinuous`].
 pub struct RawLinearNorm {
     pub orig: f64,
     pub norm: f64,
 }
 
 #[derive(Debug, Clone)]
+/// An `<Interval>` inside `DiscretizeBin`.
+///
+/// # Fields
+///
+/// - `closure`: `closure` (`"openClosed"`, `"closedOpen"`, …).
+/// - `left_margin` / `right_margin`: `leftMargin` / `rightMargin` bounds; `None` means unbounded.
+///
+/// See [`RawDiscretizeBin`].
 pub struct RawInterval {
     pub closure: String,
     pub left_margin: Option<f64>,
@@ -511,18 +1155,49 @@ pub struct RawInterval {
 }
 
 #[derive(Debug, Clone)]
+/// A `<DiscretizeBin>` inside `Discretize`.
+///
+/// # Fields
+///
+/// - `bin_value`: `binValue` — discrete output for this interval.
+/// - `interval`: [`RawInterval`] — the continuous range.
+///
+/// See [`RawExpression::Discretize`].
 pub struct RawDiscretizeBin {
     pub bin_value: String,
     pub interval: RawInterval,
 }
 
 #[derive(Debug, Clone)]
+/// A `<FieldColumnPair>` inside `MapValues`.
+///
+/// Maps a model `field` to an `InlineTable` `column`.
+///
+/// # Fields
+///
+/// - `field`: model field.
+/// - `column`: table column.
+///
+/// See [`RawExpression::MapValues`].
 pub struct RawFieldColumnPair {
     pub field: String,
     pub column: String,
 }
 
 #[derive(Debug, Clone)]
+/// A `<DefineFunction>` inside `TransformationDictionary`.
+///
+/// User-defined function: parameters, derived fields, and a body expression.
+///
+/// # Fields
+///
+/// - `name`: `name` — function name usable in `Apply` `function`.
+/// - `data_type` / `op_type`: `dataType` / `opType` of the return value.
+/// - `param_fields`: `ParameterField` list.
+/// - `derived_fields`: inner `DerivedField` list (let-bindings).
+/// - `body`: optional body [`RawExpression`] (e.g. `Apply`, `Constant`).
+///
+/// See [`RawPmml::define_functions`] and `pmml_ir` function lowering.
 pub struct RawDefineFunction {
     pub name: String,
     pub data_type: Option<String>,
@@ -533,6 +1208,19 @@ pub struct RawDefineFunction {
 }
 
 #[derive(Debug, Clone)]
+/// A `<DerivedField>` — computed field in `TransformationDictionary` or `LocalTransformations`.
+///
+/// Mirrors `pmml.xsd:DerivedField`. The `expression` determines the value; `dataType`/`opType`
+/// guide coercion. `displayName` is purely presentational.
+///
+/// # Fields
+///
+/// - `name`: `name` — field identifier, keys later `FieldRef`s.
+/// - `display_name`: `displayName`.
+/// - `data_type` / `op_type`: `dataType` / `opType` (`"string"` / `"categorical"` defaults match parser).
+/// - `expression`: the defining [`RawExpression`] — `FieldRef`, `NormContinuous`, `Discretize`, `MapValues`, `Apply`, etc. If absent, `Unknown`.
+///
+/// See [`RawExpression`] and `pmml_ir` transformation lowering.
 pub struct RawDerivedField {
     pub name: String,
     pub display_name: Option<String>,
@@ -542,6 +1230,10 @@ pub struct RawDerivedField {
 }
 
 #[derive(Debug, Clone)]
+/// Raw expression tree for `DerivedField` / `DefineFunction` bodies — mirrors `pmml.xsd:Expression`.
+///
+/// Covers `Constant`, `FieldRef`, `NormContinuous`, `NormDiscrete`, `Discretize`, `MapValues`,
+/// `TextIndex`, `Aggregate`, `Apply`, and `Unknown` (for skipped vendor expressions).
 pub enum RawExpression {
     Constant {
         data_type: Option<String>,
@@ -603,6 +1295,42 @@ pub enum RawExpression {
 }
 
 #[derive(Debug, Clone)]
+/// Top-level PMML document produced by [`unmarshal`] — the `RawPmml` IR pre-lowering.
+///
+/// Holds `DataDictionary` plus at most one of the 12 supported model types, plus
+/// `TransformationDictionary`, `Extension`s and a possible `unsupported_model` tag.
+///
+/// All `Option<Model>` fields are `None` when the document contains a different model
+/// or no model. Exactly one supported model is expected in valid PMML; `unmarshal` does
+/// not enforce that — `pmml_ir::verify_raw` and `pmml_ir::lower` do.
+///
+/// # Fields
+///
+/// - `data_dictionary`: `DataDictionary` `DataField` list — field schema, always present (may be empty for malformed PMML).
+/// - `tree_model` / `regression_model` / `mining_model` / `scorecard` / `clustering_model` / `naive_bayes_model` / `nearest_neighbor_model` / `support_vector_machine_model` / `neural_network` / `general_regression_model` / `association_model` / `rule_set_model`:
+///   the 12 supported model slots. `Some` when that model element was present; otherwise `None`.
+/// - `transformation_dictionary`: `TransformationDictionary` / `LocalTransformations` `DerivedField` list (global, model-local fields are also merged here for convenience).
+/// - `define_functions`: `TransformationDictionary` `DefineFunction` list.
+/// - `extensions`: top-level `Extension` elements, gracefully kept.
+/// - `unsupported_model`: `Some(tag)` when an unsupported `*Model` (`AnomalyDetectionModel`, `BayesianNetworkModel`, …) was encountered; see module docs for the full list. `pmml_ir::verify_raw` rejects this with `UnsupportedMarkup`.
+///
+/// # Links
+///
+/// - Lower to hot path: `pmml_ir::lower` `RawPmml -> Ir`
+/// - Field types: [`pmml_core::DataType`], [`pmml_core::OpType`]
+/// - Hardened reader: [`crate::reader::PmmlReader`]
+///
+/// # Examples
+///
+/// ```
+/// use pmml_xml::unmarshal;
+/// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
+/// let raw = unmarshal(xml)?;
+/// assert_eq!(raw.data_dictionary.len(), 1);
+/// assert!(raw.tree_model.is_some());
+/// assert!(raw.unsupported_model.is_none());
+/// # Ok::<(), pmml_core::PmmlError>(())
+/// ```
 pub struct RawPmml {
     pub data_dictionary: Vec<RawDataField>,
     pub tree_model: Option<RawTreeModel>,
@@ -1640,6 +2368,8 @@ fn parse_output_field(e: &BytesStart) -> Result<RawOutputField> {
     })
 }
 
+#[allow(dead_code)]
+/// Parse a single `<Target>` — currently unused; `Targets` are skipped in model parsers but kept for `pmml.xsd` completeness.
 fn parse_target(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawTarget> {
     let field = attr(start, "field");
     let op_type = attr(start, "opType");
@@ -1670,6 +2400,8 @@ fn parse_target(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Re
     })
 }
 
+#[allow(dead_code)]
+/// Parse `<Targets>` — currently unused; see `parse_target`.
 fn parse_targets(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<RawTarget>> {
     let mut targets = Vec::new();
     let mut buf = Vec::new();
@@ -1760,7 +2492,7 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
     let id = attr(start, "id");
     let score = attr(start, "score");
     let record_count = attr(start, "recordCount").and_then(|s| s.parse::<f64>().ok());
-    let default_child = attr(start, "defaultChild");
+    let _default_child = attr(start, "defaultChild");
 
     let mut predicate = RawPredicate::True; // default if none
     let mut predicate_set = false;
@@ -1961,7 +2693,7 @@ fn parse_node(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Resu
         predicate,
         score_distributions,
         children,
-        default_child: None,
+        default_child: _default_child,
     })
 }
 
@@ -5680,6 +6412,75 @@ fn parse_rule_set_model(
 
 // ---------- Top-level ----------
 
+/// Unmarshal `bytes` into a [`RawPmml`] with hardened `quick-xml` 0.37 parsing.
+///
+/// The sole entry point for the `pmml-xml` crate. It delegates file-size checks to
+/// [`crate::reader::new_reader`] (100 MB cap) and then walks `Start`/`Empty`/`End` events
+/// to populate [`RawPmml`]. Depth/XXE hardening is inherited from `quick-xml`'s defaults
+/// (entities not expanded) and the `reader` module; `unmarshal` itself is iterative, not
+/// recursive, to tolerate deep `Node` chains.
+///
+/// # Parameters
+///
+/// - `bytes`: complete PMML document (`&[u8]`). May include XML declaration and `DOCTYPE`.
+///   The slice is borrowed only for the call; the returned `RawPmml` owns its strings.
+///
+/// # Return
+///
+/// `Ok(RawPmml)` on syntactic success. Semantic validation (e.g. missing `MiningSchema`,
+/// unsupported `*Model` rejection) is deferred to `pmml_ir::verify_raw` / `pmml_ir::lower`.
+///
+/// # Errors
+///
+/// - [`pmml_core::PmmlError::ParseError`] with `context: "xml"` for malformed XML or missing required attributes (`name`, `field`, `functionName`, …).
+/// - [`pmml_core::PmmlError::ValidationError`] if `bytes.len() > 100 MB` (from `new_reader`) or if an attribute value fails to parse where required. Depth `>512` surfaces as `ValidationError` via `PmmlReader` when used, or as a `ParseError` if the XML is structurally broken.
+/// - [`pmml_core::PmmlError::UnsupportedMarkup`] is **not** returned here; unsupported models are stored in [`RawPmml::unsupported_model`] for `pmml_ir::verify_raw` to reject.
+///
+/// # Panics
+///
+/// Never panics. All malformed input is returned as `Err`.
+/// Allocation failure may panic via the global allocator, as usual.
+///
+/// # Performance
+///
+/// Cold path only; hot scoring never calls this. ~68 µs for `DecisionTreeIris.pmml` (2.9 KB) on x86_64. Cost is `O(n)` in `bytes.len()`.
+///
+/// # Examples
+///
+/// Minimal `TreeModel` round-trip:
+///
+/// ```
+/// use pmml_xml::unmarshal;
+/// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
+/// let raw = unmarshal(xml)?;
+/// assert_eq!(raw.data_dictionary[0].name, "x");
+/// assert_eq!(raw.tree_model.unwrap().function_name, "classification");
+/// # Ok::<(), pmml_core::PmmlError>(())
+/// ```
+///
+/// Regression model with `TransformationDictionary`:
+///
+/// ```
+/// use pmml_xml::unmarshal;
+/// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/><DataField name="y" dataType="double" optype="continuous"/></DataDictionary><TransformationDictionary><DerivedField name="x2" dataType="double" optype="continuous"><NormContinuous field="x"><LinearNorm orig="0" norm="0"/><LinearNorm orig="1" norm="1"/></NormContinuous></DerivedField></TransformationDictionary><RegressionModel functionName="regression"><MiningSchema><MiningField name="x2"/><MiningField name="y" usageType="predicted"/></MiningSchema><RegressionTable intercept="0"><NumericPredictor name="x2" coefficient="1.5"/></RegressionTable></RegressionModel></PMML>"#;
+/// let raw = unmarshal(xml)?;
+/// assert_eq!(raw.transformation_dictionary.len(), 1);
+/// assert!(raw.regression_model.is_some());
+/// # Ok::<(), pmml_core::PmmlError>(())
+/// ```
+///
+/// XXE is not expanded:
+///
+/// ```
+/// use pmml_xml::unmarshal;
+/// let xxe = br#"<?xml version="1.0"?><!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]><PMML version="4.4"><Header/><DataDictionary><DataField name="f" dataType="string" optype="categorical"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="f"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
+/// let res = unmarshal(xxe);
+/// match res {
+///     Ok(raw) => assert!(raw.data_dictionary.iter().all(|df| !df.name.contains("root:"))),
+///     Err(e) => assert!(!e.to_string().contains("root:")),
+/// }
+/// # Ok::<(), pmml_core::PmmlError>(())
+/// ```
 pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
     let mut reader = new_reader(bytes)?;
     let mut data_dictionary = Vec::new();
