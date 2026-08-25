@@ -2,7 +2,7 @@
 
 **Aprobado:** 2026-08-23 default (Tree, 8 agentes, MIT, Arrow, gitflow)
 **Replaces:** `2026-08-21-jpmml-bun-rust-plan.md` (mecánico)
-**Worktrees:** `.worktrees/v1-tree-eval|sess|bench` + main `feat/v1-tree-skeleton` on `develop`
+**Worktrees:** `.worktrees/v1-tree-eval|sess|bench` + main `feat/v1-tree-skeleton` on `development`
 **Wall:** 14-16d / 27d solo / 9-11d con 12 agentes
 
 ## Fase 0 Skeleton (2d WT-0 A0/A1) tasks 0.1-0.10 -> cargo check verde

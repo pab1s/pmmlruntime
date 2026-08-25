@@ -1,7 +1,7 @@
 # PMML Runtime v1 Tree — Design Spec (ONNX-by-design)
 
 **Fecha:** 2026-08-23
-**Repo:** `pab1s/jpmml-evaluator-rs` (`develop` <- `feat/v1-tree-*`)
+**Repo:** `pab1s/pmmlruntime` (`development` <- `feat/v1-tree-*`)
 **Branch plan:** `feat/v1-tree-skeleton` (infra) -> `feat/v1-tree-eval` + `feat/v1-tree-sess` + `feat/v1-tree-bench` (worktrees)
 **Licencia:** MIT OR Apache-2.0 (green-field desde spec DMG, no transpilación AGPL)
 **Spec:** PMML 4.4 `pmml.xsd:4490` líneas, `GeneralStructure:932`, `jpmml-evaluator-features.md`
@@ -143,4 +143,4 @@ Ver `docs/PLAN.md` detallado. 8 agentes 4 WT: WT-0 ir(0,1), WT-1 eval(2,3), WT-2
 
 - PMML 4.4 `pmml.xsd:4490`, `GeneralStructure:932`, `jpmml-evaluator-features.md:96`
 - Upstream `jpmml/jpmml-evaluator@23d0761 v1.7.7`, Openscoring bench 2021
-- Repo actual `pab1s/jpmml-evaluator-rs` `chore/migration-plan` (8 crate placeholders) -> `feat/v1-tree-*` worktrees
+- Repo actual `pab1s/pmmlruntime` `chore/migration-plan` (8 crate placeholders) -> `feat/v1-tree-*` worktrees

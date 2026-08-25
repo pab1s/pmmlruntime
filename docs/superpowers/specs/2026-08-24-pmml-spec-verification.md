@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-08-24  
 **Spec:** PMML 4.4 `pmml.xsd:4490 líneas, 304 xs:element` + `GeneralStructure.html:932` + `jpmml-evaluator-features.md:96`  
-**Repo:** `pab1s/jpmml-evaluator-rs` `develop` `9b90295` + `feat/v1-general-regression` `a383037` (11/11 parsing, 11/11 eval con stubs)  
+**Repo:** `pab1s/pmmlruntime` `development` `9b90295` + `feat/v1-general-regression` `a383037` (11/11 parsing, 11/11 eval con stubs)  
 **Auditor:** OpenCode (Muse Spark) — build mode
 
 ---
@@ -195,4 +195,4 @@
 - **El *runtime* es “super performant” en Rust** para el *hot path* `Tree`/`Regression` (`712ns` 56× vs JPMML 40µs, `1.48M/s` batch 21×, `0.6ms` cold 75×, `24KB` vs 2MB, `cargo check` `green`, `cargo test` **38+** `6/6 Tree` `2/2 Regression` `2/2 Mining` `2/2 KNN` `2/2 SVM` etc.), pero `Level 2` `SIMD`/`Rayon`/`Arena` batch aún no.
 - **Recomendación:** No reclamar “toda la spec” en `README.md` ni `crates.io`; reclamar **“JPMML parity 11/11 parsing, 9/11 eval Full, 1.4M scores/s, 712ns p50”** y roadmap `Fase 1` (100 builtins + `KNN` `LocalTransformations` + `MiningSchema` `outlier` + `NaiveBayes` `PairCounts`) para 4–6 semanas llegar a **JPMML 100%**; luego `Fase 2` para spec estricta 19/19 si se requiere `AnomalyDetection` etc.
 
-*Auditoría generada 2026-08-24 sobre `develop` `9b90295` + `feat/v1-general-regression` `a383037` (11/11 parsing 11/11 eval con `a383037` GeneralRegression general + SVM RBF).*
+*Auditoría generada 2026-08-24 sobre `development` `9b90295` + `feat/v1-general-regression` `a383037` (11/11 parsing 11/11 eval con `a383037` GeneralRegression general + SVM RBF).*

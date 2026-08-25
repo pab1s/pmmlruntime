@@ -1,9 +1,9 @@
 # Implementation Plan — What Is Left (post-v1 Tree)
 
-> **For: new agent starting from `develop`**
+> **For: new agent starting from `development`**
 > **Date:** 2026-08-24
-> **Repo:** `pab1s/jpmml-evaluator-rs` (private, gitflow `main ← develop ← feat/*`)
-> **Current:** `develop@3a6ffe3` — 11.3k LOC Rust, 9 crates, **45/45 bench fixtures load+run pass**, `712 ns` single Tree, `1.48M rows/s` batch
+> **Repo:** `pab1s/pmmlruntime` (private, gitflow `main ← development ← feat/*`)
+> **Current:** `development@3a6ffe3` — 11.3k LOC Rust, 9 crates, **45/45 bench fixtures load+run pass**, `712 ns` single Tree, `1.48M rows/s` batch
 > **Vault:** `~/Projects/jpmml-migration/` (spec, upstream, bench)
 > **Prior plans:** `docs/PLAN.md` (Bun strategy), `.agents/plans/2026-08-23-pmml-runtime-v1-tree-plan.md` (v1 Tree shard)
 
@@ -13,7 +13,7 @@
 
 ```sh
 cd ~/Projects/jpmml-migration/repo
-git fetch --all && git checkout develop && git pull
+git fetch --all && git checkout development && git pull
 cat docs/IMPLEMENTATION_PLAN.md          # you are here
 cat docs/BENCHMARK.md                    # 56× vs Java baseline
 cat .agents/plans/2026-08-23-pmml-runtime-v1-tree-plan.md  # prior shard
@@ -24,8 +24,8 @@ cargo bench --manifest-path Cargo.toml -p pmml-bench --bench scoring    # => 712
 **Scope of this doc:** everything *not yet done* for **full JPMML parity + ONNX-grade runtime**. No need to redo Tree. Focus on gaps below, in priority order. Each task has branch name, files, gate.
 
 **Gitflow you must follow** (already in `CONTRIBUTING.md`):
-- `main` protected, `develop` integration
-- `feat/<slug>` per task, PR → `develop` (draft until gate green)
+- `main` protected, `development` integration
+- `feat/<slug>` per task, PR → `development` (draft until gate green)
 - Commit per file, `git commit <file>` not `stash`
 - Branch naming in §4
 
@@ -33,7 +33,7 @@ cargo bench --manifest-path Cargo.toml -p pmml-bench --bench scoring    # => 712
 
 ## 1. Gap Analysis — Done vs Left
 
-### 1.1 Done (verified on `develop`)
+### 1.1 Done (verified on `development`)
 
 | Area | Evidence | Gate |
 |---|---|---|
@@ -67,11 +67,11 @@ Loc total: `11321` Rust (excl. `target`).
 
 ## 2. Phased Backlog — Branches & Gates
 
-Use **8 agents** per prior plan's 4 worktrees: `.worktrees/{batched,python,ffi,transform}`. Each phase = branch off `develop`, PR back, gate = `cargo test` + `criterion` + `all_fixtures`.
+Use **8 agents** per prior plan's 4 worktrees: `.worktrees/{batched,python,ffi,transform}`. Each phase = branch off `development`, PR back, gate = `cargo test` + `criterion` + `all_fixtures`.
 
 ### Phase A — Batched Provider (3d, WT `batched`, agent A0)
 
-**Branch:** `feat/batched-arrow` off `develop`
+**Branch:** `feat/batched-arrow` off `development`
 
 | Task | Files | Do | Gate |
 |---|---|---|---|
@@ -91,7 +91,7 @@ Use **8 agents** per prior plan's 4 worktrees: `.worktrees/{batched,python,ffi,t
 |---|---|---|---|
 | B1 | `crates/pmml-python/Cargo.toml` | Enable `pyo3` feature `extension-module`, add `maturin` metadata, set `crate-type = ["cdylib"]` | `maturin develop` builds |
 | B2 | `crates/pmml-python/src/lib.rs` | Implement `#[pyclass] struct PySession { inner: pmml_session::Session }` + `#[pymethods] fn new(path) + fn run(&self, dict) -> PyResult<HashMap>`. Map `pyo3::types::PyDict` ↔ `Value`. Reuse `pmml-session/src/session.rs` no clone per key. | `pytest bench/python/test_parity.py` 6/6 Tree |
-| B3 | `bench/python/` | Copy `all_fixtures_rs` logic to `test_parity.py` using `jpmml_evaluator_rs` wheel, compare to `jpmml_evaluator` (Java) if installed | `45/45` load |
+| B3 | `bench/python/` | Copy `all_fixtures_rs` logic to `test_parity.py` using `pmmlruntime` wheel, compare to `jpmml_evaluator` (Java) if installed | `45/45` load |
 | B4 | `pyproject.toml` | At repo root: `maturin generate-ci github` etc., `pip install -e .` doc | `maturin build --release` |
 
 ### Phase C — FFI Real (2d, WT `ffi`, agent A3)
@@ -143,7 +143,7 @@ Use **8 agents** per prior plan's 4 worktrees: `.worktrees/{batched,python,ffi,t
 ```sh
 # 1. Pull
 git -C ~/Projects/jpmml-migration/repo fetch --all
-git -C ~/Projects/jpmml-migration/repo checkout develop
+git -C ~/Projects/jpmml-migration/repo checkout development
 git -C ~/Projects/jpmml-migration/repo pull
 
 # 2. Verify gates before touching code
@@ -154,13 +154,13 @@ cargo test --manifest-path ~/Projects/jpmml-migration/repo/Cargo.toml -p pmml-se
 git checkout -b feat/batched-arrow   # or feat/python-bindings etc.
 
 # 4. Worktrees for parallel (8 agents max, same as v1 Tree plan)
-git worktree add ../worktrees/batched develop
+git worktree add ../worktrees/batched development
 cargo --manifest-path ../worktrees/batched/Cargo.toml test  # isolated target
 
 # 5. Commit & PR
 git add -A && git commit -m "feat(batched): <task>"
 git push -u origin feat/batched-arrow
-gh pr create --base develop --head feat/batched-arrow --draft --title "feat(batched): Arrow batch" --body "Gate: criterion 3M rows/s"
+gh pr create --base development --head feat/batched-arrow --draft --title "feat(batched): Arrow batch" --body "Gate: criterion 3M rows/s"
 ```
 
 **Rules to copy from `PORTING.md`:**
@@ -210,4 +210,4 @@ gh pr create --base develop --head feat/batched-arrow --draft --title "feat(batc
 
 ---
 
-*Generated 2026-08-24 for `develop@3a6ffe3`. Next agent: start with Phase A `feat/batched-arrow`.*
+*Generated 2026-08-24 for `development@3a6ffe3`. Next agent: start with Phase A `feat/batched-arrow`.*

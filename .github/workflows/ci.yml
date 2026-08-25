@@ -1,9 +1,9 @@
 name: ci
 on:
   push:
-    branches: [main, develop, development, "chore/**", "feat/**", "fix/**"]
+    branches: [main, development, "chore/**", "feat/**", "fix/**"]
   pull_request:
-    branches: [main, develop, development]
+    branches: [main, development]
 jobs:
   fmt:
     runs-on: ubuntu-latest

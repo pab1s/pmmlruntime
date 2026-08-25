@@ -1,10 +1,10 @@
 # JPMML → Rust Migration Plan
 
-> **Private repo:** `pab1s/jpmml-evaluator-rs` (gitflow: `main` ← `develop` ← `chore/migration-plan`)
+> **Private repo:** `pab1s/pmmlruntime` (gitflow: `main` ← `development` ← `chore/migration-plan`)
 > **Upstream:** `jpmml/jpmml-evaluator@v1.7.7` (2026-02-01) + `jpmml/jpmml-model@v1.7.7`
 > **Spec:** PMML 4.4 (Nov 2019, `pmml.xsd:4,490` lines) — last *released*; 4.4.1 announced-not-released
 > **Strategy:** [Bun-in-Rust](https://bun.com/blog/bun-in-rust) (2026-07-08) — mechanical transpilation, 0 tests skipped
-> **Status:** `chore/migration-plan` — plan only, NOT merged to `develop`
+> **Status:** `chore/migration-plan` — plan only, NOT merged to `development`
 
 ---
 
@@ -187,7 +187,7 @@ while (task = queue.pop()) {
 ## 8. Immediate Next Steps
 
 1. Reviewer confirms **spec scope** (4.4 only vs 4.4.1 deltas, 3.x backwards-compat) and **model strategy** (port vs JNI) + **license target**.
-2. Merge this branch after review → `develop` (not `main` yet) — plan becomes living doc.
+2. Merge this branch after review → `development` (not `main` yet) — plan becomes living doc.
 3. Next branch `chore/benchmark-baseline` — Phase 0.
 4. Then `docs/porting-and-ownership` — Phase 1.
 5. Then `feat/skeleton` — Phase 2 and swarm kickoff.
@@ -202,7 +202,7 @@ while (task = queue.pop()) {
 * Bun-in-Rust post: https://bun.com/blog/bun-in-rust
 * Bun strangler plan: https://github.com/oven-sh/bun/blob/eeb4d9fdf6e9a7bdd45388d7f3a03dcf570839ad/docs/rust-rewrite-plan.md
 * Openscoring bench: https://openscoring.io/blog/2021/08/04/benchmarking_sklearn_jpmml_evaluator/
-* This repo: https://github.com/pab1s/jpmml-evaluator-rs (`chore/migration-plan`)
+* This repo: https://github.com/pab1s/pmmlruntime (`chore/migration-plan`)
 
 ---
 
@@ -222,4 +222,4 @@ while (task = queue.pop()) {
 Not supported upstream — keep `UnsupportedMarkupInspector` failing loudly:
 `AnomalyDetectionModel`, `BaselineModel`, `BayesianNetwork`, `GaussianProcess`, `Sequence`, `Text`, `TimeSeries`, `MiningModel/Segmentation/LocalTransformations` (deprecated 4.1), `ClusteringModel/CenterFields` (removed 3.2), `TableLocator` (placeholder), `distributionBased` clustering, `aggregateNodes`/`weightedConfidence` tree, `Coefficients` SVM, `VariableWeight` mining, `confidenceIntervalLower/Upper` output (4.4.1).
 
-*Plan written 2026-08-21 by `chore/migration-plan` — amend via PR to `develop`.*
+*Plan written 2026-08-21 by `chore/migration-plan` — amend via PR to `development`.*
