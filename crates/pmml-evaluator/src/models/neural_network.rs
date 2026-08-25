@@ -1,5 +1,5 @@
 use pmml_core::Value;
-use pmml_ir::ir::{NeuralNetworkIr, NeuronIr};
+use pmml_ir::ir::NeuralNetworkIr;
 
 fn activation(func: &str, x: f64) -> f64 {
     match func.to_lowercase().as_str() {

@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+simd = ["dep:wide"]
+
 [dependencies]
 pmml-core = { path = "../pmml-core" }
 pmml-ir = { path = "../pmml-ir" }
@@ -13,3 +17,6 @@ smallvec = { workspace = true }
 memchr = { workspace = true }
 libm = { workspace = true }
 statrs = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+wide = { workspace = true, optional = true }

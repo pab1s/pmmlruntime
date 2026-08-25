@@ -1,5 +1,5 @@
 use pmml_core::Value;
-use pmml_ir::ir::{ClusterIr, ClusteringIr};
+use pmml_ir::ir::ClusteringIr;
 
 pub fn evaluate_clustering(clustering: &ClusteringIr, values: &[Value]) -> Value {
     if clustering.clusters.is_empty() || clustering.clustering_fields.is_empty() {

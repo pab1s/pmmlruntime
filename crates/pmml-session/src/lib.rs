@@ -1,4 +1,7 @@
+pub mod arrow;
+pub mod batch;
 pub mod env;
+pub mod input;
 pub mod options;
 pub mod providers;
 pub mod session;

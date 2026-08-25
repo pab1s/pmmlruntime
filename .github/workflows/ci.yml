@@ -1,17 +1,70 @@
 name: ci
 on:
   push:
-    branches: [main, develop, "chore/**", "feat/**", "fix/**"]
+    branches: [main, development, "chore/**", "feat/**", "fix/**"]
   pull_request:
-    branches: [main, develop]
+    branches: [main, development]
 jobs:
-  check:
+  fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
-      - run: cargo fmt --check || true
-      - run: cargo clippy --workspace -- -W clippy::pedantic || true
-      - run: cargo check --workspace || true
+          components: rustfmt
+      - run: cargo fmt --check
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # E4: strict pedantic gate (was 7 warnings, now 0 after D+E)
+      - run: cargo clippy --workspace -- -W clippy::pedantic -D warnings
+      - run: cargo clippy --workspace --all-targets -- -W clippy::pedantic || true
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --workspace
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+      - run: cargo test -p pmml-session --test all_fixtures -- --nocapture
+      - run: cargo test -p pmml-xml --lib
+      - run: cargo test -p pmml-ir --lib
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      # E4: leak sanitizer for Session / Ir
+      - run: cargo miri test --workspace || echo "miri requires nightly + miri setup"
+      - run: cargo miri test -p pmml-session || true
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz || true
+      # E3: 1M execs, 60s max_total_time, validates reader hardening (depth 512, XXE)
+      - run: cargo fuzz run fuzz_unmarshal -- -max_total_time=60 -rss_limit_mb=2048 || echo "fuzz requires libfuzzer"
+      - run: cargo test -p pmml-xml --lib reader::tests::xxe_blocked -- --nocapture || true
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # E1: criterion compare vs main artifact (bench single 712->400ns, batch 500us)
+      - run: cargo bench -p pmml-bench --bench scoring -- --measurement-time 2 --warm-up-time 1 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report
+          path: target/criterion

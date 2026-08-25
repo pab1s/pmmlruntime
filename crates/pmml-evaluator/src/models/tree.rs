@@ -1,152 +1,9 @@
-//! TreeModel evaluation — flat Node traversal with ONNX-style branchless predicates.
+//! TreeModel evaluation — flat Node traversal with branchless predicates.
 
-use pmml_core::{FieldId, SymbolId, Value};
-use pmml_ir::ir::{
-    CompoundOperator, MissingValueStrategy, NoTrueChildStrategy, NodeIr, PredicateIr,
-    SimpleOperator, TreeIr,
-};
+use pmml_core::Value;
+use pmml_ir::ir::{MissingValueStrategy, NoTrueChildStrategy, TreeIr};
 
-fn eval_simple(
-    field: FieldId,
-    operator: SimpleOperator,
-    value: &pmml_ir::ir::SymbolIdOrContinuous,
-    values: &[Value],
-) -> bool {
-    let idx = field.as_usize();
-    let actual = if idx < values.len() {
-        values[idx]
-    } else {
-        Value::Missing
-    };
-    match operator {
-        SimpleOperator::IsMissing => actual.is_missing(),
-        SimpleOperator::IsNotMissing => !actual.is_missing(),
-        _ => {
-            if actual.is_missing() {
-                return false; // missing fails for other operators unless isMissing
-            }
-            match (actual, value) {
-                (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Continuous(b)) => {
-                    match operator {
-                        SimpleOperator::Equal => (a - b).abs() < 1e-9,
-                        SimpleOperator::NotEqual => (a - b).abs() >= 1e-9,
-                        SimpleOperator::LessThan => a < *b,
-                        SimpleOperator::LessOrEqual => a <= *b,
-                        SimpleOperator::GreaterThan => a > *b,
-                        SimpleOperator::GreaterOrEqual => a >= *b,
-                        _ => false,
-                    }
-                }
-                (Value::Discrete(sid), pmml_ir::ir::SymbolIdOrContinuous::Symbol(s)) => {
-                    match operator {
-                        SimpleOperator::Equal => sid == *s,
-                        SimpleOperator::NotEqual => sid != *s,
-                        _ => false, // for discrete, only equal/notEqual make sense; treat others as false
-                    }
-                }
-                (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Symbol(_)) => {
-                    // type mismatch: try interpret symbol as f64? For now false
-                    let _ = a;
-                    false
-                }
-                (Value::Discrete(_), pmml_ir::ir::SymbolIdOrContinuous::Continuous(_)) => false,
-                _ => false,
-            }
-        }
-    }
-}
-
-fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
-    match pred {
-        PredicateIr::True => true,
-        PredicateIr::Simple {
-            field,
-            operator,
-            value,
-        } => eval_simple(*field, *operator, value, values),
-        PredicateIr::SimpleSet {
-            field,
-            is_in,
-            array,
-        } => {
-            let idx = field.as_usize();
-            let actual = if idx < values.len() {
-                values[idx]
-            } else {
-                Value::Missing
-            };
-            if actual.is_missing() {
-                return false;
-            }
-            let mut found = false;
-            for v in array {
-                let matches = match (actual, v) {
-                    (Value::Discrete(sid), pmml_ir::ir::SymbolIdOrContinuous::Symbol(s)) => {
-                        sid == *s
-                    }
-                    (Value::Continuous(a), pmml_ir::ir::SymbolIdOrContinuous::Continuous(b)) => {
-                        (a - b).abs() < 1e-9
-                    }
-                    _ => false,
-                };
-                if matches {
-                    found = true;
-                    break;
-                }
-            }
-            if *is_in {
-                found
-            } else {
-                !found
-            }
-        }
-        PredicateIr::Compound {
-            operator,
-            predicates,
-        } => match operator {
-            CompoundOperator::And => predicates.iter().all(|p| eval_predicate(p, values)),
-            CompoundOperator::Or => predicates.iter().any(|p| eval_predicate(p, values)),
-            CompoundOperator::Xor => {
-                let mut true_count = 0;
-                for p in predicates {
-                    if eval_predicate(p, values) {
-                        true_count += 1;
-                    }
-                }
-                true_count == 1
-            }
-            CompoundOperator::Surrogate => {
-                // Surrogate: evaluate predicates in order, first whose field is not missing
-                // For v1 we approximate: return first predicate where field not missing and predicate true.
-                // If none evaluatable, false.
-                for p in predicates {
-                    // Check if predicate's field is missing — need to extract field
-                    let field_missing = match p {
-                        PredicateIr::Simple { field, .. } => {
-                            let idx = field.as_usize();
-                            idx < values.len() && values[idx].is_missing()
-                        }
-                        PredicateIr::SimpleSet { field, .. } => {
-                            let idx = field.as_usize();
-                            idx < values.len() && values[idx].is_missing()
-                        }
-                        _ => false,
-                    };
-                    if field_missing {
-                        continue;
-                    }
-                    if eval_predicate(p, values) {
-                        return true;
-                    }
-                    // if first non-missing predicate is false, surrogate false (don't try next?)
-                    // Actually JPMML tries next surrogate if primary fails due to missing? We'll just false for now.
-                    return false;
-                }
-                false
-            }
-        },
-    }
-}
+use crate::predicate::eval_predicate;
 
 fn score_to_value(score: &Option<pmml_ir::ir::SymbolIdOrContinuous>) -> Option<Value> {
     match score {
@@ -158,44 +15,65 @@ fn score_to_value(score: &Option<pmml_ir::ir::SymbolIdOrContinuous>) -> Option<V
 }
 
 /// Evaluate TreeIr given flat `values` array.
-/// Returns predicted Value (Discrete for classification, Continuous for regression).
+/// Iterative, no recursion, branch-friendly.
+/// Handles missingValueStrategy (LastPrediction, NullPrediction, DefaultChild) and noTrueChildStrategy.
+/// DefaultChild uses NodeIr.default_child index when no child predicate is true.
 pub fn evaluate_tree(tree: &TreeIr, values: &[Value]) -> Value {
     if tree.nodes.is_empty() {
         return Value::Missing;
     }
-    evaluate_node(0, tree, values, None)
-}
-
-fn evaluate_node(idx: usize, tree: &TreeIr, values: &[Value], last_score: Option<Value>) -> Value {
-    let node = &tree.nodes[idx];
-    let current_score = score_to_value(&node.score).or(last_score);
-
-    // Find true child (first where predicate true)
-    let mut true_child: Option<usize> = None;
-    for &child_idx in &node.children {
-        let child = &tree.nodes[child_idx];
-        if eval_predicate(&child.predicate, values) {
-            true_child = Some(child_idx);
-            break;
-        }
-    }
-
-    if let Some(child_idx) = true_child {
-        // recurse, current becomes last_score for deeper
-        evaluate_node(child_idx, tree, values, current_score)
-    } else {
-        // No true child
-        if !node.children.is_empty() {
-            // has children but none matched
-            match tree.no_true_child_strategy {
-                NoTrueChildStrategy::ReturnLastPrediction => {
-                    current_score.unwrap_or(Value::Missing)
-                }
-                NoTrueChildStrategy::ReturnNullPrediction => Value::Missing,
+    let mut idx = 0usize;
+    let mut last: Option<Value> = None;
+    loop {
+        let node = &tree.nodes[idx];
+        let cur = score_to_value(&node.score).or(last);
+        // Find true child (first where predicate true) — linear scan, early exit
+        let mut next: Option<usize> = None;
+        for &child_idx in &node.children {
+            let child = &tree.nodes[child_idx];
+            if eval_predicate(&child.predicate, values) {
+                next = Some(child_idx);
+                break;
             }
+        }
+        if let Some(n) = next {
+            last = cur;
+            idx = n;
+            continue;
         } else {
-            // leaf
-            current_score.unwrap_or(Value::Missing)
+            if !node.children.is_empty() {
+                // No true child — handle missingValueStrategy for DefaultChild
+                if tree.missing_value_strategy == MissingValueStrategy::DefaultChild {
+                    if let Some(dc_idx) = node.default_child {
+                        if node.children.contains(&dc_idx) {
+                            last = cur;
+                            idx = dc_idx;
+                            continue;
+                        }
+                    }
+                }
+                if tree.missing_value_strategy == MissingValueStrategy::LastPrediction {
+                    return cur.unwrap_or(Value::Missing);
+                }
+                if tree.missing_value_strategy == MissingValueStrategy::NullPrediction
+                    || tree.missing_value_strategy == MissingValueStrategy::None
+                {
+                    match tree.no_true_child_strategy {
+                        NoTrueChildStrategy::ReturnLastPrediction => {
+                            return cur.unwrap_or(Value::Missing)
+                        }
+                        NoTrueChildStrategy::ReturnNullPrediction => return Value::Missing,
+                    }
+                }
+                match tree.no_true_child_strategy {
+                    NoTrueChildStrategy::ReturnLastPrediction => {
+                        return cur.unwrap_or(Value::Missing)
+                    }
+                    NoTrueChildStrategy::ReturnNullPrediction => return Value::Missing,
+                }
+            } else {
+                return cur.unwrap_or(Value::Missing);
+            }
         }
     }
 }
@@ -219,6 +97,7 @@ mod tests {
                     score: Some(SymbolIdOrContinuous::Symbol(SymbolId(0))), // A placeholder
                     predicate: PredicateIr::True,
                     children: vec![1, 2],
+                    default_child: None,
                     score_distributions: vec![],
                 },
                 NodeIr {
@@ -230,6 +109,7 @@ mod tests {
                         value: SymbolIdOrContinuous::Continuous(2.45),
                     },
                     children: vec![],
+                    default_child: None,
                     score_distributions: vec![],
                 },
                 NodeIr {
@@ -241,6 +121,7 @@ mod tests {
                         value: SymbolIdOrContinuous::Continuous(2.45),
                     },
                     children: vec![],
+                    default_child: None,
                     score_distributions: vec![],
                 },
             ],

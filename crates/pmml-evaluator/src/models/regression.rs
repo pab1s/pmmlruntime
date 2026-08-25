@@ -1,5 +1,5 @@
 use pmml_core::Value;
-use pmml_ir::ir::{RegressionIr, RegressionNormalizationMethod, SymbolIdOrContinuous};
+use pmml_ir::ir::{RegressionIr, RegressionNormalizationMethod};
 
 /// Evaluate regression model given values array.
 /// Returns predicted Value (Continuous for regression, Discrete for classification).
@@ -88,7 +88,7 @@ pub fn evaluate_regression(reg: &RegressionIr, values: &[Value]) -> Value {
     }
 }
 
-fn apply_normalization(score: f64, method: RegressionNormalizationMethod) -> f64 {
+pub(crate) fn apply_normalization(score: f64, method: RegressionNormalizationMethod) -> f64 {
     match method {
         RegressionNormalizationMethod::None => score,
         RegressionNormalizationMethod::Softmax => 1.0 / (1.0 + (-score).exp()), // simplified sigmoid for single
