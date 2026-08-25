@@ -1,37 +1,25 @@
-//! `pmmlruntime` — single-crate facade over the workspace (re-exports `pmml-core`, `pmml-session`, `pmml-ir`, `pmml-xml`, `pmml-evaluator`).
+//! `pmmlruntime` — PMML 4.4 runtime in a single crate (inspired by JPMML + ONNX Runtime).
 //!
-//! The workspace is virtual (`[workspace]` without `[package]` at the root), so `cargo doc --workspace`
-//! generates 9 separate crates (`pmml_core`, `pmml_session`, …) instead of a single `pmmlruntime`.
-//! This crate exists so `cargo doc -p pmmlruntime` and `docs.rs` show **one** entry point for the full public API.
+//! Previously a 9-crate workspace (`pmml-core`, `pmml-xml`, `pmml-ir`, `pmml-evaluator`, `pmml-session`, …).
+//! Now a **single crate** with modules `base`, `xml`, `ir`, `engine`, `session`, `ffi`, `python` —
+//! one `cargo add pmmlruntime` and one `cargo doc -p pmmlruntime` page.
 //!
-//! # Why 9 crates
+//! # Modules
 //!
-//! - `pmml-core` (hot types `Value`/`FieldId`/`DataType`), `pmml-xml` (`quick-xml` cold 5758 LOC), `pmml-ir` (optimized `Ir` `Arc`), `pmml-evaluator` (12 pure models), `pmml-session` (`PmmlEnv`+`Session`+`Batch` ONNX), `pmml-ffi` (C ABI), `pmml-python` (pyo3), `pmml-cli` (bin), `pmml-bench` (criterion).
-//! - Splitting cold from hot allows `cargo doc -p pmml-core` without XML/IR and per-crate `cargo check` (prevents Bun-style 16k cycles).
+//! - [`base`] — zero-cost types `Value`/`FieldId`/`DataType`/`PmmlError`, arena `BumpArena` (hot path foundation, no XML/IR).
+//! - [`xml`] — hardened `quick-xml` 0.37 → `RawPmml` (cold, `MAX_DEPTH 512`, `100 MB`, XXE blocked).
+//! - [`ir`] — optimized `Ir` (`Arc` immutable, `Vec<NodeIr>` flat, `DerivedFieldIr` DAG `Vec<Op>`), `Interner` (cold `Rodeo`).
+//! - [`engine`] — pure evaluation on `&[Value]` (12 models: `Tree`/`Regression`/`Mining`/`Scorecard`/…+ `vm` bytecode, `simd` `wide` `f64x4`).
+//! - [`session`] — ONNX-style `Session` API (`PmmlEnv` + `Session` + `Batch` + `ExecutionProvider` `CpuSerial`/`CpuBatched` `rayon`).
+//! - [`ffi`] — C ABI `PmmlEnv`/`PmmlSession` (`onnxruntime_c_api.h` parity, `Safety` contracts).
+//! - [`python`] — `pyo3 0.22` placeholder (`python` feature, future `PySession`).
 //!
-//! # What it re-exports
-//!
-//! - `core` → [`pmml_core`] (arena, `FieldId`/`SymbolId`/`Value`, `DataType`/`OpType`/`ResultFeature`, `PmmlError`)
-//! - `xml` → [`pmml_xml`] (`unmarshal`, `RawPmml`, `PmmlReader`)
-//! - `ir` → [`pmml_ir`] (`Ir`, `Interner`, `lower`, `verify`)
-//! - `evaluator` → [`pmml_evaluator`] (`evaluate_tree`, `apply_mining_schema`, `simd`)
-//! - `session` → [`pmml_session`] (`PmmlEnv`, `Session`, `SessionOptions`, `Batch`, `ExecutionProviderKind` — **primary API**)
-//!
-//! # How to view the unified docs
-//!
-//! ```sh
-//! cargo doc -p pmmlruntime --no-deps --open   # opens target/doc/pmmlruntime/index.html
-//! cargo doc -p pmmlruntime --open              # with deps (quick-xml, arrow, rayon)
-//! ```
-//! Also: `cargo doc --workspace --no-deps` generates all 9, and `target/doc/index.html` lists them.
-//! `docs/ARCHITECTURE.md` explains the `bytes→RawPmml→Ir→Session::run(Value[FieldId])` flow.
-//!
-//! # Minimal example (via the facade)
+//! # Primary API — `session`
 //!
 //! ```rust
 //! use std::collections::HashMap;
 //! use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-//! use pmmlruntime::core::Value;
+//! use pmmlruntime::base::Value;
 //!
 //! let env = PmmlEnv::new();
 //! let xml = br#"
@@ -49,23 +37,52 @@
 //!
 //! # Feature flags
 //!
-//! - `simd` — enables `wide` `f64x4` in `pmml-session`/`pmml-evaluator` (`cargo doc -p pmmlruntime --features simd`).
-//! - `python` — reserved for `pyo3` (does not link `libpython` without the feature).
+//! - `simd` — enables `wide` `f64x4` batch for `engine` + `session` (`cargo doc --features simd`).
+//! - `python` — enables `pyo3` extension-module (otherwise no `libpython` link).
 //!
-//! [`pmml_core`]: pmml_core
-//! [`pmml_xml`]: pmml_xml
-//! [`pmml_ir`]: pmml_ir
-//! [`pmml_evaluator`]: pmml_evaluator
-//! [`pmml_session`]: pmml_session
+//! # Architecture
+//!
+//! See `docs/ARCHITECTURE.md` for the `bytes→RawPmml→Ir→Session::run(Value[FieldId])` flow, ownership `Arc<Ir>`,
+//! concurrency `rayon`, and `BumpArena` vs `LoadingCache` tradeoffs.
 
-pub use pmml_core as core;
-pub use pmml_evaluator as evaluator;
-pub use pmml_ir as ir;
-pub use pmml_session as session;
-pub use pmml_xml as xml;
+#![allow(clippy::pedantic, clippy::nursery)]
 
-/// Facade version (workspace `0.1.0`).
+pub mod base;
+pub mod engine;
+pub mod ffi;
+pub mod ir;
+pub mod python;
+pub mod session;
+pub mod xml;
+
+// Re-exports for ergonomic `use pmmlruntime::{Session, Value, PmmlEnv}` and backwards compat with `pmml_*` paths.
+pub use base::{FieldId, PmmlError, Result, SymbolId, Value};
+pub use session::{PmmlEnv, Session, SessionOptions};
+
+/// Crate version (workspace `0.1.0`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Placeholder so `cargo doc` does not flag the crate as empty when built with `--no-deps` and no features.
+/// Placeholder so `cargo doc` does not flag the crate as empty.
 pub fn placeholder() {}
+
+// Keep `pmml_*` aliases for code that still uses `crate::base::` etc. during migration — will be removed in 0.2.
+#[doc(hidden)]
+pub mod pmml_core {
+    pub use crate::base::*;
+}
+#[doc(hidden)]
+pub mod pmml_xml {
+    pub use crate::xml::*;
+}
+#[doc(hidden)]
+pub mod pmml_ir {
+    pub use crate::ir::*;
+}
+#[doc(hidden)]
+pub mod pmml_evaluator {
+    pub use crate::engine::*;
+}
+#[doc(hidden)]
+pub mod pmml_session {
+    pub use crate::session::*;
+}

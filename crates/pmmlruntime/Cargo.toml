@@ -6,19 +6,39 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Rust port of JPMML Evaluator — PMML 4.4 runtime (single-crate facade)"
+description = "Rust port of JPMML Evaluator — PMML 4.4 runtime (single crate, JPMML + ONNX Runtime)"
 keywords = ["pmml", "jpmml", "onnx", "scoring", "machine-learning"]
 categories = ["science"]
 
 [dependencies]
-pmml-core = { path = "../pmml-core" }
-pmml-xml = { path = "../pmml-xml" }
-pmml-ir = { path = "../pmml-ir" }
-pmml-evaluator = { path = "../pmml-evaluator" }
-pmml-session = { path = "../pmml-session" }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+clap = { workspace = true }
+indexmap = { workspace = true }
+lasso = { workspace = true }
+bumpalo = { workspace = true }
+smallvec = { workspace = true }
+ahash = { workspace = true }
+memchr = { workspace = true }
+parking_lot = { workspace = true }
+arrow = { workspace = true }
+rayon = { workspace = true }
+statrs = { workspace = true }
+libm = { workspace = true }
+ndarray = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+criterion = { workspace = true }
+insta = { workspace = true }
+proptest = { workspace = true }
+pyo3 = { workspace = true, optional = true }
+wide = { workspace = true, optional = true }
 
 [features]
 default = []
-simd = ["pmml-session/simd", "pmml-evaluator/simd"]
+simd = ["dep:wide"]
+python = ["dep:pyo3"]

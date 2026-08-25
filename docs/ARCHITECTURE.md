@@ -1,31 +1,40 @@
 # Architecture — pmmlruntime
 
-> `0.1.0` · 9 crates · `13,642` LOC Rust · `pmml.xsd:4,490` · `BENCHMARK.md` tables for 45 fixtures
+> `0.1.0` · single crate `pmmlruntime` · `13,642` LOC Rust · `pmml.xsd:4,490` · `BENCHMARK.md` tables for 45 fixtures
 
 This document is the contributor-facing internals. For API contracts see `cargo doc --open`; for porting map see `docs/PORTING.md` + `docs/OWNERSHIP.tsv`.
 
-## 1. Crate topology — why 9 crates (mirrors Maven, prevents Bun's 16k cycle errors)
+## 1. Crate topology — single crate with modules (was 9 crates, now merged ONNX Runtime-style)
+
+Previously a 9-crate workspace (`pmml-core`, `pmml-xml`, `pmml-ir`, `pmml-evaluator`, `pmml-session`, …).
+Now a **single crate** `pmmlruntime` with modules — one `cargo add pmmlruntime` and one `cargo doc -p pmmlruntime` page:
 
 ```
 pmmlruntime/
-├─ pmml-core        # zero-cost types, arena, errors. No XML, no IR. Hot path foundation.
-├─ pmml-xml         # Hardened quick-xml 0.37 → RawPmml (5758 LOC, 1:1 with pmml.xsd). Cold only.
-├─ pmml-ir          # Lower RawPmml → Ir (optimized). Interner (Rodeo cold) + verify (UnsupportedMarkup).
-├─ pmml-evaluator   # Pure evaluation on &[Value]: mining_schema, 12 models, predicate, output, targets, transform/vm, simd.
-├─ pmml-session     # ONNX-style Session API: PmmlEnv + Session + Batch + ExecutionProvider. Primary user API.
-├─ pmml-ffi         # C ABI (onnxruntime_c_api.h parity): PmmlEnv/Session opaque, PmmlCreate/Release.
-├─ pmml-python      # pyo3 0.22 extension-module (future PySession). Stub hello() now.
-├─ pmml-cli         # clap CLI: pmml-runtime inspect/run/verify.
-└─ pmml-bench       # criterion + large_trial (10k/100k/1M/10M Arrow scaling).
+├─ base        # zero-cost types, arena, errors. No XML, no IR. Hot path foundation (was pmml-core).
+├─ xml         # Hardened quick-xml 0.37 → RawPmml (5758 LOC, 1:1 with pmml.xsd). Cold only (was pmml-xml).
+├─ ir          # Lower RawPmml → Ir (optimized). Interner (Rodeo cold) + verify (was pmml-ir).
+├─ engine      # Pure evaluation on &[Value]: mining_schema, 12 models, predicate, output, targets, transform/vm, simd (was pmml-evaluator).
+├─ session     # ONNX-style Session API: PmmlEnv + Session + Batch + ExecutionProvider. Primary user API (was pmml-session).
+├─ ffi         # C ABI (onnxruntime_c_api.h parity): PmmlEnv/Session opaque, PmmlCreate/Release (was pmml-ffi).
+├─ python      # pyo3 0.22 extension-module (future PySession). Stub now (was pmml-python).
+├─ cli         # clap CLI: pmml-runtime inspect/run/verify (was pmml-cli, now binary in workspace).
+└─ bench       # criterion + large_trial (10k/100k/1M/10M Arrow scaling) (was pmml-bench).
 ```
 
-Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=MIT OR Apache-2.0`.
+```
+use pmmlruntime::base::Value;
+use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+// re-exports also at crate root: use pmmlruntime::{Value, Session, PmmlEnv};
+```
+
+Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=MIT OR Apache-2.0`, `members = ["crates/pmmlruntime"]`.
 
 ## 2. Data & control flow
 
 ```
                          cold                                          hot
-  bytes: &[u8] ──► pmml-xml::unmarshal ──► RawPmml ──► pmml-ir::lower ──► Ir ──► Session::from_ir ──► Arc<Ir>
+  bytes: &[u8] ──► xml::unmarshal ──► RawPmml ──► ir::lower ──► Ir ──► Session::from_ir ──► Arc<Ir>
       │                  │                    │              │             │            │
       │  quick-xml 0.37  │  DTD/XXE blocked  │ 304 elem    │ Rodeo cold  │ verify_ir  │ Arc clone not deep copy
       │  MAX_DEPTH 512   │  100 MB cap       │ 12 models   │ FieldId u32 │            │ AHashMap<String,FieldId> hot
@@ -83,7 +92,7 @@ See `docs/OWNERSHIP.tsv` for per-field `struct field type java_owner rust_owner 
 - `ExecutionProvider::eval_batch` is trait object `Send+Sync` + `Sync` for `rayon::par_iter`. `CpuSerial` loops sequentially; `CpuBatched` shards via `par_chunks(256)` (with `with_min_len 256`-like logic). Threshold `<256` (`batch.len() < 256 || threads*4`) falls back to serial to avoid spawn cost (~100µs > 400ns work per row). See `BENCHMARK.md §3`.
 - `rayon` pool is per-`PmmlEnv` future (currently global pool).
 - `BumpArena` is `Send` so it can be moved into rayon threads; never shared `&self` across threads without `&mut`. Verified `unsafe impl Send`.
-- `LAG_BUFFER` in `pmml-evaluator::transform::vm` is `thread_local!` `RefCell<HashMap<FieldId, VecDeque<Value>>>` cap `128`, so `Lag` builtin is per-thread, not cross-batch shared (sequence test uses single thread).
+- `LAG_BUFFER` in `engine::transform::vm` is `thread_local!` `RefCell<HashMap<FieldId, VecDeque<Value>>>` cap `128`, so `Lag` builtin is per-thread, not cross-batch shared (sequence test uses single thread).
 
 ## 5. Storage & serialization boundaries
 
@@ -118,9 +127,9 @@ Gate `cargo bench -p pmml-bench -- --sample-size 30` must be `≤800 ns` single,
 
 ## 8. Extension points
 
-- **New model**: add `ModelIr::New(NewIr)` + `RawNewModel` in `pmml-xml` `unmarshal`, `lower` arm, `pmml-evaluator/models/new.rs` `evaluate_new`, match in `Session::from_ir` target_name + output_fields, provider `eval_row` dispatch, `verify_raw` not `UnsupportedMarkup`.
-- **New `BuiltinId`**: add variant to `pmml-ir::ir::BuiltinId`, `pmml-evaluator::transform::builtin::builtin_by_name` alias, `eval_builtin` arm (`statrs`/`libm`/`chrono`), `vm::eval` `CallBuiltin` arity.
-- **New `ResultFeature`**: add to `pmml-core::field::ResultFeature` `FromStr`/`is_unsupported`, `pmml-evaluator::output::build_output_with_context` match, `Session::run` output mapping for `Scorecard` probabilities.
+- **New model**: add `ModelIr::New(NewIr)` + `RawNewModel` in `xml` `unmarshal`, `lower` arm, `engine/models/new.rs` `evaluate_new`, match in `Session::from_ir` target_name + output_fields, provider `eval_row` dispatch, `verify_raw` not `UnsupportedMarkup`.
+- **New `BuiltinId`**: add variant to `ir::ir::BuiltinId`, `engine::transform::builtin::builtin_by_name` alias, `eval_builtin` arm (`statrs`/`libm`/`chrono`), `vm::eval` `CallBuiltin` arity.
+- **New `ResultFeature`**: add to `base::field::ResultFeature` `FromStr`/`is_unsupported`, `engine::output::build_output_with_context` match, `Session::run` output mapping for `Scorecard` probabilities.
 - **New `ExecutionProvider`**: implement `trait ExecutionProvider { eval_row, eval_batch, preferred_format }`, register in `Session::from_ir` `match options.execution_provider`, feature-flag `crate::batch::Batch` sharding.
 
 ## 9. Trade-offs & rejected alternatives
@@ -135,5 +144,6 @@ Gate `cargo bench -p pmml-bench -- --sample-size 30` must be `≤800 ns` single,
 | Batch | `Batch` trait `RowMajor Vec<HashMap>` + `Columnar RecordBatch` (provider picks) | Only Arrow | Single row `HashMap` 402ns < Arrow >1µs + schema agreement; `Collection`/`List` (Association) and Python `dict` map naturally to `HashMap` |
 | Model strategy | Option A port `pmml-model` to Rust (this repo) | Option B JNI bridge `jni` crate | Removes JVM forever, single binary, WASM-ready, MIT/Apache-2.0 not AGPL; JNI keeps XML correctness for free but needs JVM at runtime |
 | License | `MIT OR Apache-2.0` (workspace) | `TBD` (README old) + upstream `AGPL-3.0` dual BSD | Transpilation ≠ relicense; green-field port can be MIT/Apache-2.0 before first code commit (now decided) |
+| Crate layout | single `pmmlruntime` with `base/xml/ir/engine/session` modules | 9-crate workspace `pmml-core/xml/ir/evaluator/session/...` | ONNX Runtime inspiration: one `cargo add pmmlruntime`, one `cargo doc` page, <20k LOC; easier for users, workspace+facade is also valid but `pmml-*` heritage is `jpmml-evaluator` clone; `publish=false` heritage is redundant |
 
 Ver `OWNERSHIP.tsv` for per-field ownership; `BENCHMARK.md` for Java vs Rust tables; `PLAN.md` for Bun anchor `535k Zig` → `50k hand + 20k generated` mechanical.
