@@ -1,4 +1,32 @@
-//! Lower RawPmml -> Ir (optimized).
+//! Lowering `RawPmml` (cold `quick-xml` output) into the optimized [`crate::ir::Ir`].
+//!
+//! This module is the sole producer of [`crate::ir::Ir`]. It interns field
+//! names and discrete values via [`crate::Interner`], flattens `TreeModel`
+//! nodes, compiles `DerivedField` expressions to [`crate::ir::Op`] bytecode,
+//! topologically sorts the `DerivedField` DAG, and lowers all 12 supported
+//! models (`Tree`, `Regression`, `Mining`, `Scorecard`, `Clustering`,
+//! `NaiveBayes`, `NearestNeighbor`, `SupportVectorMachine`, `NeuralNetwork`,
+//! `GeneralRegression`, `Association`, `RuleSet`).
+//!
+//! # Pipeline
+//!
+//! 1. Reject `RawPmml.unsupported_model` with `UnsupportedMarkup`.
+//! 2. Intern `DataDictionary/DataField` and validate `DATATYPE` / `OPTYPE`.
+//! 3. Pool `TransformationDictionary` + all model-local `DerivedField`s and
+//!    topo-sort by field references.
+//! 4. Lower each `DerivedField` expression to bytecode via `lower_expression_to_ops`.
+//! 5. Dispatch to the single top-level model (`TreeModel`, `RegressionModel`, …).
+//! 6. Snapshot `field_names` / `symbol_names` for `Ir`.
+//!
+//! # What belongs here vs `ir`
+//!
+//! - `ir` defines the hot-path data structures.
+//! - `lower` defines the cold transformation and all `Raw* → Ir` conversions.
+//!
+//! # Performance
+//!
+//! Iris `DecisionTreeIris.pmml` (2.9 KB) lowers in ~68µs on the cold path;
+//! cost is dominated by XML parsing and `DerivedField` bytecode generation.
 
 use crate::intern::Interner;
 use crate::ir::*;
@@ -57,7 +85,13 @@ fn parse_simple_operator(op: &str) -> Result<SimpleOperator> {
     })
 }
 
-/// P3: Centralized field interning — replaces 15 duplicated get-or-intern blocks, single source of truth for synthetic field creation
+/// Centralized cold-path field interning for synthetic fields.
+///
+/// When `name` is already in `field_name_to_id`, returns the existing [`FieldId`].
+/// Otherwise interns via `interner.intern_field`, inserts a default [`FieldMeta`]
+/// with the supplied `data_type`/`op_type`, and records it in both maps.
+/// This is the single source of truth for the ~15 call sites that create
+/// synthetic fields (MiningModel `modelChain` probabilities, segment-local fields, etc.).
 #[inline]
 fn get_or_intern_field(
     name: &str,
@@ -1396,6 +1430,51 @@ fn lower_segment_model(
     }
 }
 
+/// Lowers a [`RawPmml`] (from [`pmml_xml::unmarshal()`]) into an optimized [`Ir`].
+///
+/// Assigns stable [`FieldId`] and [`SymbolId`] values, flattens `TreeModel`
+/// nodes to `Vec<NodeIr>` with DFS order, topologically sorts `DerivedField`s,
+/// and compiles expressions to [`Op`] bytecode. Vendor [`ExtensionIr`]s are
+/// stored verbatim and not evaluated.
+///
+/// # Errors
+///
+/// Returns `PmmlError::UnsupportedMarkup` when:
+///
+/// - `raw.unsupported_model` is `Some` (for example `AnomalyDetectionModel`,
+///   `BaselineModel`, `BayesianNetworkModel`, `GaussianProcessModel`,
+///   `SequenceModel`, `TextModel`, `TimeSeriesModel` — see `docs/PLAN.md` §1.5);
+/// - a `DataField/@dataType` is `dateDaysSince[0]` or `dateTimeSecondsSince[0]`;
+/// - no known model is present and `data_dictionary` is empty / unrecognized.
+///
+/// Returns `PmmlError::ParseError` for an unknown `DATATYPE` / `OPTYPE` / predicate operator,
+/// and `PmmlError::MissingField` when a `MiningField` references a missing `DataField`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_xml::unmarshal;
+/// use pmml_ir::{lower, verify_raw, verify_ir};
+///
+/// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
+/// let raw = unmarshal(xml).unwrap();
+/// verify_raw(&raw).unwrap();
+/// let ir = lower(raw).unwrap();
+/// verify_ir(&ir).unwrap();
+/// assert_eq!(ir.data_dictionary.len(), 1);
+/// ```
+///
+/// # Performance
+///
+/// Cold path only. Iris (`DecisionTreeIris.pmml`, 2.9 KB) → `Ir` in ~68µs
+/// (parsing + lowering). Hot-path scoring operates on the produced [`Ir`] without
+/// further allocation.
+///
+/// # Panics
+///
+/// Does not panic on valid PMML. Calls `unwrap` only on internal invariants
+/// that are established earlier in the same function (for example, inserting a
+/// field name into `field_name_to_id` then immediately `get`-ing it).
 pub fn lower(raw: RawPmml) -> Result<Ir> {
     // D1: gracefully handle unsupported models captured during unmarshal (AnomalyDetection, Baseline, etc.)
     // Return clear UnsupportedMarkup instead of generic "no supported model found"
