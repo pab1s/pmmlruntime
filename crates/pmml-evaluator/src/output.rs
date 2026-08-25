@@ -103,13 +103,17 @@ pub fn build_output_with_context(
             }
             ResultFeature::Probability => {
                 if let Some(sid) = of.value {
-                    prob_for_sid(sid).map(Value::Continuous).unwrap_or(Value::Missing)
+                    prob_for_sid(sid)
+                        .map(Value::Continuous)
+                        .unwrap_or(Value::Missing)
                 } else {
                     // If value not specified, return probability of predicted class
                     Value::Continuous(prob_for_predicted())
                 }
             }
-            ResultFeature::Affinity | ResultFeature::ClusterAffinity | ResultFeature::EntityAffinity => {
+            ResultFeature::Affinity
+            | ResultFeature::ClusterAffinity
+            | ResultFeature::EntityAffinity => {
                 // For clustering, affinity is distance-based; for now return 0.0 or Missing
                 // If probabilities contain affinity for predicted, use that
                 Value::Continuous(prob_for_predicted())
@@ -122,7 +126,9 @@ pub fn build_output_with_context(
                         Value::Missing
                     } else {
                         match (exp, predicted) {
-                            (Value::Continuous(e), Value::Continuous(p)) => Value::Continuous(e - p),
+                            (Value::Continuous(e), Value::Continuous(p)) => {
+                                Value::Continuous(e - p)
+                            }
                             (Value::Discrete(exp_sid), Value::Discrete(pred_sid)) => {
                                 // For categorical residual: 1 - prob(pred) if exp == pred, else 0 - prob(pred)
                                 let prob = prob_for_sid(pred_sid).unwrap_or(0.0);
@@ -164,9 +170,10 @@ pub fn build_output_with_context(
                 // For Association, these are rule-based; predicted is often the consequent item
                 // For minimal, return predicted for ruleValue etc., or for support/confidence return 0.0
                 match of.feature {
-                    ResultFeature::Confidence | ResultFeature::Support | ResultFeature::Lift | ResultFeature::Leverage => {
-                        Value::Continuous(0.0)
-                    }
+                    ResultFeature::Confidence
+                    | ResultFeature::Support
+                    | ResultFeature::Lift
+                    | ResultFeature::Leverage => Value::Continuous(0.0),
                     _ => predicted,
                 }
             }
@@ -229,7 +236,11 @@ mod tests {
     use pmml_core::{FieldId, SymbolId, Value};
     use pmml_ir::ir::{Algorithm, RankBasis, RankOrder};
 
-    fn make_output_field(name: &str, feature: ResultFeature, value: Option<SymbolId>) -> OutputFieldIr {
+    fn make_output_field(
+        name: &str,
+        feature: ResultFeature,
+        value: Option<SymbolId>,
+    ) -> OutputFieldIr {
         OutputFieldIr {
             name: name.to_string(),
             feature,
@@ -253,7 +264,11 @@ mod tests {
 
     #[test]
     fn predicted_value() {
-        let fields = vec![make_output_field("out", ResultFeature::PredictedValue, None)];
+        let fields = vec![make_output_field(
+            "out",
+            ResultFeature::PredictedValue,
+            None,
+        )];
         let out = build_output(&fields, Value::Continuous(5.0), &HashMap::new());
         assert_eq!(out.get("out"), Some(&Value::Continuous(5.0)));
     }
@@ -261,12 +276,25 @@ mod tests {
     #[test]
     fn probability_with_value() {
         let sid = SymbolId(1);
-        let fields = vec![make_output_field("prob_setosa", ResultFeature::Probability, Some(sid))];
+        let fields = vec![make_output_field(
+            "prob_setosa",
+            ResultFeature::Probability,
+            Some(sid),
+        )];
         let mut probs = HashMap::new();
         probs.insert("setosa".to_string(), 0.8);
         let mut symbol_names = HashMap::new();
         symbol_names.insert(sid, "setosa".to_string());
-        let out = build_output_with_context(&fields, Value::Discrete(SymbolId(1)), &probs, &HashMap::new(), &[], None, &symbol_names, &HashMap::new());
+        let out = build_output_with_context(
+            &fields,
+            Value::Discrete(SymbolId(1)),
+            &probs,
+            &HashMap::new(),
+            &[],
+            None,
+            &symbol_names,
+            &HashMap::new(),
+        );
         assert_eq!(out.get("prob_setosa"), Some(&Value::Continuous(0.8)));
     }
 
@@ -278,7 +306,16 @@ mod tests {
         probs.insert("versicolor".to_string(), 0.6);
         let mut symbol_names = HashMap::new();
         symbol_names.insert(SymbolId(1), "versicolor".to_string());
-        let out = build_output_with_context(&fields, Value::Discrete(SymbolId(1)), &probs, &HashMap::new(), &[], None, &symbol_names, &HashMap::new());
+        let out = build_output_with_context(
+            &fields,
+            Value::Discrete(SymbolId(1)),
+            &probs,
+            &HashMap::new(),
+            &[],
+            None,
+            &symbol_names,
+            &HashMap::new(),
+        );
         assert_eq!(out.get("prob"), Some(&Value::Continuous(0.6)));
     }
 
@@ -286,7 +323,16 @@ mod tests {
     fn residual_continuous() {
         let fields = vec![make_output_field("res", ResultFeature::Residual, None)];
         let values = vec![Value::Continuous(10.0)]; // expected at target field 0
-        let out = build_output_with_context(&fields, Value::Continuous(7.0), &HashMap::new(), &HashMap::new(), &values, Some(FieldId(0)), &HashMap::new(), &HashMap::new());
+        let out = build_output_with_context(
+            &fields,
+            Value::Continuous(7.0),
+            &HashMap::new(),
+            &HashMap::new(),
+            &values,
+            Some(FieldId(0)),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         assert_eq!(out.get("res"), Some(&Value::Continuous(3.0)));
     }
 

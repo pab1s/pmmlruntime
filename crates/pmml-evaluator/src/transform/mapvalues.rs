@@ -33,9 +33,21 @@ mod tests {
     #[test]
     fn mapvalues_found() {
         let table = vec![(SymbolId(1), SymbolId(10)), (SymbolId(2), SymbolId(20))];
-        assert_eq!(eval_mapvalues(Value::Discrete(SymbolId(1)), &table, None), Value::Discrete(SymbolId(10)));
-        assert_eq!(eval_mapvalues(Value::Discrete(SymbolId(3)), &table, Some(SymbolId(99))), Value::Discrete(SymbolId(99)));
-        assert_eq!(eval_mapvalues(Value::Discrete(SymbolId(3)), &table, None), Value::Missing);
-        assert_eq!(eval_mapvalues(Value::Missing, &table, Some(SymbolId(5))), Value::Discrete(SymbolId(5)));
+        assert_eq!(
+            eval_mapvalues(Value::Discrete(SymbolId(1)), &table, None),
+            Value::Discrete(SymbolId(10))
+        );
+        assert_eq!(
+            eval_mapvalues(Value::Discrete(SymbolId(3)), &table, Some(SymbolId(99))),
+            Value::Discrete(SymbolId(99))
+        );
+        assert_eq!(
+            eval_mapvalues(Value::Discrete(SymbolId(3)), &table, None),
+            Value::Missing
+        );
+        assert_eq!(
+            eval_mapvalues(Value::Missing, &table, Some(SymbolId(5))),
+            Value::Discrete(SymbolId(5))
+        );
     }
 }

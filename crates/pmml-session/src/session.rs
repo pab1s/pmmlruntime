@@ -258,7 +258,11 @@ impl Session {
                         match of.feature {
                             pmml_core::field::ResultFeature::Probability => {
                                 if let Some(cat_sid) = of.value {
-                                    if let Some(cat_str) = self.symbol_names_vec.get(cat_sid.0 as usize).filter(|s| !s.is_empty()) {
+                                    if let Some(cat_str) = self
+                                        .symbol_names_vec
+                                        .get(cat_sid.0 as usize)
+                                        .filter(|s| !s.is_empty())
+                                    {
                                         if let Some(p) = probs.get(cat_str) {
                                             output.insert(of.name.clone(), Value::Continuous(*p));
                                             continue;
@@ -266,7 +270,11 @@ impl Session {
                                     }
                                 }
                                 if let Some(cat_sid) = of.value {
-                                    if let Some(cat_str) = self.symbol_names_vec.get(cat_sid.0 as usize).filter(|s| !s.is_empty()) {
+                                    if let Some(cat_str) = self
+                                        .symbol_names_vec
+                                        .get(cat_sid.0 as usize)
+                                        .filter(|s| !s.is_empty())
+                                    {
                                         if let Some(p) = probs.get(cat_str) {
                                             output.insert(of.name.clone(), Value::Continuous(*p));
                                             continue;
@@ -369,7 +377,11 @@ impl Session {
                     match of.feature {
                         pmml_core::field::ResultFeature::Probability => {
                             if let Some(cat_sid) = of.value {
-                                if let Some(cat_str) = self.symbol_names_vec.get(cat_sid.0 as usize).filter(|s| !s.is_empty()) {
+                                if let Some(cat_str) = self
+                                    .symbol_names_vec
+                                    .get(cat_sid.0 as usize)
+                                    .filter(|s| !s.is_empty())
+                                {
                                     if let Some(p) = probs.get(cat_str) {
                                         output.insert(of.name.clone(), Value::Continuous(*p));
                                         continue;
@@ -390,7 +402,9 @@ impl Session {
                 if let Some(tname) = &self.target_name {
                     final_out.entry(tname.clone()).or_insert(predicted);
                 }
-                final_out.entry("predictedValue".to_string()).or_insert(predicted);
+                final_out
+                    .entry("predictedValue".to_string())
+                    .or_insert(predicted);
                 for (k, v) in probs {
                     final_out.entry(k.clone()).or_insert(Value::Continuous(v));
                 }
@@ -422,7 +436,9 @@ impl Session {
             if let Some(tname) = &self.target_name {
                 final_out.entry(tname.clone()).or_insert(predicted);
             }
-            final_out.entry("predictedValue".to_string()).or_insert(predicted);
+            final_out
+                .entry("predictedValue".to_string())
+                .or_insert(predicted);
             Ok(final_out)
         })
     }
@@ -448,7 +464,9 @@ impl Session {
             self.target_name.as_ref(),
             &self.symbol_names_vec,
         );
-        let result = self.provider.eval_batch(&self.ir, &batch as &dyn Batch, &ctx)?;
+        let result = self
+            .provider
+            .eval_batch(&self.ir, &batch as &dyn Batch, &ctx)?;
         Ok(result.into_rows())
     }
 
@@ -514,10 +532,7 @@ impl Session {
     /// Returns Vec<HashMap> per row (same as `run_batch`) but avoids per-row `HashMap<String,Value>` clone for input.
     /// For output Arrow, use `run_record_batch` which returns `RecordBatch` directly.
     /// Delegates to `ExecutionProvider::eval_batch` with `BatchCtx::for_record_batch` (provider does sharding).
-    pub fn run_batch_arrow(
-        &self,
-        batch: &RecordBatch,
-    ) -> Result<Vec<HashMap<String, Value>>> {
+    pub fn run_batch_arrow(&self, batch: &RecordBatch) -> Result<Vec<HashMap<String, Value>>> {
         if batch.num_rows() == 0 {
             return Ok(Vec::new());
         }
@@ -588,7 +603,9 @@ impl Session {
                     if let Some(tname) = &self.target_name {
                         final_out.entry(tname.clone()).or_insert(predicted);
                     }
-                    final_out.entry("predictedValue".to_string()).or_insert(predicted);
+                    final_out
+                        .entry("predictedValue".to_string())
+                        .or_insert(predicted);
                     results.push(final_out);
                 }
                 return Ok(results);
@@ -606,7 +623,9 @@ impl Session {
             &self.symbol_names_vec,
             batch,
         );
-        let result = self.provider.eval_batch(&self.ir, batch as &dyn Batch, &ctx)?;
+        let result = self
+            .provider
+            .eval_batch(&self.ir, batch as &dyn Batch, &ctx)?;
         Ok(result.into_rows())
     }
 

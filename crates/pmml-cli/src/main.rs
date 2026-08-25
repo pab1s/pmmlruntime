@@ -100,7 +100,12 @@ fn inspect(model: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run(model: &str, input: Option<&str>, output: Option<&str>, is_batch_flag: bool) -> anyhow::Result<()> {
+fn run(
+    model: &str,
+    input: Option<&str>,
+    output: Option<&str>,
+    is_batch_flag: bool,
+) -> anyhow::Result<()> {
     let env = pmml_session::PmmlEnv::new();
     // Use CpuBatched when --batch or large CSV; otherwise CpuSerial. For CLI batch we default to batched
     // to achieve 3M rows/s via rayon par_iter chunked at 1k (plan A3).
@@ -170,12 +175,17 @@ fn run(model: &str, input: Option<&str>, output: Option<&str>, is_batch_flag: bo
                             ),
                         ]));
                         let _ = pmml_session::arrow::value_maps_to_record_batch(
-                            &outputs, out_schema, Some(&sess.ir.symbol_names),
+                            &outputs,
+                            out_schema,
+                            Some(&sess.ir.symbol_names),
                         );
                         // writer would be: arrow::csv::WriterBuilder::new(out_schema).build(file)
                     }
                     std::fs::write(out_path, out_lines.join("\n"))?;
-                    println!("Scored {} rows (Arrow batch) -> {out_path}", out_lines.len() - 1);
+                    println!(
+                        "Scored {} rows (Arrow batch) -> {out_path}",
+                        out_lines.len() - 1
+                    );
                 }
                 Err(e) => {
                     eprintln!("Arrow CSV parse failed ({e}), falling back to manual split");

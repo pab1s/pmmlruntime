@@ -146,9 +146,8 @@ impl BatchResult {
         symbol_names: Option<&HashMap<SymbolId, String>>,
     ) -> Result<RecordBatch> {
         match self {
-            BatchResult::Rows(maps) => {
-                value_maps_to_record_batch(&maps, schema, symbol_names).map_err(PmmlError::InvalidValue)
-            }
+            BatchResult::Rows(maps) => value_maps_to_record_batch(&maps, schema, symbol_names)
+                .map_err(PmmlError::InvalidValue),
             BatchResult::Columnar(b) => Ok(b),
         }
     }

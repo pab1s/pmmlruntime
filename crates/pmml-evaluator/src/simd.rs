@@ -13,10 +13,7 @@ use wide::f64x4;
 /// Only the first regression table is SIMD-accelerated; categorical predictors fall back to scalar per lane.
 /// Returns Vec<Value> length batch.len().
 #[cfg(all(feature = "simd", not(target_arch = "wasm32")))]
-pub fn evaluate_regression_batch_simd(
-    reg: &RegressionIr,
-    batch_values: &[&[Value]],
-) -> Vec<Value> {
+pub fn evaluate_regression_batch_simd(reg: &RegressionIr, batch_values: &[&[Value]]) -> Vec<Value> {
     if reg.regression_tables.len() != 1 {
         // Multi-table classification: fall back to scalar per row (softmax etc. not vectorized yet)
         return batch_values
@@ -89,16 +86,20 @@ pub fn evaluate_regression_batch_simd(
                         }
                     }
                 }
-                let final_val =
-                    crate::models::regression::apply_normalization(lane_sum, reg.normalization_method);
+                let final_val = crate::models::regression::apply_normalization(
+                    lane_sum,
+                    reg.normalization_method,
+                );
                 out.push(Value::Continuous(final_val));
             }
         } else {
             let sums_arr = sums.to_array();
             for lane in 0..4 {
                 let lane_sum = sums_arr[lane];
-                let final_val =
-                    crate::models::regression::apply_normalization(lane_sum, reg.normalization_method);
+                let final_val = crate::models::regression::apply_normalization(
+                    lane_sum,
+                    reg.normalization_method,
+                );
                 out.push(Value::Continuous(final_val));
             }
         }
@@ -116,10 +117,7 @@ pub fn evaluate_regression_batch_simd(
 }
 
 #[cfg(any(not(feature = "simd"), target_arch = "wasm32"))]
-pub fn evaluate_regression_batch_simd(
-    reg: &RegressionIr,
-    batch_values: &[&[Value]],
-) -> Vec<Value> {
+pub fn evaluate_regression_batch_simd(reg: &RegressionIr, batch_values: &[&[Value]]) -> Vec<Value> {
     // Fallback scalar
     batch_values
         .iter()
@@ -173,9 +171,7 @@ mod tests {
     #[test]
     fn simd_regression_batch() {
         let reg = make_reg();
-        let rows: Vec<Vec<Value>> = (0..8)
-            .map(|i| vec![Value::Continuous(i as f64)])
-            .collect();
+        let rows: Vec<Vec<Value>> = (0..8).map(|i| vec![Value::Continuous(i as f64)]).collect();
         let refs: Vec<&[Value]> = rows.iter().map(|r| r.as_slice()).collect();
         let simd_out = evaluate_regression_batch_simd(&reg, &refs);
         let scalar_out = evaluate_regression_batch_scalar(&reg, &refs);

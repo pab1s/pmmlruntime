@@ -543,8 +543,14 @@ pub struct RawDerivedField {
 
 #[derive(Debug, Clone)]
 pub enum RawExpression {
-    Constant { data_type: Option<String>, value: String },
-    FieldRef { field: String, map_missing_to: Option<String> },
+    Constant {
+        data_type: Option<String>,
+        value: String,
+    },
+    FieldRef {
+        field: String,
+        map_missing_to: Option<String>,
+    },
     NormContinuous {
         field: String,
         map_missing_to: Option<String>,
@@ -648,7 +654,10 @@ fn tag_name(e: &BytesStart) -> String {
 }
 // ---------- Expression helpers for TransformationDictionary ----------
 
-fn parse_constant(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+fn parse_constant(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawExpression> {
     let data_type = attr(start, "dataType");
     let mut value = String::new();
     let mut buf = Vec::new();
@@ -663,7 +672,9 @@ fn parse_constant(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> 
                     value = txt.trim().to_string();
                 }
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Constant" => break,
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Constant" => {
+                break
+            }
             Ok(Event::Eof) => break,
             _ => {}
         }
@@ -674,16 +685,25 @@ fn parse_constant(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> 
 
 fn parse_constant_empty(start: &BytesStart) -> RawExpression {
     let data_type = attr(start, "dataType");
-    RawExpression::Constant { data_type, value: String::new() }
+    RawExpression::Constant {
+        data_type,
+        value: String::new(),
+    }
 }
 
 fn parse_field_ref(start: &BytesStart) -> Result<RawExpression> {
     let field = attr_required(start, "field", "FieldRef")?;
     let map_missing_to = attr(start, "mapMissingTo");
-    Ok(RawExpression::FieldRef { field, map_missing_to })
+    Ok(RawExpression::FieldRef {
+        field,
+        map_missing_to,
+    })
 }
 
-fn parse_norm_continuous(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+fn parse_norm_continuous(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawExpression> {
     let field = attr_required(start, "field", "NormContinuous")?;
     let map_missing_to = attr(start, "mapMissingTo");
     let default_value = attr(start, "defaultValue");
@@ -693,13 +713,21 @@ fn parse_norm_continuous(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(inner)) if tag_name(&inner) == "LinearNorm" => {
-                let orig = attr(&inner, "orig").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                let norm = attr(&inner, "norm").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                let orig = attr(&inner, "orig")
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let norm = attr(&inner, "norm")
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
                 linear_norms.push(RawLinearNorm { orig, norm });
                 let mut inner2 = Vec::new();
                 loop {
                     match reader.read_event_into(&mut inner2) {
-                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "LinearNorm" => break,
+                        Ok(Event::End(end))
+                            if String::from_utf8_lossy(end.name().as_ref()) == "LinearNorm" =>
+                        {
+                            break
+                        }
                         Ok(Event::Empty(_)) => break,
                         _ => {}
                     }
@@ -708,19 +736,36 @@ fn parse_norm_continuous(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
                 }
             }
             Ok(Event::Empty(inner)) if tag_name(&inner) == "LinearNorm" => {
-                let orig = attr(&inner, "orig").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                let norm = attr(&inner, "norm").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                let orig = attr(&inner, "orig")
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let norm = attr(&inner, "norm")
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
                 linear_norms.push(RawLinearNorm { orig, norm });
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "NormContinuous" => break,
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "NormContinuous" =>
+            {
+                break
+            }
             _ => {}
         }
         buf.clear();
     }
-    Ok(RawExpression::NormContinuous { field, map_missing_to, default_value, outliers, linear_norms })
+    Ok(RawExpression::NormContinuous {
+        field,
+        map_missing_to,
+        default_value,
+        outliers,
+        linear_norms,
+    })
 }
 
-fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+fn parse_map_values(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawExpression> {
     let map_missing_to = attr(start, "mapMissingTo");
     let default_value = attr(start, "defaultValue");
     let output_column = attr(start, "outputColumn").unwrap_or_default();
@@ -739,7 +784,12 @@ fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                         let mut inner2 = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner2) {
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "FieldColumnPair" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "FieldColumnPair" =>
+                                {
+                                    break
+                                }
                                 Ok(Event::Empty(_)) => break,
                                 _ => {}
                             }
@@ -752,7 +802,8 @@ fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                         loop {
                             match reader.read_event_into(&mut inner2) {
                                 Ok(Event::Start(row_start)) if tag_name(&row_start) == "row" => {
-                                    let mut row: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                                    let mut row: std::collections::HashMap<String, String> =
+                                        std::collections::HashMap::new();
                                     let mut row_buf = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut row_buf) {
@@ -763,9 +814,18 @@ fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                                                 loop {
                                                     match reader.read_event_into(&mut cell_buf) {
                                                         Ok(Event::Text(t)) => {
-                                                            text = t.unescape().map(|c| c.into_owned()).unwrap_or_default();
+                                                            text = t
+                                                                .unescape()
+                                                                .map(|c| c.into_owned())
+                                                                .unwrap_or_default();
                                                         }
-                                                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == col => break,
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == col =>
+                                                        {
+                                                            break
+                                                        }
                                                         _ => {}
                                                     }
                                                     cell_buf.clear();
@@ -776,14 +836,24 @@ fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                                                 let col = tag_name(&cell);
                                                 row.insert(col, String::new());
                                             }
-                                            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "row" => break,
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "row" =>
+                                            {
+                                                break
+                                            }
                                             _ => {}
                                         }
                                         row_buf.clear();
                                     }
                                     inline_table.push(row);
                                 }
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "InlineTable" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "InlineTable" =>
+                                {
+                                    break
+                                }
                                 _ => {}
                             }
                             inner2.clear();
@@ -797,9 +867,14 @@ fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                                 Ok(Event::Start(_)) => depth += 1,
                                 Ok(Event::End(end)) => {
                                     depth -= 1;
-                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
                                 }
-                                Ok(Event::Empty(_)) => {},
+                                Ok(Event::Empty(_)) => {}
                                 _ => {}
                             }
                             inner2.clear();
@@ -813,9 +888,13 @@ fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                                 Ok(Event::Start(_)) => depth += 1,
                                 Ok(Event::End(end)) => {
                                     depth -= 1;
-                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
                                 }
-                                Ok(Event::Empty(_)) => {},
+                                Ok(Event::Empty(_)) => {}
                                 _ => {}
                             }
                             inner2.clear();
@@ -831,15 +910,26 @@ fn parse_map_values(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                     field_column_pairs.push(RawFieldColumnPair { field, column });
                 }
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "MapValues" => break,
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "MapValues" => {
+                break
+            }
             _ => {}
         }
         buf.clear();
     }
-    Ok(RawExpression::MapValues { map_missing_to, default_value, output_column, field_column_pairs, inline_table })
+    Ok(RawExpression::MapValues {
+        map_missing_to,
+        default_value,
+        output_column,
+        field_column_pairs,
+        inline_table,
+    })
 }
 
-fn parse_discretize(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
+fn parse_discretize(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawExpression> {
     let field = attr_required(start, "field", "Discretize")?;
     let map_missing_to = attr(start, "mapMissingTo");
     let default_value = attr(start, "defaultValue");
@@ -850,18 +940,30 @@ fn parse_discretize(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(inner)) if tag_name(&inner) == "DiscretizeBin" => {
                 let bin_value = attr_required(&inner, "binValue", "DiscretizeBin")?;
-                let mut interval = RawInterval { closure: "closedOpen".into(), left_margin: None, right_margin: None };
+                let mut interval = RawInterval {
+                    closure: "closedOpen".into(),
+                    left_margin: None,
+                    right_margin: None,
+                };
                 let mut inner2 = Vec::new();
                 loop {
                     match reader.read_event_into(&mut inner2) {
                         Ok(Event::Start(iv)) if tag_name(&iv) == "Interval" => {
-                            interval.closure = attr(&iv, "closure").unwrap_or_else(|| "closedOpen".into());
-                            interval.left_margin = attr(&iv, "leftMargin").and_then(|s| s.parse::<f64>().ok());
-                            interval.right_margin = attr(&iv, "rightMargin").and_then(|s| s.parse::<f64>().ok());
+                            interval.closure =
+                                attr(&iv, "closure").unwrap_or_else(|| "closedOpen".into());
+                            interval.left_margin =
+                                attr(&iv, "leftMargin").and_then(|s| s.parse::<f64>().ok());
+                            interval.right_margin =
+                                attr(&iv, "rightMargin").and_then(|s| s.parse::<f64>().ok());
                             let mut skip = Vec::new();
                             loop {
                                 match reader.read_event_into(&mut skip) {
-                                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Interval" => break,
+                                    Ok(Event::End(end))
+                                        if String::from_utf8_lossy(end.name().as_ref())
+                                            == "Interval" =>
+                                    {
+                                        break
+                                    }
                                     Ok(Event::Empty(_)) => break,
                                     _ => {}
                                 }
@@ -870,23 +972,41 @@ fn parse_discretize(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -
                             }
                         }
                         Ok(Event::Empty(iv)) if tag_name(&iv) == "Interval" => {
-                            interval.closure = attr(&iv, "closure").unwrap_or_else(|| "closedOpen".into());
-                            interval.left_margin = attr(&iv, "leftMargin").and_then(|s| s.parse::<f64>().ok());
-                            interval.right_margin = attr(&iv, "rightMargin").and_then(|s| s.parse::<f64>().ok());
+                            interval.closure =
+                                attr(&iv, "closure").unwrap_or_else(|| "closedOpen".into());
+                            interval.left_margin =
+                                attr(&iv, "leftMargin").and_then(|s| s.parse::<f64>().ok());
+                            interval.right_margin =
+                                attr(&iv, "rightMargin").and_then(|s| s.parse::<f64>().ok());
                         }
-                        Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DiscretizeBin" => break,
+                        Ok(Event::End(end))
+                            if String::from_utf8_lossy(end.name().as_ref()) == "DiscretizeBin" =>
+                        {
+                            break
+                        }
                         _ => {}
                     }
                     inner2.clear();
                 }
-                bins.push(RawDiscretizeBin { bin_value, interval });
+                bins.push(RawDiscretizeBin {
+                    bin_value,
+                    interval,
+                });
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Discretize" => break,
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Discretize" => {
+                break
+            }
             _ => {}
         }
         buf.clear();
     }
-    Ok(RawExpression::Discretize { field, map_missing_to, default_value, data_type, bins })
+    Ok(RawExpression::Discretize {
+        field,
+        map_missing_to,
+        default_value,
+        data_type,
+        bins,
+    })
 }
 
 fn parse_apply(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawExpression> {
@@ -912,7 +1032,12 @@ fn parse_apply(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Res
         }
         buf.clear();
     }
-    Ok(RawExpression::Apply { function, map_missing_to, default_value, args })
+    Ok(RawExpression::Apply {
+        function,
+        map_missing_to,
+        default_value,
+        args,
+    })
 }
 
 fn parse_expression_empty(start: &BytesStart, tag: &str) -> Result<RawExpression> {
@@ -924,17 +1049,32 @@ fn parse_expression_empty(start: &BytesStart, tag: &str) -> Result<RawExpression
             let value = attr_required(start, "value", "NormDiscrete")?;
             let map_missing_to = attr(start, "mapMissingTo");
             let default_value = attr(start, "defaultValue");
-            RawExpression::NormDiscrete { field, value, map_missing_to, default_value }
+            RawExpression::NormDiscrete {
+                field,
+                value,
+                map_missing_to,
+                default_value,
+            }
         }
         "NormContinuous" => {
             let field = attr(start, "field").unwrap_or_default();
-            RawExpression::NormContinuous { field, map_missing_to: None, default_value: None, outliers: None, linear_norms: vec![] }
+            RawExpression::NormContinuous {
+                field,
+                map_missing_to: None,
+                default_value: None,
+                outliers: None,
+                linear_norms: vec![],
+            }
         }
         _ => RawExpression::Unknown,
     })
 }
 
-fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart, tag: &str) -> Result<RawExpression> {
+fn parse_expression_from_start(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+    tag: &str,
+) -> Result<RawExpression> {
     match tag {
         "Constant" => parse_constant(reader, start),
         "FieldRef" => {
@@ -942,7 +1082,11 @@ fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &By
             let mut buf = Vec::new();
             loop {
                 match reader.read_event_into(&mut buf) {
-                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "FieldRef" => break,
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref()) == "FieldRef" =>
+                    {
+                        break
+                    }
                     _ => {}
                 }
                 buf.clear();
@@ -959,13 +1103,22 @@ fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &By
             let mut buf = Vec::new();
             loop {
                 match reader.read_event_into(&mut buf) {
-                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "NormDiscrete" => break,
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref()) == "NormDiscrete" =>
+                    {
+                        break
+                    }
                     _ => {}
                 }
                 buf.clear();
                 break;
             }
-            Ok(RawExpression::NormDiscrete { field, value, map_missing_to, default_value })
+            Ok(RawExpression::NormDiscrete {
+                field,
+                value,
+                map_missing_to,
+                default_value,
+            })
         }
         "Discretize" => parse_discretize(reader, start),
         "MapValues" => parse_map_values(reader, start),
@@ -982,27 +1135,51 @@ fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &By
                         let t = tag_name(&inner);
                         if t == "FieldRef" || t == "Constant" || t == "Apply" {
                             let e = parse_expression_from_start(reader, &inner, &t)?;
-                            if text_expr.is_none() { text_expr = Some(e); } else { search_expr = Some(e); }
-                        } else { depth += 1; }
+                            if text_expr.is_none() {
+                                text_expr = Some(e);
+                            } else {
+                                search_expr = Some(e);
+                            }
+                        } else {
+                            depth += 1;
+                        }
                     }
                     Ok(Event::Empty(inner)) => {
                         let t = tag_name(&inner);
                         if t == "FieldRef" || t == "Constant" {
                             let e = parse_expression_empty(&inner, &t)?;
-                            if text_expr.is_none() { text_expr = Some(e); } else { search_expr = Some(e); }
+                            if text_expr.is_none() {
+                                text_expr = Some(e);
+                            } else {
+                                search_expr = Some(e);
+                            }
                         }
                     }
                     Ok(Event::End(end)) => {
                         depth -= 1;
-                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "TextIndex" { break; }
+                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "TextIndex"
+                        {
+                            break;
+                        }
                     }
                     _ => {}
                 }
                 buf.clear();
             }
             if let (Some(txt), Some(search)) = (text_expr, search_expr) {
-                Ok(RawExpression::TextIndex { field, map_missing_to: None, text: Box::new(txt), search_term: Box::new(search), is_case_sensitive: false, max_levenstein_distance: None, word_separator: None, tokenize: false })
-            } else { Ok(RawExpression::Unknown) }
+                Ok(RawExpression::TextIndex {
+                    field,
+                    map_missing_to: None,
+                    text: Box::new(txt),
+                    search_term: Box::new(search),
+                    is_case_sensitive: false,
+                    max_levenstein_distance: None,
+                    word_separator: None,
+                    tokenize: false,
+                })
+            } else {
+                Ok(RawExpression::Unknown)
+            }
         }
         "Aggregate" => {
             let field = attr(start, "field").unwrap_or_default();
@@ -1011,12 +1188,20 @@ fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &By
             let mut buf = Vec::new();
             loop {
                 match reader.read_event_into(&mut buf) {
-                    Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Aggregate" => break,
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref()) == "Aggregate" =>
+                    {
+                        break
+                    }
                     _ => {}
                 }
                 buf.clear();
             }
-            Ok(RawExpression::Aggregate { field, function, group_field })
+            Ok(RawExpression::Aggregate {
+                field,
+                function,
+                group_field,
+            })
         }
         _ => {
             let mut depth = 1usize;
@@ -1026,7 +1211,9 @@ fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &By
                     Ok(Event::Start(_)) => depth += 1,
                     Ok(Event::End(end)) => {
                         depth -= 1;
-                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag {
+                            break;
+                        }
                     }
                     _ => {}
                 }
@@ -1037,7 +1224,10 @@ fn parse_expression_from_start(reader: &mut quick_xml::Reader<&[u8]>, start: &By
     }
 }
 
-fn parse_derived_field(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawDerivedField> {
+fn parse_derived_field(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawDerivedField> {
     let name = attr_required(start, "name", "DerivedField")?;
     let display_name = attr(start, "displayName");
     let data_type = attr(start, "dataType").unwrap_or_else(|| "string".into());
@@ -1056,7 +1246,11 @@ fn parse_derived_field(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart
                             Ok(Event::Start(_)) => depth += 1,
                             Ok(Event::End(end)) => {
                                 depth -= 1;
-                                if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                                if depth == 0
+                                    && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                                {
+                                    break;
+                                }
                             }
                             _ => {}
                         }
@@ -1064,9 +1258,23 @@ fn parse_derived_field(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart
                     }
                     continue;
                 }
-                if ["Constant","FieldRef","NormContinuous","NormDiscrete","Discretize","MapValues","TextIndex","Aggregate","Apply"].contains(&tag.as_str()) {
+                if [
+                    "Constant",
+                    "FieldRef",
+                    "NormContinuous",
+                    "NormDiscrete",
+                    "Discretize",
+                    "MapValues",
+                    "TextIndex",
+                    "Aggregate",
+                    "Apply",
+                ]
+                .contains(&tag.as_str())
+                {
                     let expr = parse_expression_from_start(reader, &inner, &tag)?;
-                    if expression.is_none() { expression = Some(expr); }
+                    if expression.is_none() {
+                        expression = Some(expr);
+                    }
                 } else {
                     let mut depth = 1usize;
                     let mut inner2 = Vec::new();
@@ -1075,7 +1283,10 @@ fn parse_derived_field(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart
                             Ok(Event::Start(_)) => depth += 1,
                             Ok(Event::End(end)) => {
                                 depth -= 1;
-                                if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                {
+                                    break;
+                                }
                             }
                             _ => {}
                         }
@@ -1085,21 +1296,36 @@ fn parse_derived_field(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart
             }
             Ok(Event::Empty(inner)) => {
                 let tag = tag_name(&inner);
-                if ["Constant","FieldRef","NormDiscrete"].contains(&tag.as_str()) {
+                if ["Constant", "FieldRef", "NormDiscrete"].contains(&tag.as_str()) {
                     let expr = parse_expression_empty(&inner, &tag)?;
-                    if expression.is_none() { expression = Some(expr); }
+                    if expression.is_none() {
+                        expression = Some(expr);
+                    }
                 }
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DerivedField" => break,
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "DerivedField" =>
+            {
+                break
+            }
             _ => {}
         }
         buf.clear();
     }
     let expr = expression.unwrap_or(RawExpression::Unknown);
-    Ok(RawDerivedField { name, display_name, data_type, op_type, expression: expr })
+    Ok(RawDerivedField {
+        name,
+        display_name,
+        data_type,
+        op_type,
+        expression: expr,
+    })
 }
 
-fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawDefineFunction> {
+fn parse_define_function(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawDefineFunction> {
     let name = attr_required(start, "name", "DefineFunction")?;
     let data_type = attr(start, "dataType");
     let op_type = attr(start, "optype");
@@ -1116,11 +1342,20 @@ fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
                         let p_name = attr_required(&inner, "name", "ParameterField")?;
                         let p_data_type = attr(&inner, "dataType");
                         let p_op_type = attr(&inner, "optype");
-                        param_fields.push(RawParameterField { name: p_name, data_type: p_data_type, op_type: p_op_type });
+                        param_fields.push(RawParameterField {
+                            name: p_name,
+                            data_type: p_data_type,
+                            op_type: p_op_type,
+                        });
                         let mut inner2 = Vec::new();
                         loop {
                             match reader.read_event_into(&mut inner2) {
-                                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "ParameterField" => break,
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ParameterField" =>
+                                {
+                                    break
+                                }
                                 _ => {}
                             }
                             inner2.clear();
@@ -1139,7 +1374,12 @@ fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
                                 Ok(Event::Start(_)) => depth += 1,
                                 Ok(Event::End(end)) => {
                                     depth -= 1;
-                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
                                 }
                                 _ => {}
                             }
@@ -1147,7 +1387,19 @@ fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
                         }
                     }
                     _ => {
-                        if ["Constant","FieldRef","NormContinuous","NormDiscrete","Discretize","MapValues","TextIndex","Aggregate","Apply"].contains(&tag.as_str()) {
+                        if [
+                            "Constant",
+                            "FieldRef",
+                            "NormContinuous",
+                            "NormDiscrete",
+                            "Discretize",
+                            "MapValues",
+                            "TextIndex",
+                            "Aggregate",
+                            "Apply",
+                        ]
+                        .contains(&tag.as_str())
+                        {
                             if body.is_none() {
                                 let expr = parse_expression_from_start(reader, &inner, &tag)?;
                                 body = Some(expr);
@@ -1159,7 +1411,12 @@ fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
                                         Ok(Event::Start(_)) => depth += 1,
                                         Ok(Event::End(end)) => {
                                             depth -= 1;
-                                            if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                            if depth == 0
+                                                && String::from_utf8_lossy(end.name().as_ref())
+                                                    == tag
+                                            {
+                                                break;
+                                            }
                                         }
                                         _ => {}
                                     }
@@ -1174,7 +1431,11 @@ fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
                                     Ok(Event::Start(_)) => depth += 1,
                                     Ok(Event::End(end)) => {
                                         depth -= 1;
-                                        if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -1190,21 +1451,41 @@ fn parse_define_function(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesSta
                     let p_name = attr_required(&inner, "name", "ParameterField")?;
                     let p_data_type = attr(&inner, "dataType");
                     let p_op_type = attr(&inner, "optype");
-                    param_fields.push(RawParameterField { name: p_name, data_type: p_data_type, op_type: p_op_type });
-                } else if ["Constant","FieldRef","NormDiscrete"].contains(&tag.as_str()) && body.is_none() {
+                    param_fields.push(RawParameterField {
+                        name: p_name,
+                        data_type: p_data_type,
+                        op_type: p_op_type,
+                    });
+                } else if ["Constant", "FieldRef", "NormDiscrete"].contains(&tag.as_str())
+                    && body.is_none()
+                {
                     let expr = parse_expression_empty(&inner, &tag)?;
                     body = Some(expr);
                 }
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "DefineFunction" => break,
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "DefineFunction" =>
+            {
+                break
+            }
             _ => {}
         }
         buf.clear();
     }
-    Ok(RawDefineFunction { name, data_type, op_type, param_fields, derived_fields, body })
+    Ok(RawDefineFunction {
+        name,
+        data_type,
+        op_type,
+        param_fields,
+        derived_fields,
+        body,
+    })
 }
 
-fn parse_transformation_dictionary(reader: &mut quick_xml::Reader<&[u8]>, _start: &BytesStart) -> Result<(Vec<RawDefineFunction>, Vec<RawDerivedField>)> {
+fn parse_transformation_dictionary(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    _start: &BytesStart,
+) -> Result<(Vec<RawDefineFunction>, Vec<RawDerivedField>)> {
     let mut define_functions = Vec::new();
     let mut derived_fields = Vec::new();
     let mut buf = Vec::new();
@@ -1229,7 +1510,12 @@ fn parse_transformation_dictionary(reader: &mut quick_xml::Reader<&[u8]>, _start
                                 Ok(Event::Start(_)) => depth += 1,
                                 Ok(Event::End(end)) => {
                                     depth -= 1;
-                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == "Extension" { break; }
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
                                 }
                                 _ => {}
                             }
@@ -1244,7 +1530,11 @@ fn parse_transformation_dictionary(reader: &mut quick_xml::Reader<&[u8]>, _start
                                 Ok(Event::Start(_)) => depth += 1,
                                 Ok(Event::End(end)) => {
                                     depth -= 1;
-                                    if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag { break; }
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
                                 }
                                 _ => {}
                             }
@@ -1253,7 +1543,11 @@ fn parse_transformation_dictionary(reader: &mut quick_xml::Reader<&[u8]>, _start
                     }
                 }
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "TransformationDictionary" => break,
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "TransformationDictionary" =>
+            {
+                break
+            }
             _ => {}
         }
         buf.clear();
@@ -1261,7 +1555,9 @@ fn parse_transformation_dictionary(reader: &mut quick_xml::Reader<&[u8]>, _start
     Ok((define_functions, derived_fields))
 }
 
-fn parse_local_transformations(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<RawDerivedField>> {
+fn parse_local_transformations(
+    reader: &mut quick_xml::Reader<&[u8]>,
+) -> Result<Vec<RawDerivedField>> {
     let mut derived_fields = Vec::new();
     let mut buf = Vec::new();
     loop {
@@ -1270,16 +1566,17 @@ fn parse_local_transformations(reader: &mut quick_xml::Reader<&[u8]>) -> Result<
                 let df = parse_derived_field(reader, &inner)?;
                 derived_fields.push(df);
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "LocalTransformations" => break,
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "LocalTransformations" =>
+            {
+                break
+            }
             _ => {}
         }
         buf.clear();
     }
     Ok(derived_fields)
 }
-
-
-
 
 fn parse_mining_field(e: &BytesStart) -> Result<RawMiningField> {
     let name = attr_required(e, "name", "MiningField")?;
@@ -1352,14 +1649,25 @@ fn parse_target(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Re
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Target" => break,
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Target" => {
+                break
+            }
             Ok(Event::Empty(_)) => break,
             Ok(Event::Eof) => break,
             _ => {}
         }
         buf.clear();
     }
-    Ok(RawTarget { field, op_type, cast_integer, min: None, max: None, rescale_constant, rescale_factor, target_values: vec![] })
+    Ok(RawTarget {
+        field,
+        op_type,
+        cast_integer,
+        min: None,
+        max: None,
+        rescale_constant,
+        rescale_factor,
+        target_values: vec![],
+    })
 }
 
 fn parse_targets(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<RawTarget>> {
@@ -1375,7 +1683,9 @@ fn parse_targets(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<RawTarget>
                 let t = parse_target(reader, &inner)?;
                 targets.push(t);
             }
-            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Targets" => break,
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Targets" => {
+                break
+            }
             _ => {}
         }
         buf.clear();
@@ -1683,7 +1993,7 @@ fn parse_tree_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     // consume end
                                     let mut skip = Vec::new();
                                     loop {
@@ -1706,7 +2016,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -1728,7 +2038,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1750,7 +2060,7 @@ output.push(of);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -1774,10 +2084,7 @@ output.push(of);
                     _ => {
                         // skip ModelStats, Targets, Extension, etc for v1
                         // Need to consume subtree if it's Start
-                        if tag == "Targets"
-                            || tag == "ModelStats"
-                            || tag == "ModelExplanation"
-                        {
+                        if tag == "Targets" || tag == "ModelStats" || tag == "ModelExplanation" {
                             let mut depth = 1usize;
                             let mut inner = Vec::new();
                             loop {
@@ -1823,7 +2130,7 @@ output.push(of);
         output,
         targets: Vec::new(),
         root,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -1978,7 +2285,7 @@ fn parse_regression_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -1999,7 +2306,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -2021,7 +2328,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2042,7 +2349,7 @@ output.push(of);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -2063,8 +2370,7 @@ output.push(of);
                         local_derived_fields.extend(fields);
                     }
                     _ => {
-                        if tag == "Targets" || tag == "ModelStats"
-                        {
+                        if tag == "Targets" || tag == "ModelStats" {
                             let mut depth = 1usize;
                             let mut inner = Vec::new();
                             loop {
@@ -2107,7 +2413,7 @@ output.push(of);
         regression_tables,
         normalization_method,
         model_name,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -2328,7 +2634,7 @@ fn parse_mining_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2349,7 +2655,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -2374,7 +2680,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2395,7 +2701,7 @@ output.push(of);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -2451,7 +2757,7 @@ output.push(of);
         output,
         targets: Vec::new(),
         model_name,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -2485,7 +2791,7 @@ fn parse_scorecard(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2496,7 +2802,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -2506,7 +2812,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -2527,7 +2833,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2548,7 +2854,7 @@ output.push(of);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -2744,7 +3050,7 @@ output.push(of);
         characteristics,
         baseline_method,
         targets: vec![],
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -2776,7 +3082,7 @@ fn parse_clustering_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2787,7 +3093,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -2797,7 +3103,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -2818,7 +3124,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -2839,7 +3145,7 @@ output.push(of);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -2962,7 +3268,7 @@ output.push(of);
         comparison_measure,
         clustering_fields,
         clusters,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -2993,7 +3299,7 @@ fn parse_naive_bayes_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -3004,7 +3310,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -3014,7 +3320,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -3514,7 +3820,7 @@ mining_schema.push(mf);
         targets: Vec::new(),
         bayes_inputs,
         bayes_output_counts,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -3546,7 +3852,7 @@ fn parse_nearest_neighbor_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -3557,7 +3863,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -3567,7 +3873,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -3798,7 +4104,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -3819,7 +4125,7 @@ output.push(of);
                                     if tag_name(&inner_e) == "OutputField" =>
                                 {
                                     let of = parse_output_field(&inner_e)?;
-output.push(of);
+                                    output.push(of);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
@@ -3857,7 +4163,7 @@ output.push(of);
         instance_fields,
         instances,
         knn_inputs,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -3891,7 +4197,7 @@ fn parse_general_regression_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -3902,7 +4208,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -3912,7 +4218,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -4280,7 +4586,7 @@ mining_schema.push(mf);
         covariates,
         pp_matrix,
         param_matrix,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -4310,7 +4616,7 @@ fn parse_support_vector_machine_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -4321,7 +4627,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -4331,7 +4637,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -4727,7 +5033,7 @@ mining_schema.push(mf);
         vector_instances,
         support_vector_machine,
         kernel_gamma,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -4757,7 +5063,7 @@ fn parse_neural_network(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -4768,7 +5074,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -4778,7 +5084,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -5002,7 +5308,7 @@ fn parse_association_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -5013,7 +5319,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -5023,7 +5329,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -5183,7 +5489,7 @@ mining_schema.push(mf);
         items,
         itemsets,
         rules,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -5210,7 +5516,7 @@ fn parse_rule_set_model(
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                     let mut skip = Vec::new();
                                     loop {
                                         match reader.read_event_into(&mut skip) {
@@ -5221,7 +5527,7 @@ mining_schema.push(mf);
                                                 break
                                             }
                                             Ok(Event::Empty(_)) => break,
-                        _ => {}
+                                            _ => {}
                                         }
                                         skip.clear();
                                         break;
@@ -5231,7 +5537,7 @@ mining_schema.push(mf);
                                     if tag_name(&inner_e) == "MiningField" =>
                                 {
                                     let mf = parse_mining_field(&inner_e)?;
-mining_schema.push(mf);
+                                    mining_schema.push(mf);
                                 }
                                 Ok(Event::End(end))
                                     if String::from_utf8_lossy(end.name().as_ref())
@@ -5368,7 +5674,7 @@ mining_schema.push(mf);
         output,
         targets: Vec::new(),
         rule_set,
-        local_derived_fields
+        local_derived_fields,
     })
 }
 
@@ -5674,9 +5980,10 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                 } else if tag == "Extension" {
                     extensions.push(parse_extension(&e));
                 } else if (tag.ends_with("Model") || tag == "ModelComposition")
-                    && unsupported_model.is_none() {
-                        unsupported_model = Some(tag);
-                    }
+                    && unsupported_model.is_none()
+                {
+                    unsupported_model = Some(tag);
+                }
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -5737,7 +6044,10 @@ mod tests {
         // Accept either Ok with no passwd leak or Err; but must not expose file
         match res {
             Ok(raw) => {
-                assert!(raw.data_dictionary.iter().all(|df| !df.name.contains("root:")));
+                assert!(raw
+                    .data_dictionary
+                    .iter()
+                    .all(|df| !df.name.contains("root:")));
             }
             Err(e) => {
                 assert!(!e.to_string().contains("root:"));

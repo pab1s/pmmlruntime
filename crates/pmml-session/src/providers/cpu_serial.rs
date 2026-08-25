@@ -54,78 +54,91 @@ impl ExecutionProvider for CpuSerialProvider {
         // For serial, we can allocate Vec<Value> per row reuse via thread_local to avoid stack overflow for large needed.
         // Use crate::session::with_value_buffer if pub, else replicate.
         for row_idx in 0..batch.len() {
-            let out = crate::session::with_value_buffer(needed, |values| -> Result<HashMap<String, Value>> {
-                batch.materialize_row(row_idx, values, ctx)?;
-                // Handle GeneralRegression specially to get probs for output
-                if let ModelIr::GeneralRegression(gr) = &ir.model {
-                    let (predicted, probs) = pmml_evaluator::models::evaluate_general_regression_with_probs(
-                        gr,
-                        &values[..needed],
-                        &ir.field_names,
-                        &ir.symbol_names,
-                        ctx.name_to_id_std,
-                    );
-                    let mut output = HashMap::with_capacity(ctx.output_fields.len().max(1) + 2);
-                    for of in ctx.output_fields {
-                        match of.feature {
-                            ResultFeature::Probability => {
-                                if let Some(cat_sid) = of.value {
-                                    if let Some(cat_str) = ctx.symbol_names_vec.get(cat_sid.0 as usize).filter(|s| !s.is_empty()) {
-                                        if let Some(p) = probs.get(cat_str) {
-                                            output.insert(of.name.clone(), Value::Continuous(*p));
-                                            continue;
-                                        }
-                                    }
-                                }
-                                output.insert(of.name.clone(), Value::Missing);
-                            }
-                            _ => {
-                                output.insert(of.name.clone(), predicted);
-                            }
-                        }
-                    }
-                    if output.is_empty() {
-                        output.insert("predictedValue".to_string(), predicted);
-                    }
-                    let mut final_out = output;
-                    if let Some(tname) = ctx.target_name {
-                        final_out.entry(tname.clone()).or_insert(predicted);
-                    }
-                    final_out.entry("predictedValue".to_string()).or_insert(predicted);
-                    for (k, v) in &probs {
-                        final_out.entry(k.clone()).or_insert(Value::Continuous(*v));
-                        let prob_name = format!("Probability_{}", k);
-                        final_out.entry(prob_name).or_insert(Value::Continuous(*v));
-                    }
-                    Ok(final_out)
-                } else {
-                    let predicted = self.eval_row(ir, values)?;
-                    let mut output = HashMap::with_capacity(ctx.output_fields.len().max(1) + 2);
-                    if ctx.output_fields.is_empty() {
-                        output.insert("predictedValue".to_string(), predicted);
-                    } else {
+            let out = crate::session::with_value_buffer(
+                needed,
+                |values| -> Result<HashMap<String, Value>> {
+                    batch.materialize_row(row_idx, values, ctx)?;
+                    // Handle GeneralRegression specially to get probs for output
+                    if let ModelIr::GeneralRegression(gr) = &ir.model {
+                        let (predicted, probs) =
+                            pmml_evaluator::models::evaluate_general_regression_with_probs(
+                                gr,
+                                &values[..needed],
+                                &ir.field_names,
+                                &ir.symbol_names,
+                                ctx.name_to_id_std,
+                            );
+                        let mut output = HashMap::with_capacity(ctx.output_fields.len().max(1) + 2);
                         for of in ctx.output_fields {
                             match of.feature {
-                                ResultFeature::PredictedValue => {
-                                    output.insert(of.name.clone(), predicted);
-                                }
                                 ResultFeature::Probability => {
-                                    output.insert(of.name.clone(), Value::Continuous(0.0));
+                                    if let Some(cat_sid) = of.value {
+                                        if let Some(cat_str) = ctx
+                                            .symbol_names_vec
+                                            .get(cat_sid.0 as usize)
+                                            .filter(|s| !s.is_empty())
+                                        {
+                                            if let Some(p) = probs.get(cat_str) {
+                                                output
+                                                    .insert(of.name.clone(), Value::Continuous(*p));
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    output.insert(of.name.clone(), Value::Missing);
                                 }
                                 _ => {
                                     output.insert(of.name.clone(), predicted);
                                 }
                             }
                         }
+                        if output.is_empty() {
+                            output.insert("predictedValue".to_string(), predicted);
+                        }
+                        let mut final_out = output;
+                        if let Some(tname) = ctx.target_name {
+                            final_out.entry(tname.clone()).or_insert(predicted);
+                        }
+                        final_out
+                            .entry("predictedValue".to_string())
+                            .or_insert(predicted);
+                        for (k, v) in &probs {
+                            final_out.entry(k.clone()).or_insert(Value::Continuous(*v));
+                            let prob_name = format!("Probability_{}", k);
+                            final_out.entry(prob_name).or_insert(Value::Continuous(*v));
+                        }
+                        Ok(final_out)
+                    } else {
+                        let predicted = self.eval_row(ir, values)?;
+                        let mut output = HashMap::with_capacity(ctx.output_fields.len().max(1) + 2);
+                        if ctx.output_fields.is_empty() {
+                            output.insert("predictedValue".to_string(), predicted);
+                        } else {
+                            for of in ctx.output_fields {
+                                match of.feature {
+                                    ResultFeature::PredictedValue => {
+                                        output.insert(of.name.clone(), predicted);
+                                    }
+                                    ResultFeature::Probability => {
+                                        output.insert(of.name.clone(), Value::Continuous(0.0));
+                                    }
+                                    _ => {
+                                        output.insert(of.name.clone(), predicted);
+                                    }
+                                }
+                            }
+                        }
+                        let mut final_out = output;
+                        if let Some(tname) = ctx.target_name {
+                            final_out.entry(tname.clone()).or_insert(predicted);
+                        }
+                        final_out
+                            .entry("predictedValue".to_string())
+                            .or_insert(predicted);
+                        Ok(final_out)
                     }
-                    let mut final_out = output;
-                    if let Some(tname) = ctx.target_name {
-                        final_out.entry(tname.clone()).or_insert(predicted);
-                    }
-                    final_out.entry("predictedValue".to_string()).or_insert(predicted);
-                    Ok(final_out)
-                }
-            })?;
+                },
+            )?;
             results.push(out);
         }
         Ok(BatchResult::Rows(results))

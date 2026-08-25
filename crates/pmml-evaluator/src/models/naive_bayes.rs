@@ -24,7 +24,8 @@ pub fn evaluate_naive_bayes(nb: &NaiveBayesIr, values: &[Value]) -> Value {
     }
 
     // Compute log probabilities per target for threshold handling
-    let mut log_probs: std::collections::HashMap<pmml_core::SymbolId, f64> = std::collections::HashMap::new();
+    let mut log_probs: std::collections::HashMap<pmml_core::SymbolId, f64> =
+        std::collections::HashMap::new();
     let mut best_score = f64::NEG_INFINITY;
     let mut best_value: Option<pmml_core::SymbolId> = None;
 

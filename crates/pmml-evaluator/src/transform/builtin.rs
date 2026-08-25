@@ -136,13 +136,23 @@ pub fn eval_builtin(id: BuiltinId, args: &[f64]) -> Option<f64> {
         BuiltinId::Cbrt => args.first()?.cbrt(),
         BuiltinId::Sign => {
             let v = *args.first()?;
-            if v > 0.0 { 1.0 } else if v < 0.0 { -1.0 } else { 0.0 }
+            if v > 0.0 {
+                1.0
+            } else if v < 0.0 {
+                -1.0
+            } else {
+                0.0
+            }
         }
         BuiltinId::Remainder => args.first()? % args.get(1)?,
         BuiltinId::Modulo => {
             let a = *args.first()?;
             let b = *args.get(1)?;
-            if b == 0.0 { f64::NAN } else { a - (a / b).floor() * b }
+            if b == 0.0 {
+                f64::NAN
+            } else {
+                a - (a / b).floor() * b
+            }
         }
         BuiltinId::Rint => libm::rint(*args.first()?),
         BuiltinId::Expm1 => libm::expm1(*args.first()?),
@@ -161,44 +171,76 @@ pub fn eval_builtin(id: BuiltinId, args: &[f64]) -> Option<f64> {
         BuiltinId::Min => args.iter().cloned().fold(f64::INFINITY, f64::min),
         BuiltinId::Max => args.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
         BuiltinId::Median => {
-            if args.is_empty() { return None; }
+            if args.is_empty() {
+                return None;
+            }
             let mut v = args.to_vec();
             v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let mid = v.len() / 2;
-            if v.len() % 2 == 1 { v[mid] } else { (v[mid - 1] + v[mid]) / 2.0 }
+            if v.len() % 2 == 1 {
+                v[mid]
+            } else {
+                (v[mid - 1] + v[mid]) / 2.0
+            }
         }
         BuiltinId::ProductOp => args.iter().product(),
         BuiltinId::SumOp => args.iter().sum(),
         BuiltinId::AvgOp | BuiltinId::Mean => {
-            if args.is_empty() { return None; }
+            if args.is_empty() {
+                return None;
+            }
             args.iter().sum::<f64>() / args.len() as f64
         }
         BuiltinId::StdDev | BuiltinId::Variance => {
-            if args.len() < 2 { return None; }
+            if args.len() < 2 {
+                return None;
+            }
             let mean = args.iter().sum::<f64>() / args.len() as f64;
             let var = args.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / args.len() as f64;
-            if id == BuiltinId::Variance { var } else { var.sqrt() }
-        }
-        BuiltinId::ErfOp => libm::erf(*args.first()?),
-        BuiltinId::NormalCdf | BuiltinId::NormalPdf | BuiltinId::NormalIdf
-        | BuiltinId::StdNormalCdf | BuiltinId::StdNormalPdf | BuiltinId::StdNormalIdf => return None,
-        BuiltinId::DateDaysSinceYear | BuiltinId::DateSecondsSinceYear | BuiltinId::DateSecondsSinceMidnight
-        | BuiltinId::DateDaysSince1960 | BuiltinId::DateDaysSince1970 | BuiltinId::DateDaysSince1980
-        | BuiltinId::DateTimeSecondsSince1960 | BuiltinId::DateTimeSecondsSince1970 | BuiltinId::DateTimeSecondsSince1980
-        | BuiltinId::DateTimeSecondsSince0 | BuiltinId::TimeSeconds => return None,
-        BuiltinId::FormatNumber | BuiltinId::FormatDatetime => return None,
-        BuiltinId::AggregateSum | BuiltinId::AggregateAvg | BuiltinId::AggregateMin | BuiltinId::AggregateMax | BuiltinId::AggregateCount | BuiltinId::AggregateMultiset => {
-            match id {
-                BuiltinId::AggregateCount | BuiltinId::AggregateMultiset => args.len() as f64,
-                BuiltinId::AggregateSum => args.iter().sum(),
-                BuiltinId::AggregateAvg => {
-                    if args.is_empty() { f64::NAN } else { args.iter().sum::<f64>() / args.len() as f64 }
-                }
-                BuiltinId::AggregateMin => args.iter().cloned().fold(f64::INFINITY, f64::min),
-                BuiltinId::AggregateMax => args.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
-                _ => unreachable!(),
+            if id == BuiltinId::Variance {
+                var
+            } else {
+                var.sqrt()
             }
         }
+        BuiltinId::ErfOp => libm::erf(*args.first()?),
+        BuiltinId::NormalCdf
+        | BuiltinId::NormalPdf
+        | BuiltinId::NormalIdf
+        | BuiltinId::StdNormalCdf
+        | BuiltinId::StdNormalPdf
+        | BuiltinId::StdNormalIdf => return None,
+        BuiltinId::DateDaysSinceYear
+        | BuiltinId::DateSecondsSinceYear
+        | BuiltinId::DateSecondsSinceMidnight
+        | BuiltinId::DateDaysSince1960
+        | BuiltinId::DateDaysSince1970
+        | BuiltinId::DateDaysSince1980
+        | BuiltinId::DateTimeSecondsSince1960
+        | BuiltinId::DateTimeSecondsSince1970
+        | BuiltinId::DateTimeSecondsSince1980
+        | BuiltinId::DateTimeSecondsSince0
+        | BuiltinId::TimeSeconds => return None,
+        BuiltinId::FormatNumber | BuiltinId::FormatDatetime => return None,
+        BuiltinId::AggregateSum
+        | BuiltinId::AggregateAvg
+        | BuiltinId::AggregateMin
+        | BuiltinId::AggregateMax
+        | BuiltinId::AggregateCount
+        | BuiltinId::AggregateMultiset => match id {
+            BuiltinId::AggregateCount | BuiltinId::AggregateMultiset => args.len() as f64,
+            BuiltinId::AggregateSum => args.iter().sum(),
+            BuiltinId::AggregateAvg => {
+                if args.is_empty() {
+                    f64::NAN
+                } else {
+                    args.iter().sum::<f64>() / args.len() as f64
+                }
+            }
+            BuiltinId::AggregateMin => args.iter().cloned().fold(f64::INFINITY, f64::min),
+            BuiltinId::AggregateMax => args.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+            _ => unreachable!(),
+        },
         _ => return None,
     })
 }
@@ -239,7 +281,12 @@ pub fn eval_string_builtin(id: BuiltinId, args: &[String]) -> Option<String> {
             let num: f64 = num_str.parse().ok()?;
             if pat.contains('d') {
                 let n = num as i64;
-                let width: usize = pat.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
+                let width: usize = pat
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0);
                 if width > 0 {
                     Some(format!("{:>width$}", n, width = width))
                 } else {
@@ -254,10 +301,17 @@ pub fn eval_string_builtin(id: BuiltinId, args: &[String]) -> Option<String> {
         BuiltinId::FormatDatetime => {
             let dt_str = args.first()?;
             let pat = args.get(1)?;
-            let formatted = if let Ok(date) = chrono::NaiveDate::parse_from_str(dt_str, "%Y-%m-%d") {
-                let chrono_pat = pat.replace("%m", "%m").replace("%d", "%d").replace("%y", "%y").replace("%Y", "%Y");
+            let formatted = if let Ok(date) = chrono::NaiveDate::parse_from_str(dt_str, "%Y-%m-%d")
+            {
+                let chrono_pat = pat
+                    .replace("%m", "%m")
+                    .replace("%d", "%d")
+                    .replace("%y", "%y")
+                    .replace("%Y", "%Y");
                 Some(date.format(&chrono_pat).to_string())
-            } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S") {
+            } else if let Ok(dt) =
+                chrono::NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S")
+            {
                 Some(dt.format(pat).to_string())
             } else {
                 Some(dt_str.clone())

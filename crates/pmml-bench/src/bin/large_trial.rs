@@ -2,10 +2,10 @@ use arrow::array::Float64Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use pmml_core::Value;
-use pmml_session::{PmmlEnv, Session, SessionOptions, ExecutionProviderKind};
+use pmml_session::{ExecutionProviderKind, PmmlEnv, Session, SessionOptions};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 fn load_iris_session(kind: ExecutionProviderKind) -> Session {
     let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
@@ -35,13 +35,15 @@ fn load_regression_session(kind: ExecutionProviderKind) -> Option<Session> {
 }
 
 fn make_hash_batch(n: usize) -> Vec<HashMap<String, Value>> {
-    (0..n).map(|i| {
-        let mut m = HashMap::new();
-        let v = 1.0 + (i % 5) as f64;
-        m.insert("Petal.Length".to_string(), Value::Continuous(v));
-        m.insert("Petal.Width".to_string(), Value::Continuous(v * 0.5));
-        m
-    }).collect()
+    (0..n)
+        .map(|i| {
+            let mut m = HashMap::new();
+            let v = 1.0 + (i % 5) as f64;
+            m.insert("Petal.Length".to_string(), Value::Continuous(v));
+            m.insert("Petal.Width".to_string(), Value::Continuous(v * 0.5));
+            m
+        })
+        .collect()
 }
 
 fn make_arrow_batch(n: usize) -> RecordBatch {
@@ -62,7 +64,8 @@ fn make_arrow_batch(n: usize) -> RecordBatch {
             Arc::new(Float64Array::from(len_vals)) as _,
             Arc::new(Float64Array::from(wid_vals)) as _,
         ],
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 fn time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
@@ -76,7 +79,12 @@ fn fmt_thr(rows: usize, dur: Duration) -> String {
     let secs = dur.as_secs_f64();
     let thr = rows as f64 / secs;
     let per_row_ns = secs * 1e9 / rows as f64;
-    format!("{:.2} ms total | {:.0} rows/sec | {:.0} ns/row", secs*1000.0, thr, per_row_ns)
+    format!(
+        "{:.2} ms total | {:.0} rows/sec | {:.0} ns/row",
+        secs * 1000.0,
+        thr,
+        per_row_ns
+    )
 }
 
 fn run_trial(size: usize) {
@@ -84,10 +92,22 @@ fn run_trial(size: usize) {
     // For n >= 1M, skip HashMap batch to avoid OOM (HashMap per row ~200B * 1M = 200MB + overhead)
     let use_hash = size <= 100_000;
     let arrow_batch = make_arrow_batch(size);
-    println!("Arrow batch created: {} rows, schema {:?}", arrow_batch.num_rows(), arrow_batch.schema().fields().iter().map(|f| f.name().clone()).collect::<Vec<_>>());
+    println!(
+        "Arrow batch created: {} rows, schema {:?}",
+        arrow_batch.num_rows(),
+        arrow_batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect::<Vec<_>>()
+    );
 
     // Test both providers
-    for kind in [ExecutionProviderKind::CpuSerial, ExecutionProviderKind::CpuBatched] {
+    for kind in [
+        ExecutionProviderKind::CpuSerial,
+        ExecutionProviderKind::CpuBatched,
+    ] {
         let kind_str = match kind {
             ExecutionProviderKind::CpuSerial => "CpuSerial",
             ExecutionProviderKind::CpuBatched => "CpuBatched",
@@ -101,12 +121,17 @@ fn run_trial(size: usize) {
 
         // Single row loop (for reference)
         if size <= 10_000 {
-            let ( _, dur) = time(|| {
+            let (_, dur) = time(|| {
                 for _ in 0..size {
                     let _ = sess.run(single.clone()).unwrap();
                 }
             });
-            println!("  {} single-row loop ({}x run): {}", kind_str, size, fmt_thr(size, dur));
+            println!(
+                "  {} single-row loop ({}x run): {}",
+                kind_str,
+                size,
+                fmt_thr(size, dur)
+            );
         }
 
         if use_hash {
@@ -114,14 +139,27 @@ fn run_trial(size: usize) {
             // Hash batch sequential (via run_batch with CpuSerial) and parallel (CpuBatched)
             let (res, dur) = time(|| sess.run_batch(hash_batch.clone()).unwrap());
             assert_eq!(res.len(), size);
-            println!("  {} HashMap run_batch (Vec<HashMap> {} rows): {}", kind_str, size, fmt_thr(size, dur));
+            println!(
+                "  {} HashMap run_batch (Vec<HashMap> {} rows): {}",
+                kind_str,
+                size,
+                fmt_thr(size, dur)
+            );
             // Also test run_batch_ref
             let hash_ref = make_hash_batch(size);
             let (res2, dur2) = time(|| sess.run_batch_ref(&hash_ref).unwrap());
             assert_eq!(res2.len(), size);
-            println!("  {} HashMap run_batch_ref (slice {} rows): {}", kind_str, size, fmt_thr(size, dur2));
+            println!(
+                "  {} HashMap run_batch_ref (slice {} rows): {}",
+                kind_str,
+                size,
+                fmt_thr(size, dur2)
+            );
         } else {
-            println!("  {} HashMap run_batch: SKIPPED for {} rows (would OOM)", kind_str, size);
+            println!(
+                "  {} HashMap run_batch: SKIPPED for {} rows (would OOM)",
+                kind_str, size
+            );
         }
 
         // Arrow batch - chunked for large sizes to avoid OOM (Vec<HashMap> of 10M would be >2GB)
@@ -135,7 +173,12 @@ fn run_trial(size: usize) {
                 assert_eq!(res.len(), len);
                 total_dur += dur;
             }
-            println!("  {} Arrow run_batch_arrow chunked (RecordBatch {} rows, chunk 100k): {}", kind_str, size, fmt_thr(size, total_dur));
+            println!(
+                "  {} Arrow run_batch_arrow chunked (RecordBatch {} rows, chunk 100k): {}",
+                kind_str,
+                size,
+                fmt_thr(size, total_dur)
+            );
             let mut total_dur2 = Duration::ZERO;
             for chunk_start in (0..size).step_by(chunk_size) {
                 let len = (size - chunk_start).min(chunk_size);
@@ -144,16 +187,32 @@ fn run_trial(size: usize) {
                 assert_eq!(out_batch.num_rows(), len);
                 total_dur2 += dur;
             }
-            println!("  {} Arrow run_record_batch chunked ({} rows, chunk 100k): {}", kind_str, size, fmt_thr(size, total_dur2));
+            println!(
+                "  {} Arrow run_record_batch chunked ({} rows, chunk 100k): {}",
+                kind_str,
+                size,
+                fmt_thr(size, total_dur2)
+            );
         } else {
             let (res, dur) = time(|| sess.run_batch_arrow(&arrow_batch).unwrap());
             assert_eq!(res.len(), size);
-            println!("  {} Arrow run_batch_arrow (RecordBatch {} rows): {}", kind_str, size, fmt_thr(size, dur));
+            println!(
+                "  {} Arrow run_batch_arrow (RecordBatch {} rows): {}",
+                kind_str,
+                size,
+                fmt_thr(size, dur)
+            );
 
             // Arrow to Arrow
             let (out_batch, dur2) = time(|| sess.run_record_batch(&arrow_batch).unwrap());
             assert_eq!(out_batch.num_rows(), size);
-            println!("  {} Arrow run_record_batch -> RecordBatch ({} rows, {} cols): {}", kind_str, size, out_batch.num_columns(), fmt_thr(size, dur2));
+            println!(
+                "  {} Arrow run_record_batch -> RecordBatch ({} rows, {} cols): {}",
+                kind_str,
+                size,
+                out_batch.num_columns(),
+                fmt_thr(size, dur2)
+            );
         }
     }
 
@@ -171,24 +230,50 @@ fn run_trial(size: usize) {
                 let f0 = FieldId(0);
                 let reg = pmml_ir::ir::RegressionIr {
                     function_name: "regression".into(),
-                    mining_schema: MiningSchemaIr { active_fields: vec![f0], target_field: None, field_metas: vec![], missing_value_replacement: None },
-                    regression_tables: vec![RegressionTableIr { intercept: 1.0, target_category: None, numeric_predictors: vec![NumericPredictorIr { field: f0, coefficient: 2.0, exponent: 1 }], categorical_predictors: vec![] }],
+                    mining_schema: MiningSchemaIr {
+                        active_fields: vec![f0],
+                        target_field: None,
+                        field_metas: vec![],
+                        missing_value_replacement: None,
+                    },
+                    regression_tables: vec![RegressionTableIr {
+                        intercept: 1.0,
+                        target_category: None,
+                        numeric_predictors: vec![NumericPredictorIr {
+                            field: f0,
+                            coefficient: 2.0,
+                            exponent: 1,
+                        }],
+                        categorical_predictors: vec![],
+                    }],
                     normalization_method: RegressionNormalizationMethod::None,
                     targets: vec![],
                     output: vec![],
                 };
                 let n = size.min(10000); // cap for synthetic
-                let rows: Vec<Vec<Value>> = (0..n).map(|i| vec![Value::Continuous(i as f64)]).collect();
+                let rows: Vec<Vec<Value>> =
+                    (0..n).map(|i| vec![Value::Continuous(i as f64)]).collect();
                 let refs: Vec<&[Value]> = rows.iter().map(|r| r.as_slice()).collect();
                 let start = Instant::now();
                 let simd_out = pmml_evaluator::simd::evaluate_regression_batch_simd(&reg, &refs);
                 let dur = start.elapsed();
                 let scalar_start = Instant::now();
-                let scalar_out = pmml_evaluator::simd::evaluate_regression_batch_scalar(&reg, &refs);
+                let scalar_out =
+                    pmml_evaluator::simd::evaluate_regression_batch_scalar(&reg, &refs);
                 let scalar_dur = scalar_start.elapsed();
                 assert_eq!(simd_out, scalar_out);
-                let speedup = if dur.as_secs_f64() > 0.0 { scalar_dur.as_secs_f64()/dur.as_secs_f64() } else { 1.0 };
-                println!("  SIMD regression synthetic {} rows: SIMD {} vs scalar {} (speedup {:.2}x)", n, fmt_thr(n, dur), fmt_thr(n, scalar_dur), speedup);
+                let speedup = if dur.as_secs_f64() > 0.0 {
+                    scalar_dur.as_secs_f64() / dur.as_secs_f64()
+                } else {
+                    1.0
+                };
+                println!(
+                    "  SIMD regression synthetic {} rows: SIMD {} vs scalar {} (speedup {:.2}x)",
+                    n,
+                    fmt_thr(n, dur),
+                    fmt_thr(n, scalar_dur),
+                    speedup
+                );
             }
             let _ = sess;
         } else {
@@ -206,9 +291,13 @@ fn main() {
         // here we detect via cfg in pmml-evaluator crate by checking an env var is not reliable, so just print false/true based on whether the simd module's 4-wide path would be taken for regression batch >=4
         // We approximate by checking if the `wide` crate is linked (always) - so report true if we are running a release build with avx2 available
         #[cfg(target_feature = "avx")]
-        { true }
+        {
+            true
+        }
         #[cfg(not(target_feature = "avx"))]
-        { false }
+        {
+            false
+        }
     };
     println!("Host AVX: {}", simd_enabled);
     let sizes = [10_000, 100_000, 1_000_000, 10_000_000];

@@ -97,7 +97,13 @@ mod tests {
     use pmml_core::{FieldId, Value};
     use pmml_ir::ir::{CastIntegerMethod, TargetIr, TargetValueIr};
 
-    fn make_target(rescale_factor: f64, rescale_constant: f64, cast: Option<CastIntegerMethod>, min: Option<f64>, max: Option<f64>) -> TargetIr {
+    fn make_target(
+        rescale_factor: f64,
+        rescale_constant: f64,
+        cast: Option<CastIntegerMethod>,
+        min: Option<f64>,
+        max: Option<f64>,
+    ) -> TargetIr {
         TargetIr {
             field: Some(FieldId(0)),
             field_name: "y".to_string(),
@@ -123,8 +129,14 @@ mod tests {
     #[test]
     fn min_max_clipping() {
         let t = make_target(1.0, 0.0, None, Some(0.0), Some(10.0));
-        assert_eq!(apply_targets(&[t.clone()], Value::Continuous(-5.0)), Value::Continuous(0.0));
-        assert_eq!(apply_targets(&[t], Value::Continuous(15.0)), Value::Continuous(10.0));
+        assert_eq!(
+            apply_targets(&[t.clone()], Value::Continuous(-5.0)),
+            Value::Continuous(0.0)
+        );
+        assert_eq!(
+            apply_targets(&[t], Value::Continuous(15.0)),
+            Value::Continuous(10.0)
+        );
     }
 
     #[test]

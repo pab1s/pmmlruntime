@@ -53,8 +53,9 @@ pub fn value_maps_to_record_batch(
             .fields()
             .iter()
             .map(|f| match f.data_type() {
-                ArrowDataType::Float64 => Arc::new(Float64Array::from(Vec::<Option<f64>>::new()))
-                    as Arc<dyn Array>,
+                ArrowDataType::Float64 => {
+                    Arc::new(Float64Array::from(Vec::<Option<f64>>::new())) as Arc<dyn Array>
+                }
                 _ => Arc::new(StringArray::from(Vec::<Option<&str>>::new())) as Arc<dyn Array>,
             })
             .collect();
@@ -152,15 +153,13 @@ pub fn record_batch_to_value_maps(batch: &RecordBatch) -> Vec<HashMap<String, Va
                     } else {
                         // Create a deterministic placeholder SymbolId via hash — not matching Ir intern, but usable for roundtrip.
                         // For true discrete fidelity, caller should look up via Ir's symbol map.
-                        let sid = pmml_core::SymbolId(
-                            {
-                                use std::collections::hash_map::DefaultHasher;
-                                use std::hash::{Hash, Hasher};
-                                let mut h = DefaultHasher::new();
-                                s.hash(&mut h);
-                                (h.finish() & 0x7FFF_FFFF) as u32
-                            },
-                        );
+                        let sid = pmml_core::SymbolId({
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+                            let mut h = DefaultHasher::new();
+                            s.hash(&mut h);
+                            (h.finish() & 0x7FFF_FFFF) as u32
+                        });
                         map.insert(name, Value::Discrete(sid));
                     }
                 }
@@ -195,9 +194,7 @@ pub fn inline_table_to_record_batch(
                 ArrowDataType::Float64 => {
                     Arc::new(Float64Array::from(Vec::<Option<f64>>::new())) as Arc<dyn Array>
                 }
-                _ => {
-                    Arc::new(StringArray::from(Vec::<Option<&str>>::new())) as Arc<dyn Array>
-                }
+                _ => Arc::new(StringArray::from(Vec::<Option<&str>>::new())) as Arc<dyn Array>,
             })
             .collect();
         return RecordBatch::try_new(schema, arrays).map_err(|e| e.to_string());
@@ -260,7 +257,10 @@ pub fn csv_str_to_record_batch(
         .build(cursor)
         .map_err(|e| e.to_string())?;
 
-    let batch = reader.next().ok_or_else(|| "empty csv".to_string())?.map_err(|e| e.to_string())?;
+    let batch = reader
+        .next()
+        .ok_or_else(|| "empty csv".to_string())?
+        .map_err(|e| e.to_string())?;
     // If file has multiple batches ( > 1024 rows ), concatenate
     let mut batches = vec![batch];
     for res in reader {
@@ -320,8 +320,7 @@ mod tests {
         m1.insert("a".to_string(), Value::Continuous(1.5));
         m1.insert("b".to_string(), Value::Discrete(pmml_core::SymbolId(42)));
         let maps = vec![m1];
-        let batch =
-            value_maps_to_record_batch(&maps, schema.clone(), None).expect("to batch");
+        let batch = value_maps_to_record_batch(&maps, schema.clone(), None).expect("to batch");
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(batch.num_columns(), 2);
         let out_maps = record_batch_to_value_maps(&batch);

@@ -2,9 +2,11 @@
 //! Handles DataType coercion, invalidValueTreatment, missingValueTreatment, outlierTreatment.
 
 use pmml_core::error::{PmmlError, Result};
-use pmml_core::{FieldId, Value};
-use pmml_ir::ir::{FieldMeta, InvalidValueTreatment, MiningSchemaIr, MissingValueTreatment, OutlierTreatment};
 use pmml_core::field::{DataType, OpType};
+use pmml_core::{FieldId, Value};
+use pmml_ir::ir::{
+    FieldMeta, InvalidValueTreatment, MiningSchemaIr, MissingValueTreatment, OutlierTreatment,
+};
 use std::collections::HashMap;
 
 /// Check if a Value is valid for a given FieldMeta.
@@ -43,7 +45,11 @@ fn is_valid_value(value: Value, meta: &FieldMeta) -> bool {
 
 /// Try to coerce a Value to the FieldMeta's DataType/OpType.
 /// Returns Some(Value) if coercion succeeds, None if it fails (invalid).
-fn coerce_value(value: Value, meta: &FieldMeta, symbol_names: Option<&HashMap<pmml_core::SymbolId, String>>) -> Option<Value> {
+fn coerce_value(
+    value: Value,
+    meta: &FieldMeta,
+    symbol_names: Option<&HashMap<pmml_core::SymbolId, String>>,
+) -> Option<Value> {
     match (value, meta.data_type) {
         (Value::Missing, _) => Some(Value::Missing),
         (Value::Continuous(f), DataType::String) => {
@@ -52,7 +58,11 @@ fn coerce_value(value: Value, meta: &FieldMeta, symbol_names: Option<&HashMap<pm
             // For minimal, we can try to see if f's string representation parses as a valid category
             // If symbol_names provided, look for string rep
             if let Some(map) = symbol_names {
-                let s = if f.fract() == 0.0 { format!("{}", f as i64) } else { format!("{}", f) };
+                let s = if f.fract() == 0.0 {
+                    format!("{}", f as i64)
+                } else {
+                    format!("{}", f)
+                };
                 for (sid, name) in map {
                     if name == &s {
                         return Some(Value::Discrete(*sid));
@@ -62,7 +72,9 @@ fn coerce_value(value: Value, meta: &FieldMeta, symbol_names: Option<&HashMap<pm
             // If not found, treat as invalid
             None
         }
-        (Value::Discrete(sid), dt) if matches!(dt, DataType::Double | DataType::Float | DataType::Integer) => {
+        (Value::Discrete(sid), dt)
+            if matches!(dt, DataType::Double | DataType::Float | DataType::Integer) =>
+        {
             // Try to parse discrete string as f64
             if let Some(map) = symbol_names {
                 if let Some(s) = map.get(&sid) {
@@ -88,7 +100,11 @@ fn coerce_value(value: Value, meta: &FieldMeta, symbol_names: Option<&HashMap<pm
 
 /// Parse a replacement string (missing/invalid) into a Value per FieldMeta's DataType.
 /// Returns Value::Missing if parsing fails.
-fn parse_replacement(s: &str, meta: &FieldMeta, interner: Option<&mut dyn FnMut(&str) -> pmml_core::SymbolId>) -> Value {
+fn parse_replacement(
+    s: &str,
+    meta: &FieldMeta,
+    interner: Option<&mut dyn FnMut(&str) -> pmml_core::SymbolId>,
+) -> Value {
     // Try numeric if data type is numeric
     match meta.data_type {
         DataType::Double | DataType::Float | DataType::Integer => {
@@ -129,7 +145,8 @@ pub fn apply_mining_schema(
     values: &mut [Value],
 ) -> Result<()> {
     // Build a map from FieldId to FieldMeta for quick lookup
-    let meta_map: HashMap<FieldId, &FieldMeta> = schema.field_metas.iter().map(|m| (m.field_id, m)).collect();
+    let meta_map: HashMap<FieldId, &FieldMeta> =
+        schema.field_metas.iter().map(|m| (m.field_id, m)).collect();
 
     // First, handle active fields (and also target field if present? Target not in input, but we handle active only)
     // For each field that has a MiningField entry (in field_metas), we need to apply treatments
@@ -342,11 +359,21 @@ pub fn apply_mining_schema(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pmml_core::FieldId;
     use pmml_core::field::{DataType, OpType};
+    use pmml_core::FieldId;
     use std::collections::HashMap;
 
-    fn make_meta(fid: FieldId, name: &str, dt: DataType, ot: OpType, outlier: OutlierTreatment, low: Option<f64>, high: Option<f64>, missing_repl: Option<&str>, invalid_treatment: InvalidValueTreatment) -> FieldMeta {
+    fn make_meta(
+        fid: FieldId,
+        name: &str,
+        dt: DataType,
+        ot: OpType,
+        outlier: OutlierTreatment,
+        low: Option<f64>,
+        high: Option<f64>,
+        missing_repl: Option<&str>,
+        invalid_treatment: InvalidValueTreatment,
+    ) -> FieldMeta {
         FieldMeta {
             field_id: fid,
             name: name.to_string(),
@@ -369,8 +396,28 @@ mod tests {
             active_fields: vec![FieldId(0), FieldId(1)],
             target_field: Some(FieldId(2)),
             field_metas: vec![
-                make_meta(FieldId(0), "f0", DataType::Double, OpType::Continuous, OutlierTreatment::AsIs, None, None, None, InvalidValueTreatment::ReturnInvalid),
-                make_meta(FieldId(1), "f1", DataType::Double, OpType::Continuous, OutlierTreatment::AsIs, None, None, None, InvalidValueTreatment::ReturnInvalid),
+                make_meta(
+                    FieldId(0),
+                    "f0",
+                    DataType::Double,
+                    OpType::Continuous,
+                    OutlierTreatment::AsIs,
+                    None,
+                    None,
+                    None,
+                    InvalidValueTreatment::ReturnInvalid,
+                ),
+                make_meta(
+                    FieldId(1),
+                    "f1",
+                    DataType::Double,
+                    OpType::Continuous,
+                    OutlierTreatment::AsIs,
+                    None,
+                    None,
+                    None,
+                    InvalidValueTreatment::ReturnInvalid,
+                ),
             ],
             missing_value_replacement: None,
         };
@@ -388,9 +435,17 @@ mod tests {
         let schema = MiningSchemaIr {
             active_fields: vec![FieldId(0)],
             target_field: None,
-            field_metas: vec![
-                make_meta(FieldId(0), "f0", DataType::Double, OpType::Continuous, OutlierTreatment::AsMissingValues, Some(0.0), Some(10.0), None, InvalidValueTreatment::ReturnInvalid),
-            ],
+            field_metas: vec![make_meta(
+                FieldId(0),
+                "f0",
+                DataType::Double,
+                OpType::Continuous,
+                OutlierTreatment::AsMissingValues,
+                Some(0.0),
+                Some(10.0),
+                None,
+                InvalidValueTreatment::ReturnInvalid,
+            )],
             missing_value_replacement: None,
         };
         let mut map = HashMap::new();
@@ -410,9 +465,17 @@ mod tests {
         let schema = MiningSchemaIr {
             active_fields: vec![FieldId(0)],
             target_field: None,
-            field_metas: vec![
-                make_meta(FieldId(0), "f0", DataType::Double, OpType::Continuous, OutlierTreatment::AsExtremeValues, Some(0.0), Some(10.0), None, InvalidValueTreatment::ReturnInvalid),
-            ],
+            field_metas: vec![make_meta(
+                FieldId(0),
+                "f0",
+                DataType::Double,
+                OpType::Continuous,
+                OutlierTreatment::AsExtremeValues,
+                Some(0.0),
+                Some(10.0),
+                None,
+                InvalidValueTreatment::ReturnInvalid,
+            )],
             missing_value_replacement: None,
         };
         let mut map = HashMap::new();
@@ -431,9 +494,17 @@ mod tests {
         let schema = MiningSchemaIr {
             active_fields: vec![FieldId(0)],
             target_field: None,
-            field_metas: vec![
-                make_meta(FieldId(0), "f0", DataType::Double, OpType::Continuous, OutlierTreatment::AsIs, None, None, Some("50"), InvalidValueTreatment::ReturnInvalid),
-            ],
+            field_metas: vec![make_meta(
+                FieldId(0),
+                "f0",
+                DataType::Double,
+                OpType::Continuous,
+                OutlierTreatment::AsIs,
+                None,
+                None,
+                Some("50"),
+                InvalidValueTreatment::ReturnInvalid,
+            )],
             missing_value_replacement: None,
         };
         let map = HashMap::new(); // missing
@@ -444,7 +515,17 @@ mod tests {
 
     #[test]
     fn invalid_as_missing() {
-        let mut meta = make_meta(FieldId(0), "f0", DataType::String, OpType::Categorical, OutlierTreatment::AsIs, None, None, None, InvalidValueTreatment::AsMissing);
+        let mut meta = make_meta(
+            FieldId(0),
+            "f0",
+            DataType::String,
+            OpType::Categorical,
+            OutlierTreatment::AsIs,
+            None,
+            None,
+            None,
+            InvalidValueTreatment::AsMissing,
+        );
         meta.values = vec![pmml_core::SymbolId(1), pmml_core::SymbolId(2)];
         let schema = MiningSchemaIr {
             active_fields: vec![FieldId(0)],

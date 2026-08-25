@@ -3,9 +3,7 @@
 
 use chrono::Timelike;
 use pmml_core::Value;
-use pmml_ir::ir::{
-    BuiltinId, DerivedFieldIr, LagAggregate, LinearNorm, Op, SymbolIdOrContinuous,
-};
+use pmml_ir::ir::{BuiltinId, DerivedFieldIr, LagAggregate, LinearNorm, Op, SymbolIdOrContinuous};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -165,7 +163,12 @@ pub fn vm_set_symbol_map(map: HashMap<pmml_core::SymbolId, String>) {
     SYMBOL_STR_MAP.with(|m| *m.borrow_mut() = map);
 }
 fn discrete_to_string(sid: pmml_core::SymbolId) -> String {
-    SYMBOL_STR_MAP.with(|m| m.borrow().get(&sid).cloned().unwrap_or_else(|| format!("{:?}", sid)))
+    SYMBOL_STR_MAP.with(|m| {
+        m.borrow()
+            .get(&sid)
+            .cloned()
+            .unwrap_or_else(|| format!("{:?}", sid))
+    })
 }
 fn value_to_string_with_symbols(v: Value) -> String {
     match v {
@@ -207,8 +210,12 @@ fn eval_text_index(text: Value, term: Value) -> Value {
 fn eval_aggregate(func: BuiltinId, args: &[Value]) -> Value {
     let nums: Vec<f64> = args.iter().filter_map(|v| value_to_f64(*v)).collect();
     match func {
-        BuiltinId::AggregateCount => Value::Continuous(args.iter().filter(|v| !v.is_missing()).count() as f64),
-        BuiltinId::AggregateMultiset => Value::Continuous(args.iter().filter(|v| !v.is_missing()).count() as f64),
+        BuiltinId::AggregateCount => {
+            Value::Continuous(args.iter().filter(|v| !v.is_missing()).count() as f64)
+        }
+        BuiltinId::AggregateMultiset => {
+            Value::Continuous(args.iter().filter(|v| !v.is_missing()).count() as f64)
+        }
         BuiltinId::AggregateSum => {
             if nums.is_empty() {
                 Value::Missing
@@ -275,9 +282,15 @@ fn eval_norm_continuous(val: Value, linear_norms: &[LinearNorm]) -> Value {
     Value::Missing
 }
 
-fn eval_norm_discrete(val: Value, expected: pmml_core::SymbolId, map_missing_to: Option<f64>) -> Value {
+fn eval_norm_discrete(
+    val: Value,
+    expected: pmml_core::SymbolId,
+    map_missing_to: Option<f64>,
+) -> Value {
     if val.is_missing() {
-        return map_missing_to.map(Value::Continuous).unwrap_or(Value::Missing);
+        return map_missing_to
+            .map(Value::Continuous)
+            .unwrap_or(Value::Missing);
     }
     match val {
         Value::Discrete(sid) => {
@@ -288,7 +301,9 @@ fn eval_norm_discrete(val: Value, expected: pmml_core::SymbolId, map_missing_to:
             }
         }
         Value::Continuous(_) => Value::Continuous(0.0),
-        Value::Missing => map_missing_to.map(Value::Continuous).unwrap_or(Value::Missing),
+        Value::Missing => map_missing_to
+            .map(Value::Continuous)
+            .unwrap_or(Value::Missing),
     }
 }
 
@@ -333,18 +348,24 @@ fn eval_lag(field: pmml_core::FieldId, n: usize, aggregate: LagAggregate) -> Val
         LagAggregate::None => vals.first().copied().unwrap_or(Value::Missing),
         LagAggregate::Avg => Value::Continuous(nums.iter().sum::<f64>() / nums.len() as f64),
         LagAggregate::Min => Value::Continuous(nums.iter().cloned().fold(f64::INFINITY, f64::min)),
-        LagAggregate::Max => Value::Continuous(nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max)),
+        LagAggregate::Max => {
+            Value::Continuous(nums.iter().cloned().fold(f64::NEG_INFINITY, f64::max))
+        }
         LagAggregate::Sum => Value::Continuous(nums.iter().sum()),
         LagAggregate::Product => Value::Continuous(nums.iter().product()),
         LagAggregate::Median => {
             let mut v = nums.clone();
             v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let mid = v.len() / 2;
-            if v.len() % 2 == 1 { Value::Continuous(v[mid]) } else { Value::Continuous((v[mid-1]+v[mid])/2.0) }
+            if v.len() % 2 == 1 {
+                Value::Continuous(v[mid])
+            } else {
+                Value::Continuous((v[mid - 1] + v[mid]) / 2.0)
+            }
         }
         LagAggregate::Stddev => {
             let mean = nums.iter().sum::<f64>() / nums.len() as f64;
-            let var = nums.iter().map(|x| (x-mean).powi(2)).sum::<f64>() / nums.len() as f64;
+            let var = nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / nums.len() as f64;
             Value::Continuous(var.sqrt())
         }
     }
@@ -378,7 +399,7 @@ fn parse_datetime_str(s: &str) -> Option<chrono::NaiveDateTime> {
         return Some(dt);
     }
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Some(d.and_hms_opt(0,0,0).unwrap());
+        return Some(d.and_hms_opt(0, 0, 0).unwrap());
     }
     None
 }
@@ -396,7 +417,9 @@ fn parse_time_str(s: &str) -> Option<chrono::NaiveTime> {
 }
 
 fn eval_date_days_since_year(val: Value, ref_year: i32) -> Value {
-    if val.is_missing() { return Value::Missing; }
+    if val.is_missing() {
+        return Value::Missing;
+    }
     let s = value_to_string_with_symbols(val);
     if let Some(d) = parse_date_str(&s) {
         if let Some(ref_date) = chrono::NaiveDate::from_ymd_opt(ref_year, 1, 1) {
@@ -406,7 +429,7 @@ fn eval_date_days_since_year(val: Value, ref_year: i32) -> Value {
     }
     if let Some(dt) = parse_datetime_str(&s) {
         if let Some(ref_date) = chrono::NaiveDate::from_ymd_opt(ref_year, 1, 1) {
-            let ref_dt = ref_date.and_hms_opt(0,0,0).unwrap();
+            let ref_dt = ref_date.and_hms_opt(0, 0, 0).unwrap();
             let diff = dt.signed_duration_since(ref_dt).num_days();
             return Value::Continuous(diff as f64);
         }
@@ -419,19 +442,21 @@ fn eval_date_days_since_year(val: Value, ref_year: i32) -> Value {
     Value::Missing
 }
 fn eval_date_seconds_since_year(val: Value, ref_year: i32) -> Value {
-    if val.is_missing() { return Value::Missing; }
+    if val.is_missing() {
+        return Value::Missing;
+    }
     let s = value_to_string_with_symbols(val);
     if let Some(dt) = parse_datetime_str(&s) {
         if let Some(ref_date) = chrono::NaiveDate::from_ymd_opt(ref_year, 1, 1) {
-            let ref_dt = ref_date.and_hms_opt(0,0,0).unwrap();
+            let ref_dt = ref_date.and_hms_opt(0, 0, 0).unwrap();
             let diff = dt.signed_duration_since(ref_dt).num_seconds();
             return Value::Continuous(diff as f64);
         }
     }
     if let Some(d) = parse_date_str(&s) {
         if let Some(ref_date) = chrono::NaiveDate::from_ymd_opt(ref_year, 1, 1) {
-            let ref_dt = ref_date.and_hms_opt(0,0,0).unwrap();
-            let dt = d.and_hms_opt(0,0,0).unwrap();
+            let ref_dt = ref_date.and_hms_opt(0, 0, 0).unwrap();
+            let dt = d.and_hms_opt(0, 0, 0).unwrap();
             let diff = dt.signed_duration_since(ref_dt).num_seconds();
             return Value::Continuous(diff as f64);
         }
@@ -442,7 +467,9 @@ fn eval_date_seconds_since_year(val: Value, ref_year: i32) -> Value {
     Value::Missing
 }
 fn eval_date_seconds_since_midnight(val: Value) -> Value {
-    if val.is_missing() { return Value::Missing; }
+    if val.is_missing() {
+        return Value::Missing;
+    }
     let s = value_to_string_with_symbols(val);
     if let Some(t) = parse_time_str(&s) {
         return Value::Continuous(t.num_seconds_from_midnight() as f64);
@@ -464,25 +491,37 @@ fn eval_datetime_seconds_since_epoch(val: Value, epoch_year: i32) -> Value {
 
 // Distribution helpers using statrs and libm
 fn eval_normal_cdf(x: f64, mean: f64, std: f64) -> f64 {
-    if std <= 0.0 { return f64::NAN; }
+    if std <= 0.0 {
+        return f64::NAN;
+    }
     use statrs::distribution::{ContinuousCDF, Normal};
     if let Ok(n) = Normal::new(mean, std) {
         n.cdf(x)
-    } else { f64::NAN }
+    } else {
+        f64::NAN
+    }
 }
 fn eval_normal_pdf(x: f64, mean: f64, std: f64) -> f64 {
-    if std <= 0.0 { return f64::NAN; }
+    if std <= 0.0 {
+        return f64::NAN;
+    }
     use statrs::distribution::{Continuous, Normal};
     if let Ok(n) = Normal::new(mean, std) {
         n.pdf(x)
-    } else { f64::NAN }
+    } else {
+        f64::NAN
+    }
 }
 fn eval_normal_idf(p: f64, mean: f64, std: f64) -> f64 {
-    if std <= 0.0 || p <= 0.0 || p >= 1.0 { return f64::NAN; }
+    if std <= 0.0 || p <= 0.0 || p >= 1.0 {
+        return f64::NAN;
+    }
     use statrs::distribution::{ContinuousCDF, Normal};
     if let Ok(n) = Normal::new(mean, std) {
         n.inverse_cdf(p)
-    } else { f64::NAN }
+    } else {
+        f64::NAN
+    }
 }
 
 fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
@@ -564,17 +603,33 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                         // For statistical aggregates, ignore missing
                         let has_missing = args.iter().any(|v| v.is_missing());
                         // For aggregates, ignore missing; for single-arg math, missing => missing
-                        let is_aggregate = matches!(id, BuiltinId::Min | BuiltinId::Max | BuiltinId::Median | BuiltinId::ProductOp | BuiltinId::SumOp | BuiltinId::AvgOp | BuiltinId::Mean | BuiltinId::StdDev | BuiltinId::Variance);
+                        let is_aggregate = matches!(
+                            id,
+                            BuiltinId::Min
+                                | BuiltinId::Max
+                                | BuiltinId::Median
+                                | BuiltinId::ProductOp
+                                | BuiltinId::SumOp
+                                | BuiltinId::AvgOp
+                                | BuiltinId::Mean
+                                | BuiltinId::StdDev
+                                | BuiltinId::Variance
+                        );
                         if has_missing && !is_aggregate {
                             // For non-aggregate, if any arg missing, return Missing
                             Value::Missing
                         } else {
                             // Filter missing for aggregates
-                            let filtered: Vec<Value> = if is_aggregate { args.iter().filter(|v| !v.is_missing()).copied().collect() } else { args.clone() };
+                            let filtered: Vec<Value> = if is_aggregate {
+                                args.iter().filter(|v| !v.is_missing()).copied().collect()
+                            } else {
+                                args.clone()
+                            };
                             if filtered.is_empty() && is_aggregate {
                                 Value::Missing
                             } else {
-                                let nums: Vec<f64> = filtered.iter().filter_map(|v| value_to_f64(*v)).collect();
+                                let nums: Vec<f64> =
+                                    filtered.iter().filter_map(|v| value_to_f64(*v)).collect();
                                 if nums.len() != filtered.len() {
                                     // Non-numeric discrete where numeric expected => missing
                                     Value::Missing
@@ -590,62 +645,101 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                     BuiltinId::NormalCdf => {
                         if args.len() < 3 || args.iter().any(|v| v.is_missing()) {
                             Value::Missing
-                        } else if let (Some(x), Some(m), Some(s)) = (value_to_f64(args[0]), value_to_f64(args[1]), value_to_f64(args[2])) {
+                        } else if let (Some(x), Some(m), Some(s)) = (
+                            value_to_f64(args[0]),
+                            value_to_f64(args[1]),
+                            value_to_f64(args[2]),
+                        ) {
                             f64_to_value(eval_normal_cdf(x, m, s))
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     BuiltinId::NormalPdf => {
                         if args.len() < 3 || args.iter().any(|v| v.is_missing()) {
                             Value::Missing
-                        } else if let (Some(x), Some(m), Some(s)) = (value_to_f64(args[0]), value_to_f64(args[1]), value_to_f64(args[2])) {
+                        } else if let (Some(x), Some(m), Some(s)) = (
+                            value_to_f64(args[0]),
+                            value_to_f64(args[1]),
+                            value_to_f64(args[2]),
+                        ) {
                             f64_to_value(eval_normal_pdf(x, m, s))
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     BuiltinId::NormalIdf => {
                         if args.len() < 3 || args.iter().any(|v| v.is_missing()) {
                             Value::Missing
-                        } else if let (Some(p), Some(m), Some(s)) = (value_to_f64(args[0]), value_to_f64(args[1]), value_to_f64(args[2])) {
+                        } else if let (Some(p), Some(m), Some(s)) = (
+                            value_to_f64(args[0]),
+                            value_to_f64(args[1]),
+                            value_to_f64(args[2]),
+                        ) {
                             f64_to_value(eval_normal_idf(p, m, s))
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     BuiltinId::StdNormalCdf => {
-                        if args.is_empty() || args[0].is_missing() { Value::Missing }
-                        else if let Some(x) = value_to_f64(args[0]) {
+                        if args.is_empty() || args[0].is_missing() {
+                            Value::Missing
+                        } else if let Some(x) = value_to_f64(args[0]) {
                             f64_to_value(eval_normal_cdf(x, 0.0, 1.0))
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     BuiltinId::StdNormalPdf => {
-                        if args.is_empty() || args[0].is_missing() { Value::Missing }
-                        else if let Some(x) = value_to_f64(args[0]) {
+                        if args.is_empty() || args[0].is_missing() {
+                            Value::Missing
+                        } else if let Some(x) = value_to_f64(args[0]) {
                             f64_to_value(eval_normal_pdf(x, 0.0, 1.0))
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     BuiltinId::StdNormalIdf => {
-                        if args.is_empty() || args[0].is_missing() { Value::Missing }
-                        else if let Some(p) = value_to_f64(args[0]) {
+                        if args.is_empty() || args[0].is_missing() {
+                            Value::Missing
+                        } else if let Some(p) = value_to_f64(args[0]) {
                             f64_to_value(eval_normal_idf(p, 0.0, 1.0))
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     // Date functions
                     BuiltinId::DateDaysSinceYear => {
-                        if args.len() < 2 || args[0].is_missing() || args[1].is_missing() { Value::Missing }
-                        else if let Some(y) = value_to_f64(args[1]) {
+                        if args.len() < 2 || args[0].is_missing() || args[1].is_missing() {
+                            Value::Missing
+                        } else if let Some(y) = value_to_f64(args[1]) {
                             eval_date_days_since_year(args[0], y as i32)
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     BuiltinId::DateSecondsSinceYear => {
-                        if args.len() < 2 || args[0].is_missing() || args[1].is_missing() { Value::Missing }
-                        else if let Some(y) = value_to_f64(args[1]) {
+                        if args.len() < 2 || args[0].is_missing() || args[1].is_missing() {
+                            Value::Missing
+                        } else if let Some(y) = value_to_f64(args[1]) {
                             eval_date_seconds_since_year(args[0], y as i32)
-                        } else { Value::Missing }
+                        } else {
+                            Value::Missing
+                        }
                     }
                     BuiltinId::DateSecondsSinceMidnight => {
-                        if args.is_empty() || args[0].is_missing() { Value::Missing }
-                        else { eval_date_seconds_since_midnight(args[0]) }
+                        if args.is_empty() || args[0].is_missing() {
+                            Value::Missing
+                        } else {
+                            eval_date_seconds_since_midnight(args[0])
+                        }
                     }
-                    BuiltinId::DateDaysSince1960 | BuiltinId::DateDaysSince1970 | BuiltinId::DateDaysSince1980 => {
-                        if args.is_empty() || args[0].is_missing() { Value::Missing }
-                        else {
+                    BuiltinId::DateDaysSince1960
+                    | BuiltinId::DateDaysSince1970
+                    | BuiltinId::DateDaysSince1980 => {
+                        if args.is_empty() || args[0].is_missing() {
+                            Value::Missing
+                        } else {
                             let y = match id {
                                 BuiltinId::DateDaysSince1960 => 1960,
                                 BuiltinId::DateDaysSince1970 => 1970,
@@ -655,9 +749,13 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                             eval_date_days_since_epoch(args[0], y)
                         }
                     }
-                    BuiltinId::DateTimeSecondsSince1960 | BuiltinId::DateTimeSecondsSince1970 | BuiltinId::DateTimeSecondsSince1980 | BuiltinId::DateTimeSecondsSince0 => {
-                        if args.is_empty() || args[0].is_missing() { Value::Missing }
-                        else {
+                    BuiltinId::DateTimeSecondsSince1960
+                    | BuiltinId::DateTimeSecondsSince1970
+                    | BuiltinId::DateTimeSecondsSince1980
+                    | BuiltinId::DateTimeSecondsSince0 => {
+                        if args.is_empty() || args[0].is_missing() {
+                            Value::Missing
+                        } else {
                             let y = match id {
                                 BuiltinId::DateTimeSecondsSince1960 => 1960,
                                 BuiltinId::DateTimeSecondsSince1970 => 1970,
@@ -669,8 +767,11 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                         }
                     }
                     BuiltinId::TimeSeconds => {
-                        if args.is_empty() || args[0].is_missing() { Value::Missing }
-                        else { eval_date_seconds_since_midnight(args[0]) }
+                        if args.is_empty() || args[0].is_missing() {
+                            Value::Missing
+                        } else {
+                            eval_date_seconds_since_midnight(args[0])
+                        }
                     }
                     // String builtins — handle Discrete/Continuous as string
                     BuiltinId::Uppercase
@@ -685,7 +786,10 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                     | BuiltinId::FormatNumber
                     | BuiltinId::FormatDatetime => {
                         // Convert args to strings via value_to_string_with_symbols, then evaluate
-                        let strs: Vec<String> = args.iter().map(|v| value_to_string_with_symbols(*v)).collect();
+                        let strs: Vec<String> = args
+                            .iter()
+                            .map(|v| value_to_string_with_symbols(*v))
+                            .collect();
                         match id {
                             BuiltinId::StringLength => {
                                 if let Some(s) = strs.first() {
@@ -700,8 +804,16 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                                     let pat = &strs[1];
                                     // Use regex crate (JPMML parity)
                                     match regex::Regex::new(pat) {
-                                        Ok(re) => Value::Continuous(if re.find(input).is_some() { 1.0 } else { 0.0 }),
-                                        Err(_) => Value::Continuous(if input.contains(pat) { 1.0 } else { 0.0 }),
+                                        Ok(re) => Value::Continuous(if re.find(input).is_some() {
+                                            1.0
+                                        } else {
+                                            0.0
+                                        }),
+                                        Err(_) => Value::Continuous(if input.contains(pat) {
+                                            1.0
+                                        } else {
+                                            0.0
+                                        }),
                                     }
                                 } else {
                                     Value::Missing
@@ -713,7 +825,8 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                                     use std::hash::{Hash, Hasher};
                                     let mut h = DefaultHasher::new();
                                     s.hash(&mut h);
-                                    let sid = pmml_core::SymbolId((h.finish() & 0x7FFF_FFFF) as u32);
+                                    let sid =
+                                        pmml_core::SymbolId((h.finish() & 0x7FFF_FFFF) as u32);
                                     // Also store mapping for future discrete_to_string
                                     SYMBOL_STR_MAP.with(|m| m.borrow_mut().insert(sid, s.clone()));
                                     Value::Discrete(sid)
@@ -755,9 +868,7 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                             Value::Missing
                         }
                     }
-                    BuiltinId::NormContinuousOp | BuiltinId::NormDiscreteOp => {
-                        Value::Missing
-                    }
+                    BuiltinId::NormContinuousOp | BuiltinId::NormDiscreteOp => Value::Missing,
                     BuiltinId::Equal
                     | BuiltinId::NotEqual
                     | BuiltinId::LessThan
@@ -770,7 +881,9 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                             Value::Missing
                         } else {
                             let eq = match (args[0], args[1]) {
-                                (Value::Continuous(a), Value::Continuous(b)) => (a - b).abs() < 1e-9,
+                                (Value::Continuous(a), Value::Continuous(b)) => {
+                                    (a - b).abs() < 1e-9
+                                }
                                 (Value::Discrete(a), Value::Discrete(b)) => a == b,
                                 _ => {
                                     // Compare string representations
@@ -782,10 +895,18 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                             let res = match id {
                                 BuiltinId::Equal => eq,
                                 BuiltinId::NotEqual => !eq,
-                                BuiltinId::LessThan => matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a < b),
-                                BuiltinId::LessOrEqual => matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a <= b),
-                                BuiltinId::GreaterThan => matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a > b),
-                                BuiltinId::GreaterOrEqual => matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a >= b),
+                                BuiltinId::LessThan => {
+                                    matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a < b)
+                                }
+                                BuiltinId::LessOrEqual => {
+                                    matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a <= b)
+                                }
+                                BuiltinId::GreaterThan => {
+                                    matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a > b)
+                                }
+                                BuiltinId::GreaterOrEqual => {
+                                    matches!((args[0], args[1]), (Value::Continuous(a), Value::Continuous(b)) if a >= b)
+                                }
                                 _ => false,
                             };
                             Value::Continuous(if res { 1.0 } else { 0.0 })
@@ -800,20 +921,35 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                                 // Check if any of the set contains Missing?
                                 let has_missing = args[1..].iter().any(|v| v.is_missing());
                                 let is_in = has_missing;
-                                let res = if *id == BuiltinId::IsIn { is_in } else { !is_in };
+                                let res = if *id == BuiltinId::IsIn {
+                                    is_in
+                                } else {
+                                    !is_in
+                                };
                                 Value::Continuous(if res { 1.0 } else { 0.0 })
                             } else {
                                 let is_in = args[1..].iter().any(|v| {
-                                    if target.is_missing() && v.is_missing() { true }
-                                    else if let (Value::Discrete(a), Value::Discrete(b)) = (target, *v) { a == b }
-                                    else if let (Value::Continuous(a), Value::Continuous(b)) = (target, *v) { (a - b).abs() < 1e-9 }
-                                    else {
+                                    if target.is_missing() && v.is_missing() {
+                                        true
+                                    } else if let (Value::Discrete(a), Value::Discrete(b)) =
+                                        (target, *v)
+                                    {
+                                        a == b
+                                    } else if let (Value::Continuous(a), Value::Continuous(b)) =
+                                        (target, *v)
+                                    {
+                                        (a - b).abs() < 1e-9
+                                    } else {
                                         let sa = value_to_string_with_symbols(target);
                                         let sb = value_to_string_with_symbols(*v);
                                         sa == sb
                                     }
                                 });
-                                let res = if *id == BuiltinId::IsIn { is_in } else { !is_in };
+                                let res = if *id == BuiltinId::IsIn {
+                                    is_in
+                                } else {
+                                    !is_in
+                                };
                                 Value::Continuous(if res { 1.0 } else { 0.0 })
                             }
                         }
@@ -822,11 +958,14 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                         if args.iter().any(|v| v.is_missing()) {
                             Value::Missing
                         } else {
-                            let bools: Vec<bool> = args.iter().map(|v| match v {
-                                Value::Continuous(f) => *f != 0.0,
-                                Value::Discrete(sid) => sid.0 != 0,
-                                Value::Missing => false,
-                            }).collect();
+                            let bools: Vec<bool> = args
+                                .iter()
+                                .map(|v| match v {
+                                    Value::Continuous(f) => *f != 0.0,
+                                    Value::Discrete(sid) => sid.0 != 0,
+                                    Value::Missing => false,
+                                })
+                                .collect();
                             let res = match id {
                                 BuiltinId::And => bools.iter().all(|b| *b),
                                 BuiltinId::Or => bools.iter().any(|b| *b),
@@ -894,20 +1033,30 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                                 Value::Discrete(sid) => sid.0 != 0,
                                 Value::Missing => false,
                             };
-                            if cond { args[1] } else { Value::Missing }
+                            if cond {
+                                args[1]
+                            } else {
+                                Value::Missing
+                            }
                         } else {
                             let cond = match args[0] {
                                 Value::Continuous(f) => f != 0.0,
                                 Value::Discrete(sid) => sid.0 != 0,
                                 Value::Missing => false,
                             };
-                            if cond { args[1] } else { args[2] }
+                            if cond {
+                                args[1]
+                            } else {
+                                args[2]
+                            }
                         }
                     }
                     BuiltinId::Threshold => {
                         if args.len() < 2 || args[0].is_missing() || args[1].is_missing() {
                             Value::Missing
-                        } else if let (Value::Continuous(v), Value::Continuous(t)) = (args[0], args[1]) {
+                        } else if let (Value::Continuous(v), Value::Continuous(t)) =
+                            (args[0], args[1])
+                        {
                             Value::Continuous(if v > t { 1.0 } else { 0.0 })
                         } else {
                             Value::Missing
@@ -929,7 +1078,11 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                 let res = eval_mapvalues(input, table, *default);
                 stack.push(res);
             }
-            Op::Discretize { bins, default_value, map_missing_to } => {
+            Op::Discretize {
+                bins,
+                default_value,
+                map_missing_to,
+            } => {
                 let input = stack.pop().unwrap_or(Value::Missing);
                 let res = if input.is_missing() {
                     if let Some(missing_val) = map_missing_to {
@@ -942,8 +1095,16 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                 } else if let Value::Continuous(v) = input {
                     let mut found = None;
                     for b in bins {
-                        let left_ok = if b.left_closed { v >= b.interval_low } else { v > b.interval_low };
-                        let right_ok = if b.right_closed { v <= b.interval_high } else { v < b.interval_high };
+                        let left_ok = if b.left_closed {
+                            v >= b.interval_low
+                        } else {
+                            v > b.interval_low
+                        };
+                        let right_ok = if b.right_closed {
+                            v <= b.interval_high
+                        } else {
+                            v < b.interval_high
+                        };
                         if left_ok && right_ok {
                             found = Some(Value::Discrete(b.bin_value));
                             break;
@@ -965,21 +1126,36 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                 };
                 stack.push(res);
             }
-            Op::NormContinuous { field: _, linear_norms } => {
+            Op::NormContinuous {
+                field: _,
+                linear_norms,
+            } => {
                 let input = stack.pop().unwrap_or(Value::Missing);
                 let res = eval_norm_continuous(input, linear_norms);
                 stack.push(res);
             }
-            Op::NormDiscrete { field: _, value, map_missing_to } => {
+            Op::NormDiscrete {
+                field: _,
+                value,
+                map_missing_to,
+            } => {
                 let input = stack.pop().unwrap_or(Value::Missing);
                 let res = eval_norm_discrete(input, *value, *map_missing_to);
                 stack.push(res);
             }
-            Op::Lag { field, n, aggregate } => {
+            Op::Lag {
+                field,
+                n,
+                aggregate,
+            } => {
                 let res = eval_lag(*field, *n, *aggregate);
                 stack.push(res);
             }
-            Op::MapValuesMulti { inputs, table, default } => {
+            Op::MapValuesMulti {
+                inputs,
+                table,
+                default,
+            } => {
                 let n = inputs.len();
                 let mut popped = Vec::with_capacity(n);
                 for _ in 0..n {
@@ -991,8 +1167,14 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                 for v in &popped {
                     match v {
                         Value::Discrete(sid) => key.push(*sid),
-                        Value::Missing => { missing = true; break; },
-                        Value::Continuous(_) => { missing = true; break; }
+                        Value::Missing => {
+                            missing = true;
+                            break;
+                        }
+                        Value::Continuous(_) => {
+                            missing = true;
+                            break;
+                        }
                     }
                 }
                 let res = if missing {
@@ -1063,12 +1245,28 @@ mod tests {
     #[test]
     fn discretize_bin() {
         let bins = vec![
-            DiscretizeBin { bin_value: pmml_core::SymbolId(10), interval_low: 0.0, interval_high: 10.0, left_closed: true, right_closed: false },
-            DiscretizeBin { bin_value: pmml_core::SymbolId(20), interval_low: 10.0, interval_high: 20.0, left_closed: true, right_closed: true },
+            DiscretizeBin {
+                bin_value: pmml_core::SymbolId(10),
+                interval_low: 0.0,
+                interval_high: 10.0,
+                left_closed: true,
+                right_closed: false,
+            },
+            DiscretizeBin {
+                bin_value: pmml_core::SymbolId(20),
+                interval_low: 10.0,
+                interval_high: 20.0,
+                left_closed: true,
+                right_closed: true,
+            },
         ];
         let bytecode = vec![
             Op::PushField(pmml_core::FieldId(0)),
-            Op::Discretize { bins, default_value: None, map_missing_to: None },
+            Op::Discretize {
+                bins,
+                default_value: None,
+                map_missing_to: None,
+            },
         ];
         let vals = vec![Value::Continuous(5.0)];
         let res = eval_bytecode(&bytecode, &vals).unwrap();
@@ -1080,10 +1278,16 @@ mod tests {
 
     #[test]
     fn mapvalues_lookup() {
-        let table = vec![(pmml_core::SymbolId(1), pmml_core::SymbolId(100)), (pmml_core::SymbolId(2), pmml_core::SymbolId(200))];
+        let table = vec![
+            (pmml_core::SymbolId(1), pmml_core::SymbolId(100)),
+            (pmml_core::SymbolId(2), pmml_core::SymbolId(200)),
+        ];
         let bytecode = vec![
             Op::PushField(pmml_core::FieldId(0)),
-            Op::MapValues { table, default: Some(pmml_core::SymbolId(999)) },
+            Op::MapValues {
+                table,
+                default: Some(pmml_core::SymbolId(999)),
+            },
         ];
         let vals = vec![Value::Discrete(pmml_core::SymbolId(1))];
         let res = eval_bytecode(&bytecode, &vals).unwrap();
@@ -1095,10 +1299,22 @@ mod tests {
 
     #[test]
     fn norm_continuous_linear() {
-        let norms = vec![LinearNorm { orig: 0.0, norm: 0.0 }, LinearNorm { orig: 10.0, norm: 1.0 }];
+        let norms = vec![
+            LinearNorm {
+                orig: 0.0,
+                norm: 0.0,
+            },
+            LinearNorm {
+                orig: 10.0,
+                norm: 1.0,
+            },
+        ];
         let bytecode = vec![
             Op::PushField(pmml_core::FieldId(0)),
-            Op::NormContinuous { field: pmml_core::FieldId(0), linear_norms: norms },
+            Op::NormContinuous {
+                field: pmml_core::FieldId(0),
+                linear_norms: norms,
+            },
         ];
         let vals = vec![Value::Continuous(5.0)];
         let res = eval_bytecode(&bytecode, &vals).unwrap();
@@ -1116,7 +1332,11 @@ mod tests {
             Op::PushField(pmml_core::FieldId(2)),
             Op::CallBuiltin(BuiltinId::AggregateSum, 3),
         ];
-        let vals = vec![Value::Continuous(1.0), Value::Continuous(2.0), Value::Continuous(3.0)];
+        let vals = vec![
+            Value::Continuous(1.0),
+            Value::Continuous(2.0),
+            Value::Continuous(3.0),
+        ];
         let res = eval_bytecode(&bytecode, &vals).unwrap();
         assert_eq!(res, Value::Continuous(6.0));
     }
@@ -1138,7 +1358,11 @@ mod tests {
     fn norm_discrete_basic() {
         let bytecode = vec![
             Op::PushField(pmml_core::FieldId(0)),
-            Op::NormDiscrete { field: pmml_core::FieldId(0), value: pmml_core::SymbolId(5), map_missing_to: None },
+            Op::NormDiscrete {
+                field: pmml_core::FieldId(0),
+                value: pmml_core::SymbolId(5),
+                map_missing_to: None,
+            },
         ];
         let vals = vec![Value::Discrete(pmml_core::SymbolId(5))];
         let res = eval_bytecode(&bytecode, &vals).unwrap();
@@ -1172,7 +1396,11 @@ mod tests {
             Op::PushField(pmml_core::FieldId(2)),
             Op::CallBuiltin(BuiltinId::Median, 3),
         ];
-        let vals = vec![Value::Continuous(3.0), Value::Continuous(1.0), Value::Continuous(2.0)];
+        let vals = vec![
+            Value::Continuous(3.0),
+            Value::Continuous(1.0),
+            Value::Continuous(2.0),
+        ];
         let res = eval_bytecode(&bytecode, &vals).unwrap();
         assert_eq!(res, Value::Continuous(2.0));
         let bytecode2 = vec![
@@ -1218,9 +1446,15 @@ mod tests {
             Op::CallBuiltin(BuiltinId::Modulo, 2),
         ];
         let vals = vec![Value::Continuous(11.0), Value::Continuous(3.0)];
-        assert_eq!(eval_bytecode(&bytecode, &vals).unwrap(), Value::Continuous(2.0));
+        assert_eq!(
+            eval_bytecode(&bytecode, &vals).unwrap(),
+            Value::Continuous(2.0)
+        );
         let vals2 = vec![Value::Continuous(9.0), Value::Continuous(-7.0)];
-        assert_eq!(eval_bytecode(&bytecode, &vals2).unwrap(), Value::Continuous(-5.0));
+        assert_eq!(
+            eval_bytecode(&bytecode, &vals2).unwrap(),
+            Value::Continuous(-5.0)
+        );
     }
 
     #[test]

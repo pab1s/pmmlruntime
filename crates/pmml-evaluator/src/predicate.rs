@@ -77,7 +77,9 @@ pub fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
             for v in array {
                 let matches = match (actual, v) {
                     (Value::Discrete(sid), SymbolIdOrContinuous::Symbol(s)) => sid == *s,
-                    (Value::Continuous(a), SymbolIdOrContinuous::Continuous(b)) => (a - b).abs() < 1e-9,
+                    (Value::Continuous(a), SymbolIdOrContinuous::Continuous(b)) => {
+                        (a - b).abs() < 1e-9
+                    }
                     _ => false,
                 };
                 if matches {
@@ -85,7 +87,11 @@ pub fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
                     break;
                 }
             }
-            if *is_in { found } else { !found }
+            if *is_in {
+                found
+            } else {
+                !found
+            }
         }
         PredicateIr::Compound {
             operator,

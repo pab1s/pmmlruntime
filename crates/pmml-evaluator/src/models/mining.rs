@@ -1,5 +1,7 @@
 use pmml_core::Value;
-use pmml_ir::ir::{MiningIr, MissingPredictionTreatment, ModelIr, MultipleModelMethod, SymbolIdOrContinuous};
+use pmml_ir::ir::{
+    MiningIr, MissingPredictionTreatment, ModelIr, MultipleModelMethod, SymbolIdOrContinuous,
+};
 use std::collections::HashMap;
 
 use crate::predicate::eval_predicate;

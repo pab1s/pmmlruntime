@@ -24,7 +24,9 @@ pub fn string_to_value(
             // Check if field expects string/categorical → intern as Discrete
             let _ = fid; // keep param for future DataDictionary lookup
             if let (Some(dt), Some(op)) = (data_type, op_type) {
-                if dt == pmml_core::field::DataType::String || op == pmml_core::field::OpType::Categorical {
+                if dt == pmml_core::field::DataType::String
+                    || op == pmml_core::field::OpType::Categorical
+                {
                     if let Some(sid) = symbol_str_to_id.get(s) {
                         return Value::Discrete(*sid);
                     }
@@ -34,7 +36,9 @@ pub fn string_to_value(
                 // This handles categorical fields that look numeric (e.g. "0")
                 // Prefer Discrete if symbol exists and op_type unknown
                 // Heuristic: if s is integer-like and symbol exists, use Discrete
-                if s.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') {
+                if s.chars()
+                    .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+                {
                     // still check
                 }
                 return Value::Discrete(*sid);

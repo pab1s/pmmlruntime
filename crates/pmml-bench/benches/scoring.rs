@@ -81,5 +81,10 @@ fn bench_batch_1k_parallel(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_single, bench_batch_1k, bench_batch_1k_parallel);
+criterion_group!(
+    benches,
+    bench_single,
+    bench_batch_1k,
+    bench_batch_1k_parallel
+);
 criterion_main!(benches);

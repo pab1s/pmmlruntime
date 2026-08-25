@@ -28,10 +28,22 @@ mod tests {
     #[test]
     fn discretize_simple() {
         let bins = vec![(0.0, 10.0, true, false), (10.0, 20.0, true, true)];
-        assert_eq!(eval_discretize(Value::Continuous(5.0), &bins), Value::Continuous(0.0));
-        assert_eq!(eval_discretize(Value::Continuous(10.0), &bins), Value::Continuous(1.0));
-        assert_eq!(eval_discretize(Value::Continuous(20.0), &bins), Value::Continuous(1.0));
-        assert_eq!(eval_discretize(Value::Continuous(25.0), &bins), Value::Missing);
+        assert_eq!(
+            eval_discretize(Value::Continuous(5.0), &bins),
+            Value::Continuous(0.0)
+        );
+        assert_eq!(
+            eval_discretize(Value::Continuous(10.0), &bins),
+            Value::Continuous(1.0)
+        );
+        assert_eq!(
+            eval_discretize(Value::Continuous(20.0), &bins),
+            Value::Continuous(1.0)
+        );
+        assert_eq!(
+            eval_discretize(Value::Continuous(25.0), &bins),
+            Value::Missing
+        );
         assert_eq!(eval_discretize(Value::Missing, &bins), Value::Missing);
     }
 }

@@ -5,7 +5,7 @@ use crate::ir::*;
 use pmml_core::error::{PmmlError, Result};
 use pmml_core::field::{DataType, OpType};
 use pmml_core::{FieldId, SymbolId};
-use pmml_xml::{RawDerivedField, RawDefineFunction, RawExpression, RawPmml, RawPredicate};
+use pmml_xml::{RawDefineFunction, RawDerivedField, RawExpression, RawPmml, RawPredicate};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -78,13 +78,13 @@ fn get_or_intern_field(
             data_type,
             op_type,
             values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+            invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+            invalid_value_replacement: None,
+            missing_value_replacement: None,
+            missing_value_treatment: MissingValueTreatment::AsIs,
+            outlier_treatment: OutlierTreatment::AsIs,
+            low_value: None,
+            high_value: None,
         };
         field_meta_map.insert(id, meta);
         id
@@ -147,13 +147,13 @@ fn lower_predicate(
                     data_type: DataType::String,
                     op_type: OpType::Categorical,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 });
             let op = parse_simple_operator(operator)?;
             let val = if matches!(op, SimpleOperator::IsMissing | SimpleOperator::IsNotMissing) {
@@ -189,13 +189,13 @@ fn lower_predicate(
                     data_type: DataType::String,
                     op_type: OpType::Categorical,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 });
             let is_in = boolean_operator == "isIn";
             // E2: memchr fast path for inlineTable array split (whitespace)
@@ -220,7 +220,11 @@ fn lower_predicate(
                         .unwrap_or(remaining.len());
                     let end = start + next_ws;
                     let token = &array[start..end];
-                    out.push(value_to_symbol_or_continuous(token, meta.data_type, interner));
+                    out.push(value_to_symbol_or_continuous(
+                        token,
+                        meta.data_type,
+                        interner,
+                    ));
                     start = end;
                 }
                 out
@@ -249,7 +253,9 @@ fn lower_predicate(
             };
             let preds: SmallVec<[Box<PredicateIr>; 4]> = predicates
                 .iter()
-                .map(|p| lower_predicate(p, interner, field_meta_map, field_name_to_id).map(Box::new))
+                .map(|p| {
+                    lower_predicate(p, interner, field_meta_map, field_name_to_id).map(Box::new)
+                })
                 .collect::<Result<SmallVec<[Box<PredicateIr>; 4]>>>()?;
             Ok(PredicateIr::Compound {
                 operator: op,
@@ -332,40 +338,58 @@ fn flatten_node(
     Ok(idx)
 }
 
-
 fn collect_field_refs(expr: &RawExpression, out: &mut Vec<String>) {
     match expr {
         RawExpression::FieldRef { field, .. } => out.push(field.clone()),
         RawExpression::NormContinuous { field, .. } => out.push(field.clone()),
         RawExpression::NormDiscrete { field, .. } => out.push(field.clone()),
         RawExpression::Discretize { field, .. } => out.push(field.clone()),
-        RawExpression::MapValues { field_column_pairs, .. } => {
+        RawExpression::MapValues {
+            field_column_pairs, ..
+        } => {
             for p in field_column_pairs {
                 out.push(p.field.clone());
             }
         }
-        RawExpression::TextIndex { field, text, search_term, .. } => {
+        RawExpression::TextIndex {
+            field,
+            text,
+            search_term,
+            ..
+        } => {
             out.push(field.clone());
             collect_field_refs(text, out);
             collect_field_refs(search_term, out);
         }
-        RawExpression::Aggregate { field, group_field, .. } => {
+        RawExpression::Aggregate {
+            field, group_field, ..
+        } => {
             out.push(field.clone());
-            if let Some(gf) = group_field { out.push(gf.clone()); }
+            if let Some(gf) = group_field {
+                out.push(gf.clone());
+            }
         }
         RawExpression::Apply { args, .. } => {
-            for a in args { collect_field_refs(a, out); }
+            for a in args {
+                collect_field_refs(a, out);
+            }
         }
-        RawExpression::Constant { .. } => {},
-        RawExpression::Unknown => {},
+        RawExpression::Constant { .. } => {}
+        RawExpression::Unknown => {}
     }
 }
 
 fn topo_sort_derived_fields(raw_fields: &[RawDerivedField]) -> Vec<usize> {
     use std::collections::{HashMap, HashSet, VecDeque};
     let n = raw_fields.len();
-    if n == 0 { return vec![]; }
-    let name_to_idx: HashMap<&str, usize> = raw_fields.iter().enumerate().map(|(i, df)| (df.name.as_str(), i)).collect();
+    if n == 0 {
+        return vec![];
+    }
+    let name_to_idx: HashMap<&str, usize> = raw_fields
+        .iter()
+        .enumerate()
+        .map(|(i, df)| (df.name.as_str(), i))
+        .collect();
     let mut indeg = vec![0usize; n];
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
     for (i, df) in raw_fields.iter().enumerate() {
@@ -386,14 +410,18 @@ fn topo_sort_derived_fields(raw_fields: &[RawDerivedField]) -> Vec<usize> {
     }
     let mut q: VecDeque<usize> = VecDeque::new();
     for i in 0..n {
-        if indeg[i] == 0 { q.push_back(i); }
+        if indeg[i] == 0 {
+            q.push_back(i);
+        }
     }
     let mut order = Vec::new();
     while let Some(u) = q.pop_front() {
         order.push(u);
         for &v in &adj[u] {
             indeg[v] -= 1;
-            if indeg[v] == 0 { q.push_back(v); }
+            if indeg[v] == 0 {
+                q.push_back(v);
+            }
         }
     }
     if order.len() != n {
@@ -403,7 +431,11 @@ fn topo_sort_derived_fields(raw_fields: &[RawDerivedField]) -> Vec<usize> {
     order
 }
 
-fn lower_constant_to_symbol_or_continuous(val: &str, data_type: Option<&str>, interner: &mut Interner) -> SymbolIdOrContinuous {
+fn lower_constant_to_symbol_or_continuous(
+    val: &str,
+    data_type: Option<&str>,
+    interner: &mut Interner,
+) -> SymbolIdOrContinuous {
     let dt_str = data_type.unwrap_or("string");
     let is_numeric_type = matches!(dt_str, "integer" | "double" | "float" | "number");
     if is_numeric_type {
@@ -421,7 +453,6 @@ fn lower_constant_to_symbol_or_continuous(val: &str, data_type: Option<&str>, in
         SymbolIdOrContinuous::Symbol(interner.intern_symbol(val))
     }
 }
-
 
 fn resolve_builtin(name: &str) -> Option<BuiltinId> {
     Some(match name {
@@ -485,7 +516,6 @@ fn resolve_builtin(name: &str) -> Option<BuiltinId> {
     })
 }
 
-
 fn lower_expression_to_ops(
     expr: &RawExpression,
     interner: &mut Interner,
@@ -502,51 +532,156 @@ fn lower_expression_to_ops(
         RawExpression::FieldRef { field, .. } => {
             if let Some(pm) = param_map {
                 if let Some(arg_expr) = pm.get(field) {
-                    return lower_expression_to_ops(arg_expr, interner, field_name_to_id, field_meta_map, define_map, None);
+                    return lower_expression_to_ops(
+                        arg_expr,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        None,
+                    );
                 }
             }
-            let fid = get_or_intern_field(field, DataType::String, OpType::Categorical, interner, field_name_to_id, field_meta_map);
+            let fid = get_or_intern_field(
+                field,
+                DataType::String,
+                OpType::Categorical,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
             Ok(vec![Op::PushField(fid)])
         }
-        RawExpression::NormContinuous { field, linear_norms, .. } => {
+        RawExpression::NormContinuous {
+            field,
+            linear_norms,
+            ..
+        } => {
             if let Some(pm) = param_map {
                 if let Some(arg_expr) = pm.get(field) {
-                    let mut ops = lower_expression_to_ops(arg_expr, interner, field_name_to_id, field_meta_map, define_map, None)?;
-                    let norms: Vec<LinearNorm> = linear_norms.iter().map(|ln| LinearNorm { orig: ln.orig, norm: ln.norm }).collect();
-                    let fid = get_or_intern_field(field, DataType::Double, OpType::Continuous, interner, field_name_to_id, field_meta_map);
-                    ops.push(Op::NormContinuous { field: fid, linear_norms: norms });
+                    let mut ops = lower_expression_to_ops(
+                        arg_expr,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        None,
+                    )?;
+                    let norms: Vec<LinearNorm> = linear_norms
+                        .iter()
+                        .map(|ln| LinearNorm {
+                            orig: ln.orig,
+                            norm: ln.norm,
+                        })
+                        .collect();
+                    let fid = get_or_intern_field(
+                        field,
+                        DataType::Double,
+                        OpType::Continuous,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
+                    ops.push(Op::NormContinuous {
+                        field: fid,
+                        linear_norms: norms,
+                    });
                     return Ok(ops);
                 }
             }
-            let fid = get_or_intern_field(field, DataType::Double, OpType::Continuous, interner, field_name_to_id, field_meta_map);
-            let norms: Vec<LinearNorm> = linear_norms.iter().map(|ln| LinearNorm { orig: ln.orig, norm: ln.norm }).collect();
-            Ok(vec![Op::PushField(fid), Op::NormContinuous { field: fid, linear_norms: norms }])
+            let fid = get_or_intern_field(
+                field,
+                DataType::Double,
+                OpType::Continuous,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
+            let norms: Vec<LinearNorm> = linear_norms
+                .iter()
+                .map(|ln| LinearNorm {
+                    orig: ln.orig,
+                    norm: ln.norm,
+                })
+                .collect();
+            Ok(vec![
+                Op::PushField(fid),
+                Op::NormContinuous {
+                    field: fid,
+                    linear_norms: norms,
+                },
+            ])
         }
         RawExpression::NormDiscrete { field, value, .. } => {
             if let Some(pm) = param_map {
                 if let Some(arg_expr) = pm.get(field) {
-                    let mut ops = lower_expression_to_ops(arg_expr, interner, field_name_to_id, field_meta_map, define_map, None)?;
+                    let mut ops = lower_expression_to_ops(
+                        arg_expr,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        None,
+                    )?;
                     let sid = interner.intern_symbol(value);
                     ops.push(Op::PushConst(SymbolIdOrContinuous::Symbol(sid)));
                     ops.push(Op::CallBuiltin(BuiltinId::Equal, 2));
                     return Ok(ops);
                 }
             }
-            let fid = get_or_intern_field(field, DataType::String, OpType::Categorical, interner, field_name_to_id, field_meta_map);
+            let fid = get_or_intern_field(
+                field,
+                DataType::String,
+                OpType::Categorical,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
             let sid = interner.intern_symbol(value);
-            Ok(vec![Op::PushField(fid), Op::PushConst(SymbolIdOrContinuous::Symbol(sid)), Op::CallBuiltin(BuiltinId::Equal, 2)])
+            Ok(vec![
+                Op::PushField(fid),
+                Op::PushConst(SymbolIdOrContinuous::Symbol(sid)),
+                Op::CallBuiltin(BuiltinId::Equal, 2),
+            ])
         }
-        RawExpression::Discretize { field, bins, default_value, map_missing_to, .. } => {
+        RawExpression::Discretize {
+            field,
+            bins,
+            default_value,
+            map_missing_to,
+            ..
+        } => {
             let mut ops = Vec::new();
             if let Some(pm) = param_map {
                 if let Some(arg_expr) = pm.get(field) {
-                    ops.extend(lower_expression_to_ops(arg_expr, interner, field_name_to_id, field_meta_map, define_map, None)?);
+                    ops.extend(lower_expression_to_ops(
+                        arg_expr,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        None,
+                    )?);
                 } else {
-                    let fid = get_or_intern_field(field, DataType::Double, OpType::Continuous, interner, field_name_to_id, field_meta_map);
+                    let fid = get_or_intern_field(
+                        field,
+                        DataType::Double,
+                        OpType::Continuous,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
                     ops.push(Op::PushField(fid));
                 }
             } else {
-                let fid = get_or_intern_field(field, DataType::Double, OpType::Continuous, interner, field_name_to_id, field_meta_map);
+                let fid = get_or_intern_field(
+                    field,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
                 ops.push(Op::PushField(fid));
             }
             let mut ir_bins = Vec::new();
@@ -561,25 +696,54 @@ fn lower_expression_to_ops(
                     "closedClosed" => (true, true),
                     _ => (true, false),
                 };
-                ir_bins.push(DiscretizeBin { bin_value: sid, interval_low: low, interval_high: high, left_closed, right_closed });
+                ir_bins.push(DiscretizeBin {
+                    bin_value: sid,
+                    interval_low: low,
+                    interval_high: high,
+                    left_closed,
+                    right_closed,
+                });
             }
             let default_sid = default_value.as_ref().map(|s| interner.intern_symbol(s));
             let map_missing_sid = map_missing_to.as_ref().map(|s| interner.intern_symbol(s));
-            ops.push(Op::Discretize { bins: ir_bins, default_value: default_sid, map_missing_to: map_missing_sid });
+            ops.push(Op::Discretize {
+                bins: ir_bins,
+                default_value: default_sid,
+                map_missing_to: map_missing_sid,
+            });
             Ok(ops)
         }
-        RawExpression::MapValues { output_column, field_column_pairs, inline_table, .. } => {
+        RawExpression::MapValues {
+            output_column,
+            field_column_pairs,
+            inline_table,
+            ..
+        } => {
             let n = field_column_pairs.len();
             let mut ops = Vec::new();
             for pair in field_column_pairs {
                 let field = &pair.field;
                 if let Some(pm) = param_map {
                     if let Some(arg_expr) = pm.get(field) {
-                        ops.extend(lower_expression_to_ops(arg_expr, interner, field_name_to_id, field_meta_map, define_map, None)?);
+                        ops.extend(lower_expression_to_ops(
+                            arg_expr,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                            define_map,
+                            None,
+                        )?);
                         continue;
                     }
                 }
-                let fid = get_or_intern_field(field, DataType::String, OpType::Categorical, interner, field_name_to_id, field_meta_map);
+                let fid = get_or_intern_field(
+                    field,
+                    DataType::String,
+                    OpType::Categorical,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
                 ops.push(Op::PushField(fid));
             }
             if n == 1 {
@@ -587,21 +751,37 @@ fn lower_expression_to_ops(
                 for row in inline_table {
                     let col = &field_column_pairs[0].column;
                     let inp_val = row.get(col).cloned().unwrap_or_default();
-                    let out_val = row.get(output_column).or_else(|| {
-                        let local = output_column.split(':').last().unwrap_or(output_column);
-                        row.get(local)
-                    }).cloned().unwrap_or_default();
-                    if inp_val.is_empty() && out_val.is_empty() { continue; }
+                    let out_val = row
+                        .get(output_column)
+                        .or_else(|| {
+                            let local = output_column.split(':').last().unwrap_or(output_column);
+                            row.get(local)
+                        })
+                        .cloned()
+                        .unwrap_or_default();
+                    if inp_val.is_empty() && out_val.is_empty() {
+                        continue;
+                    }
                     let k_sid = interner.intern_symbol(&inp_val);
                     let v_sid = interner.intern_symbol(&out_val);
                     table.push((k_sid, v_sid));
                 }
-                ops.push(Op::MapValues { table, default: None });
+                ops.push(Op::MapValues {
+                    table,
+                    default: None,
+                });
             } else {
                 let mut inputs = Vec::new();
                 for pair in field_column_pairs {
                     let field = &pair.field;
-                    let fid = get_or_intern_field(field, DataType::String, OpType::Categorical, interner, field_name_to_id, field_meta_map);
+                    let fid = get_or_intern_field(
+                        field,
+                        DataType::String,
+                        OpType::Categorical,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
                     inputs.push(fid);
                 }
                 let mut table = Vec::new();
@@ -625,7 +805,11 @@ fn lower_expression_to_ops(
                     let out_sid = interner.intern_symbol(&out_val);
                     table.push((keys, out_sid));
                 }
-                ops.push(Op::MapValuesMulti { inputs, table, default: None });
+                ops.push(Op::MapValuesMulti {
+                    inputs,
+                    table,
+                    default: None,
+                });
             }
             Ok(ops)
         }
@@ -634,7 +818,14 @@ fn lower_expression_to_ops(
                 if function == "POW" {
                     let mut ops = Vec::new();
                     for arg in args {
-                        ops.extend(lower_expression_to_ops(arg, interner, field_name_to_id, field_meta_map, define_map, param_map)?);
+                        ops.extend(lower_expression_to_ops(
+                            arg,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                            define_map,
+                            param_map,
+                        )?);
                     }
                     ops.push(Op::CallBuiltin(BuiltinId::Pow, args.len() as u8));
                     return Ok(ops);
@@ -644,7 +835,14 @@ fn lower_expression_to_ops(
                     new_param_map.insert(param.name.clone(), arg.clone());
                 }
                 if let Some(body) = &define.body {
-                    return lower_expression_to_ops(body, interner, field_name_to_id, field_meta_map, define_map, Some(&new_param_map));
+                    return lower_expression_to_ops(
+                        body,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        Some(&new_param_map),
+                    );
                 } else {
                     return Ok(vec![Op::PushConst(SymbolIdOrContinuous::Missing)]);
                 }
@@ -652,7 +850,14 @@ fn lower_expression_to_ops(
             if let Some(bid) = resolve_builtin(function) {
                 let mut ops = Vec::new();
                 for arg in args {
-                    ops.extend(lower_expression_to_ops(arg, interner, field_name_to_id, field_meta_map, define_map, param_map)?);
+                    ops.extend(lower_expression_to_ops(
+                        arg,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        param_map,
+                    )?);
                 }
                 ops.push(Op::CallBuiltin(bid, args.len() as u8));
                 Ok(ops)
@@ -661,7 +866,14 @@ fn lower_expression_to_ops(
                 if let Some(bid) = resolve_builtin(&lower) {
                     let mut ops = Vec::new();
                     for arg in args {
-                        ops.extend(lower_expression_to_ops(arg, interner, field_name_to_id, field_meta_map, define_map, param_map)?);
+                        ops.extend(lower_expression_to_ops(
+                            arg,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                            define_map,
+                            param_map,
+                        )?);
                     }
                     ops.push(Op::CallBuiltin(bid, args.len() as u8));
                     Ok(ops)
@@ -670,15 +882,40 @@ fn lower_expression_to_ops(
                 }
             }
         }
-        RawExpression::TextIndex { text, search_term, .. } => {
+        RawExpression::TextIndex {
+            text, search_term, ..
+        } => {
             let mut ops = Vec::new();
-            ops.extend(lower_expression_to_ops(text, interner, field_name_to_id, field_meta_map, define_map, param_map)?);
-            ops.extend(lower_expression_to_ops(search_term, interner, field_name_to_id, field_meta_map, define_map, param_map)?);
+            ops.extend(lower_expression_to_ops(
+                text,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+                define_map,
+                param_map,
+            )?);
+            ops.extend(lower_expression_to_ops(
+                search_term,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+                define_map,
+                param_map,
+            )?);
             ops.push(Op::CallBuiltin(BuiltinId::TextIndex, 2));
             Ok(ops)
         }
-        RawExpression::Aggregate { field, function, .. } => {
-            let fid = get_or_intern_field(field, DataType::String, OpType::Categorical, interner, field_name_to_id, field_meta_map);
+        RawExpression::Aggregate {
+            field, function, ..
+        } => {
+            let fid = get_or_intern_field(
+                field,
+                DataType::String,
+                OpType::Categorical,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
             let mut ops = vec![Op::PushField(fid)];
             let bid = match function.as_str() {
                 "average" | "avg" => BuiltinId::AggregateAvg,
@@ -802,10 +1039,12 @@ fn lower_mining_schema(
             .cloned()
             .ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
         // Update meta with per-field MiningField treatments (JPMML parity)
-        meta.invalid_value_treatment = parse_invalid_treatment(mf.invalid_value_treatment.as_deref());
+        meta.invalid_value_treatment =
+            parse_invalid_treatment(mf.invalid_value_treatment.as_deref());
         meta.invalid_value_replacement = mf.invalid_value_replacement.clone();
         meta.missing_value_replacement = mf.missing_value_replacement.clone();
-        meta.missing_value_treatment = parse_missing_treatment(mf.missing_value_treatment.as_deref());
+        meta.missing_value_treatment =
+            parse_missing_treatment(mf.missing_value_treatment.as_deref());
         meta.outlier_treatment = parse_outlier_treatment(mf.outliers.as_deref());
         meta.low_value = mf.low_value.as_ref().and_then(|s| s.parse::<f64>().ok());
         meta.high_value = mf.high_value.as_ref().and_then(|s| s.parse::<f64>().ok());
@@ -826,7 +1065,9 @@ fn lower_mining_schema(
         field_metas.push(meta);
     }
     // For backward compat, keep global missing_value_replacement as first field's if any
-    let global_missing = field_metas.first().and_then(|m| m.missing_value_replacement.clone());
+    let global_missing = field_metas
+        .first()
+        .and_then(|m| m.missing_value_replacement.clone());
     Ok(MiningSchemaIr {
         active_fields,
         target_field,
@@ -851,8 +1092,14 @@ fn lower_output(
                 .unwrap_or(pmml_core::field::ResultFeature::PredictedValue);
             let val = of.value.as_ref().map(|v| interner.intern_symbol(v));
             let field = field_name_to_id.get(&of.name).copied();
-            let target_field = of.target_field.as_ref().and_then(|n| field_name_to_id.get(n).copied());
-            let data_type = of.data_type.as_ref().and_then(|s| s.parse::<DataType>().ok());
+            let target_field = of
+                .target_field
+                .as_ref()
+                .and_then(|n| field_name_to_id.get(n).copied());
+            let data_type = of
+                .data_type
+                .as_ref()
+                .and_then(|s| s.parse::<DataType>().ok());
             let op_type = of.op_type.as_ref().and_then(|s| s.parse::<OpType>().ok());
             let rule_feature = of.rule_feature.as_ref().and_then(|s| match s.as_str() {
                 "antecedent" => Some(RuleFeature::Antecedent),
@@ -873,15 +1120,33 @@ fn lower_output(
                 _ => None,
             });
             let rank = of.rank.unwrap_or(1);
-            let rank_basis = of.rank_basis.as_deref().map(|s| match s {
-                "support" => RankBasis::Support,
-                "lift" => RankBasis::Lift,
-                "leverage" => RankBasis::Leverage,
-                "affinity" => RankBasis::Affinity,
-                _ => RankBasis::Confidence,
-            }).unwrap_or(RankBasis::Confidence);
-            let rank_order = of.rank_order.as_deref().map(|s| if s == "ascending" { RankOrder::Ascending } else { RankOrder::Descending }).unwrap_or(RankOrder::Descending);
-            let is_multi_valued = of.is_multi_valued.as_deref().map(|s| s == "1" || s == "true").unwrap_or(false);
+            let rank_basis = of
+                .rank_basis
+                .as_deref()
+                .map(|s| match s {
+                    "support" => RankBasis::Support,
+                    "lift" => RankBasis::Lift,
+                    "leverage" => RankBasis::Leverage,
+                    "affinity" => RankBasis::Affinity,
+                    _ => RankBasis::Confidence,
+                })
+                .unwrap_or(RankBasis::Confidence);
+            let rank_order = of
+                .rank_order
+                .as_deref()
+                .map(|s| {
+                    if s == "ascending" {
+                        RankOrder::Ascending
+                    } else {
+                        RankOrder::Descending
+                    }
+                })
+                .unwrap_or(RankOrder::Descending);
+            let is_multi_valued = of
+                .is_multi_valued
+                .as_deref()
+                .map(|s| s == "1" || s == "true")
+                .unwrap_or(false);
             OutputFieldIr {
                 name: of.name.clone(),
                 feature,
@@ -948,16 +1213,20 @@ fn lower_targets(
         });
         let cast_bool = cast_method.is_some();
         let op_type = rt.op_type.as_ref().and_then(|s| s.parse::<OpType>().ok());
-        let target_values = rt.target_values.iter().map(|tv| {
-            let sid = tv.value.as_ref().map(|v| interner.intern_symbol(v));
-            TargetValueIr {
-                value: sid,
-                value_str: tv.value.clone(),
-                display_value: tv.display_value.clone(),
-                prior_probability: tv.prior_probability,
-                default_value: tv.default_value,
-            }
-        }).collect();
+        let target_values = rt
+            .target_values
+            .iter()
+            .map(|tv| {
+                let sid = tv.value.as_ref().map(|v| interner.intern_symbol(v));
+                TargetValueIr {
+                    value: sid,
+                    value_str: tv.value.clone(),
+                    display_value: tv.display_value.clone(),
+                    prior_probability: tv.prior_probability,
+                    default_value: tv.default_value,
+                }
+            })
+            .collect();
         // For Targets with no field (like DefaultValueTest: single Target with one TargetValue defaultValue)
         // field_name will be "target" synthetic, but we still need to store
         let field_for_ir = fid;
@@ -1006,13 +1275,13 @@ fn lower_regression(
                     data_type: DataType::Double,
                     op_type: OpType::Continuous,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 };
                 field_meta_map.insert(id, meta);
                 id
@@ -1036,13 +1305,13 @@ fn lower_regression(
                     data_type: DataType::String,
                     op_type: OpType::Categorical,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 };
                 field_meta_map.insert(id, meta);
                 id
@@ -1174,50 +1443,87 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             data_type: dt,
             op_type: ot,
             values: vals.clone(),
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+            invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+            invalid_value_replacement: None,
+            missing_value_replacement: None,
+            missing_value_treatment: MissingValueTreatment::AsIs,
+            outlier_treatment: OutlierTreatment::AsIs,
+            low_value: None,
+            high_value: None,
         };
         field_meta_map.insert(fid, meta.clone());
         data_dictionary.push(meta);
     }
 
     // ---------- TransformationDictionary + LocalTransformations DAG ----------
-    let define_map: std::collections::HashMap<String, RawDefineFunction> = raw.define_functions.into_iter().map(|df| (df.name.clone(), df)).collect();
+    let define_map: std::collections::HashMap<String, RawDefineFunction> = raw
+        .define_functions
+        .into_iter()
+        .map(|df| (df.name.clone(), df))
+        .collect();
 
     let mut all_raw_derived: Vec<RawDerivedField> = Vec::new();
     all_raw_derived.extend(raw.transformation_dictionary.clone());
-    if let Some(ref tm) = raw.tree_model { all_raw_derived.extend(tm.local_derived_fields.clone()); }
-    if let Some(ref rm) = raw.regression_model { all_raw_derived.extend(rm.local_derived_fields.clone()); }
+    if let Some(ref tm) = raw.tree_model {
+        all_raw_derived.extend(tm.local_derived_fields.clone());
+    }
+    if let Some(ref rm) = raw.regression_model {
+        all_raw_derived.extend(rm.local_derived_fields.clone());
+    }
     if let Some(ref mm) = raw.mining_model {
         all_raw_derived.extend(mm.local_derived_fields.clone());
         if let Some(seg) = &mm.segmentation {
             for s in &seg.segments {
                 match &s.model {
-                    pmml_xml::RawSegmentModel::Tree(tm) => all_raw_derived.extend(tm.local_derived_fields.clone()),
-                    pmml_xml::RawSegmentModel::Regression(rm) => all_raw_derived.extend(rm.local_derived_fields.clone()),
+                    pmml_xml::RawSegmentModel::Tree(tm) => {
+                        all_raw_derived.extend(tm.local_derived_fields.clone())
+                    }
+                    pmml_xml::RawSegmentModel::Regression(rm) => {
+                        all_raw_derived.extend(rm.local_derived_fields.clone())
+                    }
                 }
             }
         }
     }
-    if let Some(ref sc) = raw.scorecard { all_raw_derived.extend(sc.local_derived_fields.clone()); }
-    if let Some(ref cm) = raw.clustering_model { all_raw_derived.extend(cm.local_derived_fields.clone()); }
-    if let Some(ref nb) = raw.naive_bayes_model { all_raw_derived.extend(nb.local_derived_fields.clone()); }
-    if let Some(ref nn) = raw.nearest_neighbor_model { all_raw_derived.extend(nn.local_derived_fields.clone()); }
-    if let Some(ref svm) = raw.support_vector_machine_model { all_raw_derived.extend(svm.local_derived_fields.clone()); }
-    if let Some(ref nn) = raw.neural_network { all_raw_derived.extend(nn.local_derived_fields.clone()); }
-    if let Some(ref gr) = raw.general_regression_model { all_raw_derived.extend(gr.local_derived_fields.clone()); }
-    if let Some(ref am) = raw.association_model { all_raw_derived.extend(am.local_derived_fields.clone()); }
-    if let Some(ref rs) = raw.rule_set_model { all_raw_derived.extend(rs.local_derived_fields.clone()); }
+    if let Some(ref sc) = raw.scorecard {
+        all_raw_derived.extend(sc.local_derived_fields.clone());
+    }
+    if let Some(ref cm) = raw.clustering_model {
+        all_raw_derived.extend(cm.local_derived_fields.clone());
+    }
+    if let Some(ref nb) = raw.naive_bayes_model {
+        all_raw_derived.extend(nb.local_derived_fields.clone());
+    }
+    if let Some(ref nn) = raw.nearest_neighbor_model {
+        all_raw_derived.extend(nn.local_derived_fields.clone());
+    }
+    if let Some(ref svm) = raw.support_vector_machine_model {
+        all_raw_derived.extend(svm.local_derived_fields.clone());
+    }
+    if let Some(ref nn) = raw.neural_network {
+        all_raw_derived.extend(nn.local_derived_fields.clone());
+    }
+    if let Some(ref gr) = raw.general_regression_model {
+        all_raw_derived.extend(gr.local_derived_fields.clone());
+    }
+    if let Some(ref am) = raw.association_model {
+        all_raw_derived.extend(am.local_derived_fields.clone());
+    }
+    if let Some(ref rs) = raw.rule_set_model {
+        all_raw_derived.extend(rs.local_derived_fields.clone());
+    }
 
     for df in &all_raw_derived {
         let dt = parse_data_type(&df.data_type).unwrap_or(DataType::String);
         let ot = parse_op_type(&df.op_type).unwrap_or(OpType::Continuous);
-        get_or_intern_field(&df.name, dt, ot, &mut interner, &mut field_name_to_id, &mut field_meta_map);
+        get_or_intern_field(
+            &df.name,
+            dt,
+            ot,
+            &mut interner,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+        );
     }
 
     let sorted_indices = topo_sort_derived_fields(&all_raw_derived);
@@ -1228,13 +1534,32 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         let fid = *field_name_to_id.get(&df.name).unwrap();
         let dt = parse_data_type(&df.data_type).unwrap_or(DataType::String);
         let ot = parse_op_type(&df.op_type).unwrap_or(OpType::Continuous);
-        let bytecode = lower_expression_to_ops(&df.expression, &mut interner, &mut field_name_to_id, &mut field_meta_map, &define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Missing)]);
-        let bytecode = if bytecode.is_empty() { vec![Op::PushConst(SymbolIdOrContinuous::Missing)] } else { bytecode };
-        derived_fields.push(DerivedFieldIr { field_id: fid, name: df.name.clone(), data_type: dt, op_type: ot, bytecode });
+        let bytecode = lower_expression_to_ops(
+            &df.expression,
+            &mut interner,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &define_map,
+            None,
+        )
+        .unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Missing)]);
+        let bytecode = if bytecode.is_empty() {
+            vec![Op::PushConst(SymbolIdOrContinuous::Missing)]
+        } else {
+            bytecode
+        };
+        derived_fields.push(DerivedFieldIr {
+            field_id: fid,
+            name: df.name.clone(),
+            data_type: dt,
+            op_type: ot,
+            bytecode,
+        });
     }
 
     // Build Ir — handle Tree, Regression, Mining
-    let (model, _unused_derived): (ModelIr, Vec<DerivedFieldIr>) = if let Some(tm) = raw.tree_model {
+    let (model, _unused_derived): (ModelIr, Vec<DerivedFieldIr>) = if let Some(tm) = raw.tree_model
+    {
         let tree_ir = lower_tree_raw(
             &tm,
             &mut field_name_to_id,
@@ -1293,7 +1618,12 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                 "MiningModel without Segmentation not supported".into(),
             ));
         };
-        let targets = lower_targets(&mm.targets, &mut field_name_to_id, &mut interner, &mut field_meta_map);
+        let targets = lower_targets(
+            &mm.targets,
+            &mut field_name_to_id,
+            &mut interner,
+            &mut field_meta_map,
+        );
         let mining_ir = MiningIr {
             function_name: mm.function_name.clone(),
             mining_schema,
@@ -1375,13 +1705,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                     data_type: DataType::Double,
                     op_type: OpType::Continuous,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 };
                 field_meta_map.insert(id, meta);
                 id
@@ -1427,13 +1757,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                     data_type: DataType::String,
                     op_type: OpType::Categorical,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 };
                 field_meta_map.insert(id, meta);
                 id
@@ -1508,13 +1838,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                     data_type: DataType::Double,
                     op_type: OpType::Continuous,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 };
                 field_meta_map.insert(id, meta);
                 id
@@ -1542,13 +1872,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                             data_type: DataType::String,
                             op_type: OpType::Categorical,
                             values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                            invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                            invalid_value_replacement: None,
+                            missing_value_replacement: None,
+                            missing_value_treatment: MissingValueTreatment::AsIs,
+                            outlier_treatment: OutlierTreatment::AsIs,
+                            low_value: None,
+                            high_value: None,
                         };
                         field_meta_map.insert(id, meta);
                         id
@@ -1627,13 +1957,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                             data_type: DataType::String,
                             op_type: OpType::Categorical,
                             values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                            invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                            invalid_value_replacement: None,
+                            missing_value_replacement: None,
+                            missing_value_treatment: MissingValueTreatment::AsIs,
+                            outlier_treatment: OutlierTreatment::AsIs,
+                            low_value: None,
+                            high_value: None,
                         };
                         field_meta_map.insert(id, meta);
                         id
@@ -1665,13 +1995,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                             data_type: DataType::Double,
                             op_type: OpType::Continuous,
                             values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                            invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                            invalid_value_replacement: None,
+                            missing_value_replacement: None,
+                            missing_value_treatment: MissingValueTreatment::AsIs,
+                            outlier_treatment: OutlierTreatment::AsIs,
+                            low_value: None,
+                            high_value: None,
                         };
                         field_meta_map.insert(id, meta);
                         id
@@ -1725,13 +2055,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                     data_type: DataType::Double,
                     op_type: OpType::Continuous,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 };
                 field_meta_map.insert(id, meta);
                 id
@@ -1882,13 +2212,13 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                     data_type: DataType::Double,
                     op_type: OpType::Continuous,
                     values: vec![],
-                invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
-                invalid_value_replacement: None,
-                missing_value_replacement: None,
-                missing_value_treatment: MissingValueTreatment::AsIs,
-                outlier_treatment: OutlierTreatment::AsIs,
-                low_value: None,
-                high_value: None,
+                    invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+                    invalid_value_replacement: None,
+                    missing_value_replacement: None,
+                    missing_value_treatment: MissingValueTreatment::AsIs,
+                    outlier_treatment: OutlierTreatment::AsIs,
+                    low_value: None,
+                    high_value: None,
                 };
                 field_meta_map.insert(id, meta);
                 id

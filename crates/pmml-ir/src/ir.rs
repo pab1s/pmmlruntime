@@ -116,19 +116,42 @@ pub enum Op {
     PushField(FieldId),
     PushConst(SymbolIdOrContinuous),
     CallBuiltin(BuiltinId, u8), // builtin + arity
-    JumpIfMissing { target: usize },
-    MapValues { table: Vec<(SymbolId, SymbolId)>, default: Option<SymbolId> },
+    JumpIfMissing {
+        target: usize,
+    },
+    MapValues {
+        table: Vec<(SymbolId, SymbolId)>,
+        default: Option<SymbolId>,
+    },
     MapValuesMulti {
         inputs: Vec<FieldId>,
         table: Vec<(Vec<SymbolId>, SymbolId)>,
         default: Option<SymbolId>,
     },
-    Discretize { bins: Vec<DiscretizeBin>, default_value: Option<SymbolId>, map_missing_to: Option<SymbolId> },
-    NormContinuous { field: FieldId, linear_norms: Vec<LinearNorm> },
-    NormDiscrete { field: FieldId, value: SymbolId, map_missing_to: Option<f64> },
-    Lag { field: FieldId, n: usize, aggregate: LagAggregate },
+    Discretize {
+        bins: Vec<DiscretizeBin>,
+        default_value: Option<SymbolId>,
+        map_missing_to: Option<SymbolId>,
+    },
+    NormContinuous {
+        field: FieldId,
+        linear_norms: Vec<LinearNorm>,
+    },
+    NormDiscrete {
+        field: FieldId,
+        value: SymbolId,
+        map_missing_to: Option<f64>,
+    },
+    Lag {
+        field: FieldId,
+        n: usize,
+        aggregate: LagAggregate,
+    },
     // Aggregate, TextIndex are modeled as CallBuiltin with dedicated BuiltinIds
-    CallDefine { name: String, arity: u8 },
+    CallDefine {
+        name: String,
+        arity: u8,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]

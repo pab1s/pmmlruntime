@@ -10,7 +10,11 @@ pub fn evaluate_association(assoc: &AssociationIr, values: &[Value]) -> Value {
         return Value::Missing;
     }
     let fid = assoc.mining_schema.active_fields[0].as_usize();
-    let actual = if fid < values.len() { values[fid] } else { Value::Missing };
+    let actual = if fid < values.len() {
+        values[fid]
+    } else {
+        Value::Missing
+    };
     if actual.is_missing() {
         return Value::Missing;
     }
@@ -27,11 +31,8 @@ pub fn evaluate_association(assoc: &AssociationIr, values: &[Value]) -> Value {
 
     // Build map item_id -> value SymbolId for quick lookup
     use std::collections::HashMap;
-    let item_value_map: HashMap<&String, pmml_core::SymbolId> = assoc
-        .items
-        .iter()
-        .map(|it| (&it.id, it.value))
-        .collect();
+    let item_value_map: HashMap<&String, pmml_core::SymbolId> =
+        assoc.items.iter().map(|it| (&it.id, it.value)).collect();
     // Find which item id corresponds to input_sid (reverse lookup)
     let mut input_item_id: Option<&String> = None;
     for it in &assoc.items {

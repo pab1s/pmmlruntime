@@ -86,7 +86,10 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
                 predicates.iter().any(|p| eval_predicate(&**p, values))
             }
             pmml_ir::ir::CompoundOperator::Xor => {
-                let true_count = predicates.iter().filter(|p| eval_predicate(&**p, values)).count();
+                let true_count = predicates
+                    .iter()
+                    .filter(|p| eval_predicate(&**p, values))
+                    .count();
                 true_count == 1
             }
             pmml_ir::ir::CompoundOperator::Surrogate => {
