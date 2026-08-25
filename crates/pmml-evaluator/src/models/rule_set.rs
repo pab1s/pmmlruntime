@@ -1,3 +1,21 @@
+//! RuleSetModel evaluation — ordered first-match rule firing.
+//!
+//! Implements `RuleSetModel` where `RuleSet` holds an ordered list of `SimpleRule`s.
+//! Each rule's [`PredicateIr`](pmml_ir::ir::PredicateIr) is tested via a local
+//! `eval_predicate` (identical semantics to [`crate::predicate::eval_predicate`] but
+//! duplicated for bootstrapping; migration to the shared helper is pending) in document
+//! order. The first firing rule's `score: SymbolId` is returned as `Discrete`. When no rule
+//! fires, `defaultScore` (when present) is returned; otherwise `Missing`.
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_rule_set`] — the single public entry point.
+//!
+//! # Performance
+//!
+//! `O(rules * predicate_cost)` where each predicate is a `PredicateIr` test; early exit on first match.
+//! Typically `rules < 256`.
+
 use pmml_core::Value;
 use pmml_ir::ir::{PredicateIr, RuleSetIr, SimpleOperator, SymbolIdOrContinuous};
 
@@ -101,6 +119,54 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
     }
 }
 
+/// Evaluate a [`RuleSetIr`] against a dense `values` array.
+///
+/// Tests `rs.rules` in order; returns `Discrete(rule.score)` for the first predicate
+/// that holds. When no rule fires, returns `Discrete(rs.default_score)` when `Some`,
+/// otherwise `Missing`.
+///
+/// # Parameters
+///
+/// - `rs`: Lowered rule set (`RuleSetIr`) with `rules: Vec<SimpleRuleIr>` in PMML order and optional `default_score`.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`](pmml_core::FieldId). Out-of-bounds → `Missing`.
+///
+/// # Returns
+///
+/// `Discrete(score)` for the winning rule, `Discrete(default_score)` when no rule matches but `Some`, otherwise `Missing`.
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked.
+///
+/// # Performance
+///
+/// `O(rules)` predicate evaluations with early exit; each predicate is `O(1)` to `O(array_len)` for `SimpleSet`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use pmml_evaluator::models::evaluate_rule_set;
+///
+/// let f = FieldId(0);
+/// let s_yes = SymbolId(1);
+/// let s_no = SymbolId(2);
+/// let rs = RuleSetIr {
+///     function_name: "classification".into(),
+///     mining_schema: MiningSchemaIr { active_fields: vec![f], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     output: vec![],
+///     default_score: Some(s_no),
+///     rules: vec![
+///         SimpleRuleIr { id: Some("r1".into()), score: s_yes, predicate: PredicateIr::Simple { field: f, operator: SimpleOperator::GreaterThan, value: SymbolIdOrContinuous::Continuous(10.0) } },
+///         SimpleRuleIr { id: Some("r2".into()), score: s_no, predicate: PredicateIr::True },
+///     ],
+/// };
+/// assert_eq!(evaluate_rule_set(&rs, &[Value::Continuous(15.0)]), Value::Discrete(s_yes));
+/// assert_eq!(evaluate_rule_set(&rs, &[Value::Continuous(5.0)]), Value::Discrete(s_no)); // falls through to r2 (True)
+/// let rs_no_default = RuleSetIr { default_score: None, ..rs.clone() };
+/// // r2 still fires, but if it were absent the result would be Missing
+/// ```
 pub fn evaluate_rule_set(rs: &RuleSetIr, values: &[Value]) -> Value {
     for rule in &rs.rules {
         if eval_predicate(&rule.predicate, values) {

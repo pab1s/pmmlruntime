@@ -1,17 +1,91 @@
-//! Output — ResultFeature handling per JPMML spec.
-//! Supports all ResultFeature types except the 4 explicitly unsupported per spec:
-//! confidenceIntervalLower, confidenceIntervalUpper, standardError, standardDeviation.
+//! Output field evaluation — mapping model scores to [`ResultFeature`] values.
+//!
+//! Implements the PMML `Output` semantics for the 26 [`ResultFeature`] values.
+//! Four features are unsupported per JPMML (`confidenceIntervalLower`,
+//! `confidenceIntervalUpper`, `standardError`, `standardDeviation`) and are
+//! mapped to [`Value::Missing`] in non-strict mode or to
+//! [`PmmlError::UnsupportedMarkup`] in strict mode.
+//!
+//! # What belongs here
+//!
+//! - [`build_output`] — convenience wrapper with only predicted value and string-keyed probabilities.
+//! - [`build_output_with_context`] — full context (probabilities by [`SymbolId`], raw `values`,
+//!   `target_field`, symbol/field name maps) to compute `residual`, `probability` per category,
+//!   `clusterId`, association features, etc.
+//! - [`build_output_strict`] — same as [`build_output`] but returns `Err` for the 4 unsupported features.
+//!
+//! # Relationship to other modules
+//!
+//! Callers are `pmml-session` after `evaluate_*` returns a predicted [`Value`] and an optional
+//! `HashMap<String,f64>` of class probabilities. For `MiningModel` / `TreeModel` the
+//! `values` slice carries the original target field for `residual` computation.
+//!
+//! # Invariants
+//!
+//! - When `output_fields` is empty, a synthetic `predictedValue` entry is still returned.
+//! - Out-of-bounds `target_field` is treated as missing.
 
 use pmml_core::field::ResultFeature;
 use pmml_core::{SymbolId, Value};
-use pmml_ir::ir::{OutputFieldIr, RankBasis, RankOrder};
+use pmml_ir::ir::OutputFieldIr;
 use std::collections::HashMap;
 
-/// Build output map for given predicted value and auxiliary data.
-/// Handles all 26 ResultFeature values; 4 unsupported return Missing or error.
-/// For JPMML parity, unsupported features should ideally return `PmmlError::UnsupportedMarkup`,
-/// but this function returns `Missing` for backward compat and logs.
-/// Use `build_output_strict` for strict handling.
+/// Build an output map from a predicted value and string-keyed probabilities.
+///
+/// Convenience wrapper around [`build_output_with_context`] with no auxiliary context.
+/// Handles all 26 [`ResultFeature`] values; the 4 unsupported features resolve to
+/// [`Value::Missing`] (backward-compatible). Use [`build_output_strict`] for strict
+/// JPMML parity.
+///
+/// # Parameters
+///
+/// - `output_fields`: Declared `Output/OutputField` entries in document order.
+/// - `predicted`: Model's predicted [`Value`] (`Discrete` for classification, `Continuous` for regression).
+/// - `probabilities`: Map `category_name → probability` (e.g., `"setosa" → 0.9`). Looked up by display name.
+///
+/// # Returns
+///
+/// `HashMap<output_name, Value>` with one entry per [`OutputFieldIr`]; guaranteed to contain at least
+/// `"predictedValue"` when `output_fields` is empty. Unsupported features map to [`Value::Missing`].
+///
+/// # Panics
+///
+/// Never panics. All lookups are bounds-checked.
+///
+/// # Performance
+///
+/// `O(output_fields)` with no allocation beyond the result map.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{Value, ResultFeature, SymbolId};
+/// use pmml_ir::ir::{OutputFieldIr, RankBasis, RankOrder};
+/// use pmml_evaluator::output::build_output;
+/// use std::collections::HashMap;
+///
+/// let fields = vec![OutputFieldIr {
+///     name: "out".into(),
+///     feature: ResultFeature::PredictedValue,
+///     value: None,
+///     field: None,
+///     target_field: None,
+///     data_type: None,
+///     op_type: None,
+///     rule_feature: None,
+///     algorithm: None,
+///     rank: 1,
+///     rank_basis: RankBasis::Confidence,
+///     rank_order: RankOrder::Descending,
+///     is_multi_valued: false,
+///     segment_id: None,
+///     is_final_result: true,
+///     display_name: None,
+///     expression_bytecode: None,
+/// }];
+/// let out = build_output(&fields, Value::Continuous(5.0), &HashMap::new());
+/// assert_eq!(out.get("out"), Some(&Value::Continuous(5.0)));
+/// ```
 pub fn build_output(
     output_fields: &[OutputFieldIr],
     predicted: Value,
@@ -29,7 +103,76 @@ pub fn build_output(
     )
 }
 
-/// Extended version with full context for Residual, DisplayValue, etc.
+/// Build an output map with full scoring context.
+///
+/// This is the authoritative output handler. It resolves:
+///
+/// - `predictedValue` / `predictedDisplayValue` → `predicted` directly.
+/// - `probability` (with or without `OutputField.value`) via `probabilities_sid` / `probabilities_str`.
+/// - `residual` via `target_field` and `values[target_field]` (`expected - predicted` for continuous,
+///   `1 - p` / `0 - p` for categorical).
+/// - `clusterId` / `entityId` / `affinity` / `transformedValue` / `decision` / association features
+///   via feature-specific branches (typically `predicted` or a probability).
+/// - Four unsupported features → [`Value::Missing`] (`is_unsupported() == true`).
+///
+/// # Parameters
+///
+/// - `output_fields`: Requested outputs in document order.
+/// - `predicted`: Predicted [`Value`] from `evaluate_*`.
+/// - `probabilities_str`: `category_name → probability` (from `evaluate_*_with_probs`).
+/// - `probabilities_sid`: `SymbolId → probability` (interned form, preferred when available).
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`]; used with `target_field` for `residual`.
+/// - `target_field`: Field whose `values[target_field]` is the expected value for `residual`. `None` → residual is `Missing`.
+/// - `symbol_names`: `SymbolId → display string` for reverse lookup of `probabilities_str`.
+/// - `field_names`: Unused currently; reserved for future `OutputField/@field` dereference. Pass an empty map.
+///
+/// # Returns
+///
+/// Map `output_name → Value`. Never empty.
+///
+/// # Panics
+///
+/// Never panics. All indexing is bounds-checked.
+///
+/// # Performance
+///
+/// `O(output_fields)`; per-field work is constant time apart from two small hash lookups for probabilities.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{Value, SymbolId, FieldId, ResultFeature};
+/// use pmml_ir::ir::{OutputFieldIr, RankBasis, RankOrder};
+/// use pmml_evaluator::output::build_output_with_context;
+/// use std::collections::HashMap;
+///
+/// let sid = SymbolId(1);
+/// let fields = vec![OutputFieldIr {
+///     name: "prob_setosa".into(),
+///     feature: ResultFeature::Probability,
+///     value: Some(sid),
+///     field: None,
+///     target_field: None,
+///     data_type: None,
+///     op_type: None,
+///     rule_feature: None,
+///     algorithm: None,
+///     rank: 1,
+///     rank_basis: RankBasis::Confidence,
+///     rank_order: RankOrder::Descending,
+///     is_multi_valued: false,
+///     segment_id: None,
+///     is_final_result: true,
+///     display_name: None,
+///     expression_bytecode: None,
+/// }];
+/// let mut probs = HashMap::new();
+/// probs.insert("setosa".to_string(), 0.8);
+/// let mut symbol_names = HashMap::new();
+/// symbol_names.insert(sid, "setosa".to_string());
+/// let out = build_output_with_context(&fields, Value::Discrete(sid), &probs, &HashMap::new(), &[], None, &symbol_names, &HashMap::new());
+/// assert_eq!(out.get("prob_setosa"), Some(&Value::Continuous(0.8)));
+/// ```
 #[allow(clippy::too_many_arguments)]
 pub fn build_output_with_context(
     output_fields: &[OutputFieldIr],
@@ -39,7 +182,7 @@ pub fn build_output_with_context(
     values: &[Value],
     target_field: Option<pmml_core::FieldId>,
     symbol_names: &HashMap<SymbolId, String>,
-    field_names: &HashMap<pmml_core::FieldId, String>,
+    _field_names: &HashMap<pmml_core::FieldId, String>,
 ) -> HashMap<String, Value> {
     let mut out = HashMap::new();
 
@@ -212,7 +355,53 @@ pub fn build_output_with_context(
     out
 }
 
-/// Strict version that returns Err for unsupported features.
+/// Strict variant that rejects the four unsupported [`ResultFeature`]s.
+///
+/// Like [`build_output`] but validates that no [`OutputFieldIr`] uses
+/// `is_unsupported() == true` (`standardError`, `standardDeviation`,
+/// `confidenceIntervalLower`, `confidenceIntervalUpper`). On violation it
+/// returns `Err(PmmlError::UnsupportedMarkup)` instead of producing `Missing`.
+///
+/// # Parameters
+///
+/// Same as [`build_output`]: `output_fields`, `predicted`, `probabilities`.
+///
+/// # Returns
+///
+/// `Ok(map)` on success, `Err` when any field requests an unsupported feature.
+///
+/// # Errors
+///
+/// [`pmml_core::error::PmmlError::UnsupportedMarkup`] when an output field's
+/// `feature.is_unsupported()` is `true`.
+///
+/// # Panics
+///
+/// Never panics.
+///
+/// # Performance
+///
+/// `O(output_fields)` to scan for unsupported features, then `O(output_fields)` to build the map.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{Value, ResultFeature};
+/// use pmml_ir::ir::{OutputFieldIr, RankBasis, RankOrder};
+/// use pmml_evaluator::output::build_output_strict;
+/// use std::collections::HashMap;
+///
+/// let fields = vec![OutputFieldIr {
+///     name: "out".into(),
+///     feature: ResultFeature::PredictedValue,
+///     value: None, field: None, target_field: None, data_type: None, op_type: None,
+///     rule_feature: None, algorithm: None, rank: 1,
+///     rank_basis: RankBasis::Confidence, rank_order: RankOrder::Descending,
+///     is_multi_valued: false, segment_id: None, is_final_result: true, display_name: None, expression_bytecode: None,
+/// }];
+/// let res = build_output_strict(&fields, Value::Continuous(1.0), &HashMap::new()).unwrap();
+/// assert_eq!(res.get("out"), Some(&Value::Continuous(1.0)));
+/// ```
 pub fn build_output_strict(
     output_fields: &[OutputFieldIr],
     predicted: Value,
@@ -234,7 +423,7 @@ mod tests {
     use super::*;
     use pmml_core::field::ResultFeature;
     use pmml_core::{FieldId, SymbolId, Value};
-    use pmml_ir::ir::{Algorithm, RankBasis, RankOrder};
+    use pmml_ir::ir::{RankBasis, RankOrder};
 
     fn make_output_field(
         name: &str,
@@ -300,7 +489,6 @@ mod tests {
 
     #[test]
     fn probability_without_value_returns_pred_prob() {
-        let sid = SymbolId(1);
         let fields = vec![make_output_field("prob", ResultFeature::Probability, None)];
         let mut probs = HashMap::new();
         probs.insert("versicolor".to_string(), 0.6);

@@ -1,13 +1,83 @@
-//! Targets post-processing — rescale, cast, min/max, defaultValue per JPMML spec.
-//! Mirrors `org.jpmml.evaluator.TargetUtil` (TargetUtil.java).
+//! Targets post-processing — rescaling, clamping, and integer casting.
+//!
+//! Implements `TargetUtil` semantics from JPMML (`Target`/`Targets`): after a
+//! model produces a raw score, the first [`TargetIr`] is applied to that value.
+//! Categorical (`Discrete`) predictions pass through unchanged; continuous values
+//! are optionally clamped by `min`/`max`, rescaled by `rescaleFactor`/`rescaleConstant`,
+//! and then cast to integer.
+//!
+//! # What belongs here
+//!
+//! - [`apply_targets`] — authoritative entry point; also handles `defaultValue` when the prediction is `Missing`.
+//! - [`apply_targets_with_prior`] — thin wrapper for classification contexts where prior probabilities
+//!   would influence missing-value handling (currently delegates to [`apply_targets`]).
+//!
+//! # Relationship to other modules
+//!
+//! `pmml-session` calls [`apply_targets`] after `evaluate_*` for models that carry
+//! `targets: Vec<TargetIr>` (e.g., `Tree`, `Regression`). `MiningModel` segment chaining
+//! writes raw predictions back to `values` before this step, so targets apply only to the final score.
+//!
+//! # Invariants
+//!
+//! - When `targets` is empty the value is returned unchanged.
+//! - Only the first [`TargetIr`] is applied (single-target case); multi-target is not yet supported.
+//! - For `Missing` predictions, the first `TargetValue` with `default_value.is_some()` wins.
 
 use pmml_core::Value;
 use pmml_ir::ir::{CastIntegerMethod, TargetIr};
 
-/// Apply Targets to a predicted value.
-/// - If predicted is Missing, returns defaultValue if present (first TargetValue with Some default), else Missing.
-/// - Else applies min/max clipping, rescaleFactor/rescaleConstant, and castInteger per first Target.
-/// For MultiTarget, only first is applied (single target case). For categorical, no rescale.
+/// Apply [`TargetIr`] post-processing to a predicted value.
+///
+/// Single-target semantics: when `targets` is empty the input is returned as-is.
+/// Otherwise the first target is used and the following JPMML order is applied:
+///
+/// 1. **Missing** → search `targets[0].target_values` for the first `default_value.is_some()` and
+///    return `Continuous(default)`; if none exists, return `Missing`.
+/// 2. **Discrete** → returned unchanged (no rescale / clamp / cast).
+/// 3. **Continuous** → `clamp(min, max)` → `value * rescaleFactor + rescaleConstant` → optional
+///    integer cast (`Round` / `Ceiling` / `Floor`; legacy `cast_integer == true` maps to `Round`).
+///
+/// # Parameters
+///
+/// - `targets`: Slice of [`TargetIr`] from the model's `Targets`. Only `targets[0]` is consulted.
+/// - `value`: Raw predicted [`Value`] from `evaluate_*` (typically `Continuous` for regression).
+///
+/// # Returns
+///
+/// Post-processed [`Value`]. `Missing` when the input is `Missing` and no `defaultValue` exists;
+/// otherwise `Continuous` with rescaling applied, or the original `Discrete`.
+///
+/// # Panics
+///
+/// Never panics. All option handling is checked.
+///
+/// # Performance
+///
+/// `O(target_values)` to scan for a default when `value` is `Missing`; `O(1)` otherwise.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, Value};
+/// use pmml_ir::ir::{TargetIr, TargetValueIr, CastIntegerMethod};
+/// use pmml_evaluator::targets::apply_targets;
+///
+/// let target = TargetIr {
+///     field: Some(FieldId(0)),
+///     field_name: "y".into(),
+///     op_type: None,
+///     rescale_constant: 1.0,
+///     rescale_factor: 2.0,
+///     cast_integer: true,
+///     cast_method: Some(CastIntegerMethod::Round),
+///     min: None,
+///     max: None,
+///     target_values: vec![],
+/// };
+/// // 2.3 * 2 + 1 = 5.6 → round 6
+/// assert_eq!(apply_targets(&[target], Value::Continuous(2.3)), Value::Continuous(6.0));
+/// ```
 pub fn apply_targets(targets: &[TargetIr], value: Value) -> Value {
     if targets.is_empty() {
         return value;
@@ -80,9 +150,48 @@ pub fn apply_targets(targets: &[TargetIr], value: Value) -> Value {
     }
 }
 
-/// Apply Targets and also handle priorProbability for classification missing case.
-/// For classification, if predicted is Missing and no defaultValue, we could return prior probabilities distribution,
-/// but this function only returns single Value, so we return Missing and let Output handle probabilities.
+/// Apply [`TargetIr`] with a classification prior-probability hint.
+///
+/// For classification models where the prediction is [`Value::Missing`] and no
+/// `defaultValue` exists, JPMML would fall back to prior probabilities from
+/// `TargetValue/@priorProbability`. This function currently delegates to
+/// [`apply_targets`] unchanged — prior handling is performed by the `Output`
+/// layer rather than here — but the parameter is retained for API compatibility
+/// with JPMML's `TargetUtil`.
+///
+/// # Parameters
+///
+/// - `targets`: Same as [`apply_targets`].
+/// - `value`: Raw predicted value.
+/// - `_is_classification`: When `true` the caller is a classification model; currently ignored.
+///
+/// # Returns
+///
+/// Same as [`apply_targets`]. No additional probability logic is applied yet.
+///
+/// # Panics
+///
+/// Never panics.
+///
+/// # Performance
+///
+/// Same as [`apply_targets`]: `O(target_values)` for missing, `O(1)` otherwise.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{Value, FieldId};
+/// use pmml_ir::ir::TargetIr;
+/// use pmml_evaluator::targets::apply_targets_with_prior;
+///
+/// let targets = vec![TargetIr {
+///     field: Some(FieldId(0)), field_name: "y".into(), op_type: None,
+///     rescale_constant: 0.0, rescale_factor: 1.0, cast_integer: false, cast_method: None,
+///     min: Some(0.0), max: Some(10.0), target_values: vec![],
+/// }];
+/// assert_eq!(apply_targets_with_prior(&targets, Value::Continuous(15.0), false), Value::Continuous(10.0));
+/// assert_eq!(apply_targets_with_prior(&targets, Value::Missing, true), Value::Missing);
+/// ```
 pub fn apply_targets_with_prior(
     targets: &[TargetIr],
     value: Value,

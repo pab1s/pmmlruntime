@@ -1,7 +1,79 @@
+//! GeneralRegressionModel evaluation — PPMatrix / ParamMatrix with logistic softmax.
+//!
+//! Implements `GeneralRegressionModel` (GLM / multinomial logistic). For each
+//! `Parameter`, its `PPCell`s define a predictor `x` as product of factor contrasts
+//! (`Factor` categorical, per-category contrast matrix) and covariate values. `eta`
+//! per `targetCategory` is `Σ beta * x` from `ParamMatrix`; probabilities are
+//! `softmax(eta)` with the reference category `eta = 0` (`exp(0) = 1`). The
+//! category with maximal probability is predicted. Ties to `TargetIr`/`Output` layers
+//! for display.
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_general_regression`] — predicted `Value` only.
+//! - [`evaluate_general_regression_with_probs`] — predicted plus `HashMap<String,f64>` probabilities.
+//!
+//! # Performance
+//!
+//! `O(parameters * ppcells + param_matrix)` to compute `param_x` plus `O(targets)` for `softmax`.
+//! Small hash maps; no per-row allocation beyond those maps.
+
 use pmml_core::Value;
 use pmml_ir::ir::GeneralRegressionIr;
 use std::collections::HashMap;
 
+/// Evaluate a [`GeneralRegressionIr`] and return the predicted value.
+///
+/// Thin wrapper around [`evaluate_general_regression_with_probs`] that discards
+/// the probability map. Predicts the `targetCategory` with maximal softmax probability
+/// (`eta = Σ beta * x`, `p = exp(eta) / Σ exp(eta)` with reference `eta=0`).
+///
+/// # Parameters
+///
+/// - `gr`: Lowered general-regression model (`GeneralRegressionIr`) with `parameters`, `factors`, `covariates`,
+///   `pp_matrix`, `param_matrix`, `target_reference_category`.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`](pmml_core::FieldId).
+/// - `_field_names`: Unused (reserved for future factor aliasing); pass empty map.
+/// - `symbol_names`: `SymbolId → string` for parsing discrete `Value`s as `f64` and for output keys.
+/// - `name_to_id`: `predictorName → FieldId` for resolving `PPCell.predictorName`.
+///
+/// # Returns
+///
+/// `Discrete(predicted_category)` or `Missing` when no `ParamMatrix` entry wins.
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked; missing inputs yield `x = 0` for that parameter.
+///
+/// # Performance
+///
+/// Same as [`evaluate_general_regression_with_probs`]: one `HashMap` traversal per parameter plus softmax.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use std::collections::HashMap;
+/// use pmml_evaluator::models::general_regression::evaluate_general_regression;
+///
+/// let fid = FieldId(0);
+/// let s_low = SymbolId(1);
+/// let s_high = SymbolId(2);
+/// let mut name_to_id = HashMap::new(); name_to_id.insert("x".into(), fid);
+/// let mut symbol_names = HashMap::new(); symbol_names.insert(s_low, "Low".into()); symbol_names.insert(s_high, "High".into());
+/// let gr = GeneralRegressionIr {
+///     function_name: "classification".into(),
+///     mining_schema: MiningSchemaIr { active_fields: vec![fid], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     output: vec![], model_type: Some("multinomialLogistic".into()), target_variable_name: None, target_reference_category: Some(s_high),
+///     parameters: vec![ParameterIr { name: "p0".into(), label: None }],
+///     factors: vec![], covariates: vec![fid],
+///     pp_matrix: vec![PPCellIr { value: SymbolId(0), predictor_name: "x".into(), parameter_name: "p0".into() }],
+///     param_matrix: vec![PCellIr { target_category: Some(s_low), parameter_name: "p0".into(), beta: 0.5 }],
+/// };
+/// let pred = evaluate_general_regression(&gr, &[Value::Continuous(2.0)], &HashMap::new(), &symbol_names, &name_to_id);
+/// assert!(matches!(pred, Value::Discrete(_)));
+/// ```
 pub fn evaluate_general_regression(
     gr: &GeneralRegressionIr,
     values: &[Value],
@@ -14,6 +86,58 @@ pub fn evaluate_general_regression(
     pred
 }
 
+/// Evaluate a [`GeneralRegressionIr`] and return the predicted value plus class probabilities.
+///
+/// Builds `param_x: parameterName → x` (product of contrasts/covariates per `PPMatrix`), then
+/// `eta_target = Σ beta * x` per `PCell.target_category` (reference category `eta = 0`). Probabilities
+/// are `softmax` (`exp(eta)/Σ exp(eta)`) and the maximal category is returned. Missing inputs produce
+/// `x = 0` for that parameter. Factor contrasts are looked up via `factor.matrix[row][col]` where
+/// `row` is the input category's index and `col` is the `PPCell.value` category's column.
+///
+/// # Parameters
+///
+/// Same as [`evaluate_general_regression`]: `gr`, `values`, `_field_names`, `symbol_names`, `name_to_id`.
+///
+/// # Returns
+///
+/// `(predicted, probs)` where `predicted: Value::Discrete` is the winning category and
+/// `probs: HashMap<category_string, f64>` covers all distinct `target_category` values plus the reference.
+/// `probs` is empty only when `param_matrix` is empty.
+///
+/// # Panics
+///
+/// Never panics. All indexing is bounds-checked; `softmax` uses `exp` with IEEE 754 handling.
+///
+/// # Performance
+///
+/// `O(parameters * ppcells + param_matrix + targets)` with two hash maps (`param_x`, `target_etas`).
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use std::collections::HashMap;
+/// use pmml_evaluator::models::general_regression::evaluate_general_regression_with_probs;
+///
+/// let fid = FieldId(0);
+/// let s_low = SymbolId(1);
+/// let s_high = SymbolId(2);
+/// let mut name_to_id = HashMap::new(); name_to_id.insert("x".into(), fid);
+/// let mut symbol_names = HashMap::new(); symbol_names.insert(s_low, "Low".into()); symbol_names.insert(s_high, "High".into());
+/// let gr = GeneralRegressionIr {
+///     function_name: "classification".into(),
+///     mining_schema: MiningSchemaIr { active_fields: vec![fid], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     output: vec![], model_type: Some("multinomialLogistic".into()), target_variable_name: None, target_reference_category: Some(s_high),
+///     parameters: vec![ParameterIr { name: "p0".into(), label: None }],
+///     factors: vec![], covariates: vec![fid],
+///     pp_matrix: vec![PPCellIr { value: SymbolId(0), predictor_name: "x".into(), parameter_name: "p0".into() }],
+///     param_matrix: vec![PCellIr { target_category: Some(s_low), parameter_name: "p0".into(), beta: 0.0 }],
+/// };
+/// let (pred, probs) = evaluate_general_regression_with_probs(&gr, &[Value::Continuous(1.0)], &HashMap::new(), &symbol_names, &name_to_id);
+/// assert!(probs.contains_key("Low"));
+/// assert!(probs.contains_key("High"));
+/// ```
 pub fn evaluate_general_regression_with_probs(
     gr: &GeneralRegressionIr,
     values: &[Value],

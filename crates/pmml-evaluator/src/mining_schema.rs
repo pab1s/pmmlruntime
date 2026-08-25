@@ -1,5 +1,33 @@
-//! MiningSchema pre-processing — per JPMML InputFieldUtil.
-//! Handles DataType coercion, invalidValueTreatment, missingValueTreatment, outlierTreatment.
+//! Mining schema pre-processing — [`MiningSchemaIr`] interpretation on the hot path.
+//!
+//! This module implements the JPMML `InputFieldUtil` / `MiningFieldUtil` semantics
+//! for the evaluator: per-[`FieldMeta`] handling of
+//! `invalidValueTreatment`, `missingValueTreatment`/`missingValueReplacement`,
+//! `outlierTreatment` with `lowValue`/`highValue`, and `DataType`/`OpType` coercion
+//! checks. The interpreter is invoked once per row before derived fields and
+//! model scoring.
+//!
+//! # What belongs here
+//!
+//! - [`apply_mining_schema`] — the single public entry point that copies a sparse
+//!   caller map into a dense `&mut [Value]` indexed by [`FieldId`].
+//! - Private helpers [`is_valid_value`], [`coerce_value`], [`parse_replacement`] that
+//!   encapsulate categorical validity and numeric coercion. They are `#[allow(dead_code)]`
+//!   until the IR carries full interval / symbol maps for precise coercion.
+//!
+//! # Relationship to other modules
+//!
+//! `pmml-session` allocates `values: Vec<Value>` sized to `Ir::num_fields()` and
+//! calls [`apply_mining_schema`] before [`crate::transform::eval_derived_fields`].
+//! The dense array is then read by [`crate::predicate::eval_predicate`] and every
+//! `evaluate_*` in [`crate::models`].
+//!
+//! # Invariants
+//!
+//! - `values.len()` must be at least `max(FieldId.0) + 1` for every active field;
+//!   out-of-bounds writes are silently ignored (bounds-checked).
+//! - `is_valid_value` considers `Missing` never valid; an empty `FieldMeta.values`
+//!   means “any discrete value is valid” per JPMML.
 
 use pmml_core::error::{PmmlError, Result};
 use pmml_core::field::{DataType, OpType};
@@ -9,18 +37,28 @@ use pmml_ir::ir::{
 };
 use std::collections::HashMap;
 
-/// Check if a Value is valid for a given FieldMeta.
-/// For categorical with explicit values list, valid if Discrete and value in allowed set.
-/// For continuous, valid if Continuous (or Discrete that can be coerced) — for now, Continuous is valid.
-/// If field has no explicit values (empty), any value is considered valid.
-/// Also handles intervals? For now, intervals not stored, so we skip.
+/// Returns `true` when `value` is valid for `meta`.
+///
+/// Validity follows `DataDictionary` / `MiningField` rules:
+/// - [`Value::Missing`] is never valid (handled as missing separately).
+/// - [`Value::Continuous`] is valid only when [`OpType::Continuous`]; for
+///   [`OpType::Categorical`] / [`OpType::Ordinal`] it is invalid because the
+///   field expects a discrete symbol.
+/// - [`Value::Discrete`] is valid when `meta.values` is empty (no restriction)
+///   or when the symbol appears in the allowed set.
+///
+/// Intervals are not stored in [`FieldMeta`] and are ignored.
+///
+/// # Performance
+///
+/// `O(k)` where `k = meta.values.len()` for discrete values; `O(1)` otherwise.
 fn is_valid_value(value: Value, meta: &FieldMeta) -> bool {
     match value {
         Value::Missing => false, // missing is not valid, will be handled as missing
         Value::Continuous(_) => {
             // For categorical, Continuous is invalid? But we can treat as invalid if opType is categorical/ordinal and dataType is string
-            // For now, if opType is Continuous, Continuous is valid; if Categorical but dataType is numeric, maybe also valid?
-            // Simplify: Continuous is valid for Continuous opType, invalid for Categorical with string data
+            // For now, if opType is Continuous, Continuous is valid; if Categorical but dataType is string, Continuous is invalid (should be Discrete)
+            // For simplicity, treat Continuous as invalid for categorical
             match meta.op_type {
                 OpType::Continuous => true,
                 OpType::Categorical | OpType::Ordinal => {
@@ -43,8 +81,19 @@ fn is_valid_value(value: Value, meta: &FieldMeta) -> bool {
     }
 }
 
-/// Try to coerce a Value to the FieldMeta's DataType/OpType.
-/// Returns Some(Value) if coercion succeeds, None if it fails (invalid).
+/// Try to coerce a [`Value`] to the [`FieldMeta`]'s [`DataType`]/[`OpType`].
+///
+/// Returns `Some(Value)` when coercion succeeds, `None` when it fails (invalid).
+/// `symbol_names` maps [`pmml_core::SymbolId`] to its string rendering for
+/// parsing discrete strings as `f64` or matching continuous values to symbols.
+///
+/// Currently unused on the hot path (coercion is performed inline in
+/// [`apply_mining_schema`]); retained for future interval-aware validation.
+///
+/// # Performance
+///
+/// `O(n)` where `n` is the size of `symbol_names` when searching for a matching name.
+#[allow(dead_code)]
 fn coerce_value(
     value: Value,
     meta: &FieldMeta,
@@ -98,8 +147,14 @@ fn coerce_value(
     }
 }
 
-/// Parse a replacement string (missing/invalid) into a Value per FieldMeta's DataType.
-/// Returns Value::Missing if parsing fails.
+/// Parse a `missing`/`invalid` replacement string into a [`Value`] per [`FieldMeta`]'s [`DataType`].
+///
+/// Returns [`Value::Missing`] when parsing fails and no interner is available.
+/// When `interner` is `Some`, categorical replacements are interned to a fresh
+/// [`pmml_core::SymbolId`]; callers without an interner receive a placeholder `SymbolId(0)`.
+///
+/// Currently unused (replacement parsing is inlined in [`apply_mining_schema`] for numeric fields).
+#[allow(dead_code)]
 fn parse_replacement(
     s: &str,
     meta: &FieldMeta,
@@ -132,13 +187,86 @@ fn parse_replacement(
     }
 }
 
-/// Apply MiningSchema to `values` array in-place.
-/// `input_map` is FieldId->Value from caller (sparse). `values` is flat `Vec<Value>` sized for all fields (initialized Missing).
-/// Handles:
-/// - DataType coercion
-/// - invalidValueTreatment (returnInvalid -> error, asMissing -> Missing, asIs -> keep, asValue -> replacement)
-/// - missingValueTreatment / missingValueReplacement
-/// - outlierTreatment (asMissingValues / asExtremeValues) with low/high
+/// Apply a [`MiningSchemaIr`] to a dense `values` array in place.
+///
+/// Copies each active field from the sparse `input_map` (`FieldId → Value`) into
+/// `values[field.as_usize()]` while applying, in JPMML order:
+///
+/// 1. **Missing handling** — when the raw value is [`Value::Missing`], apply
+///    [`MissingValueTreatment`] and `missingValueReplacement` (numeric parse as `f64`).
+/// 2. **Validity / coercion** — [`is_valid_value`] plus `DataType` check; on invalid,
+///    apply [`InvalidValueTreatment`] (`ReturnInvalid` → error, `AsMissing` → missing + replacement,
+///    `AsValue` → invalid-value replacement, `AsIs` → keep).
+/// 3. **Outlier handling** — for valid [`Value::Continuous`], apply [`OutlierTreatment`]
+///    (`AsMissingValues` → missing + replacement, `AsExtremeValues` → clamp to `low`/`high`).
+///
+/// `field_metas` provides per-field treatments; fields absent from `field_metas` are copied verbatim.
+///
+/// # Parameters
+///
+/// - `schema`: Lowered mining schema with `active_fields` and per-field [`FieldMeta`].
+/// - `input_map`: Sparse caller map; missing entries are treated as [`Value::Missing`].
+/// - `values`: Dense mutable array indexed by [`FieldId::as_usize`]; mutated in place.
+///   Must be at least `max(active_fields).as_usize() + 1` long; shorter arrays silently ignore
+///   out-of-bounds fields (bounds-checked).
+///
+/// # Returns
+///
+/// `Ok(())` on success, `Err(PmmlError::InvalidValue)` when a field has
+/// `missingValueTreatment = returnInvalid` or `invalidValueTreatment = returnInvalid`
+/// and the value triggers that treatment.
+///
+/// # Errors
+///
+/// - [`PmmlError::InvalidValue`] when a required field is missing with `ReturnInvalid`
+///   or an invalid categorical/numeric value is encountered with `ReturnInvalid`.
+///
+/// # Panics
+///
+/// Never panics. All indexing is bounds-checked; unknown [`FieldId`]s are ignored.
+///
+/// # Performance
+///
+/// `O(active_fields)` with no allocation beyond the `meta_map` hash table (small, stack-friendly
+/// for typical <64 fields). Each field does constant-time validity and outlier checks.
+///
+/// # Side effects
+///
+/// Mutates `values[ field.as_usize() ]` for every `field` in `schema.active_fields`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, Value, field::{DataType, OpType}};
+/// use pmml_ir::ir::{FieldMeta, MiningSchemaIr, OutlierTreatment, InvalidValueTreatment, MissingValueTreatment};
+/// use pmml_evaluator::mining_schema::apply_mining_schema;
+/// use std::collections::HashMap;
+///
+/// let fid = FieldId(0);
+/// let schema = MiningSchemaIr {
+///     active_fields: vec![fid],
+///     target_field: None,
+///     field_metas: vec![FieldMeta {
+///         field_id: fid,
+///         name: "age".into(),
+///         data_type: DataType::Double,
+///         op_type: OpType::Continuous,
+///         values: vec![],
+///         invalid_value_treatment: InvalidValueTreatment::ReturnInvalid,
+///         invalid_value_replacement: None,
+///         missing_value_replacement: Some("50".into()),
+///         missing_value_treatment: MissingValueTreatment::AsIs,
+///         outlier_treatment: OutlierTreatment::AsIs,
+///         low_value: None,
+///         high_value: None,
+///     }],
+///     missing_value_replacement: None,
+/// };
+/// let input = HashMap::new(); // missing → replacement
+/// let mut values = vec![Value::Missing; 1];
+/// apply_mining_schema(&schema, &input, &mut values).unwrap();
+/// assert_eq!(values[0], Value::Continuous(50.0));
+/// ```
 pub fn apply_mining_schema(
     schema: &MiningSchemaIr,
     input_map: &HashMap<FieldId, Value>,
@@ -231,18 +359,13 @@ pub fn apply_mining_schema(
         // Try to coerce if needed; for now, we assume value is already correctly typed if not missing
         // But we should check if value type matches meta.data_type; if not, try to coerce
         // For minimal, we will check is_valid_value; if not valid, then it's invalid
-        let mut is_valid = is_valid_value(value, meta);
+        let is_valid = is_valid_value(value, meta);
 
         // Also check DataType mismatch as invalid
         // For numeric field with Discrete value that could be parsed as numeric, we could coerce and consider valid
         if !is_valid {
-            // Try coercion: if Discrete for numeric field, try to parse as f64
-            if let Value::Discrete(sid) = value {
-                // We don't have symbol map here, so we can't coerce without it.
-                // For now, treat as invalid and let invalid handling deal with it.
-                // In JPMML, is_valid would be determined via hasValidValues etc., which we already handled via meta.values check
-                // For DataType mismatch, we could treat as invalid
-            }
+            // Try coercion: if Discrete for numeric field, try to parse as f64 — handled via is_valid; invalid path follows
+            let _ = value;
         }
 
         if !is_valid {

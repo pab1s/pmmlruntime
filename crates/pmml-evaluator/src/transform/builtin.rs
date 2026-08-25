@@ -1,10 +1,69 @@
-//! Builtin functions — 100+ PMML functions via libm/statrs.
-//! Full mapping for Apply 100 builtins including TextIndex, Aggregate, Lag, NormContinuous handling via VM.
+//! Builtin PMML functions — name resolution and numeric/string evaluation.
+//!
+//! Implements the ~100 PMML `Apply` builtins (`pmml.xsd` `FUNCTION` plus vendor
+//! extensions like `textIndex`, aggregate, `lag`, `normContinuous`). The `vm` module
+//! lowers each `Apply` to an [`Op::CallBuiltin`](pmml_ir::ir::Op::CallBuiltin) with a
+//! [`BuiltinId`] and evaluates it here. String builtins operate on interned
+//! discrete values reinterpreted as strings via the VM's symbol map.
+//!
+//! # What belongs here
+//!
+//! - [`builtin_by_name`] — case-sensitive name → [`BuiltinId`] for the lowering phase.
+//! - [`eval_builtin`] — pure `&[f64] → Option<f64>` numeric evaluator (no allocation).
+//! - [`eval_string_builtin`] — `&[String] → Option<String>` for text functions.
+//!
+//! # Relationship to other modules
+//!
+//! `pmml-ir::lower` calls [`builtin_by_name`] to produce bytecode; `transform::vm::eval_bytecode`
+//! calls [`eval_builtin`] / [`eval_string_builtin`] per `CallBuiltin` op.
+//!
+//! # Performance
+//!
+//! Both evaluators dispatch via a single `match` on [`BuiltinId`] (jump table, `O(1)`).
+//! Aggregate builtins (`sum`, `avg`, etc.) scan their argument slice once.
+//!
+//! # Invariants
+//!
+//! - `builtin_by_name` is case-sensitive except where PMML defines aliases (`upperCase` / `uppercase`).
+//! - Unknown names return `None` and lower to `BuiltinId::Unknown` (evaluates to `Missing`).
 
 use pmml_ir::ir::BuiltinId;
 
-/// Resolve builtin by name (used in lower when generating bytecode).
-/// Covers PMML 4.4 Apply functions + aggregate/lag/textIndex vendor extensions.
+/// Resolve a PMML function name to its [`BuiltinId`].
+///
+/// Used during cold-path lowering to assign a stable id for the hot-path VM.
+/// Names are matched case-sensitively except for documented lowercase aliases
+/// (`upperCase`/`uppercase`, `stdNormalCDF`/`stdNormalCdf`, etc.). PMML 4.4
+/// `Apply/@function` values such as `"+"`, `"-"`, `"*"`, `"/"` map to arithmetic variants.
+///
+/// # Parameters
+///
+/// - `name`: Function name from `Apply/@function` (e.g., `"log"`, `"add"`, `"textIndex"`, `"normContinuous"`).
+///
+/// # Returns
+///
+/// `Some(BuiltinId)` when the name is a known PMML function, `None` otherwise (caller should emit `Unknown` or an error).
+///
+/// # Panics
+///
+/// Never panics.
+///
+/// # Performance
+///
+/// `O(1)` — large `match` compiled to a jump table / perfect hash.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_evaluator::transform::builtin::builtin_by_name;
+/// use pmml_ir::ir::BuiltinId;
+///
+/// assert_eq!(builtin_by_name("add"), Some(BuiltinId::Add));
+/// assert_eq!(builtin_by_name("+"), Some(BuiltinId::Add));
+/// assert_eq!(builtin_by_name("log10"), Some(BuiltinId::Log10));
+/// assert_eq!(builtin_by_name("textIndex"), Some(BuiltinId::TextIndex));
+/// assert_eq!(builtin_by_name("unknownFn"), None);
+/// ```
 pub fn builtin_by_name(name: &str) -> Option<BuiltinId> {
     Some(match name {
         // Arithmetic
@@ -118,6 +177,45 @@ pub fn builtin_by_name(name: &str) -> Option<BuiltinId> {
     })
 }
 
+/// Evaluate a numeric [`BuiltinId`] on `f64` arguments.
+///
+/// Pure function with no allocation. Missing inputs are handled by the caller (VM):
+/// this function assumes all `args` are present and numeric. Several builtins return
+/// `None` to signal “not applicable” (`Unknown`, distribution helpers that need `statrs`,
+/// date helpers that need symbol maps), which the VM maps to [`Value::Missing`](pmml_core::Value::Missing).
+///
+/// Division / modulo by zero yields `INFINITY` / `NaN` per IEEE 754 (`modulo` returns `NaN` for `b == 0`).
+/// `median` sorts its arguments (O(n log n)); `stddev` / `variance` require at least 2 arguments.
+///
+/// # Parameters
+///
+/// - `id`: Builtin to evaluate (from [`builtin_by_name`] or direct lower).
+/// - `args`: Numeric arguments in caller order. Length must satisfy the builtin's arity
+///   (`Add` / `Mul` variadic, `Sub` / `Div` / `Pow` binary, `Log` unary, `Median`/`SumOp`/`AvgOp` variadic, etc.).
+///
+/// # Returns
+///
+/// `Some(f64)` on success, `None` when the builtin is not numeric, arity is insufficient,
+/// or the function is unimplemented in this evaluator (e.g., date / distribution builtins evaluated elsewhere).
+///
+/// # Panics
+///
+/// Never panics; uses `?` on `Option`-returning indexing for two-arg builtins.
+///
+/// # Performance
+///
+/// `O(1)` for most builtins; `O(n log n)` for `Median`, `O(n)` for `SumOp`/`AvgOp`/`StdDev`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_evaluator::transform::builtin::eval_builtin;
+/// use pmml_ir::ir::BuiltinId;
+///
+/// assert_eq!(eval_builtin(BuiltinId::Add, &[1.0, 2.0, 3.0]), Some(6.0));
+/// assert_eq!(eval_builtin(BuiltinId::Log, &[std::f64::consts::E]), Some(1.0));
+/// assert!(eval_builtin(BuiltinId::NormalCdf, &[0.0, 0.0, 1.0]).is_none()); // handled via vm distribution path
+/// ```
 pub fn eval_builtin(id: BuiltinId, args: &[f64]) -> Option<f64> {
     Some(match id {
         BuiltinId::Add => args.iter().sum(),
@@ -245,7 +343,41 @@ pub fn eval_builtin(id: BuiltinId, args: &[f64]) -> Option<f64> {
     })
 }
 
-/// Helper for string builtins evaluated on Values (not f64).
+/// Evaluate a string [`BuiltinId`] on string arguments.
+///
+/// Handles `uppercase`/`lowercase`, `concat`, `trimBlanks`, `normalizeSpace`,
+/// `substring` (1-indexed), `replace` (regex), `formatNumber`/`formatDatetime`.
+/// Called by `transform::vm` when the builtin's arguments are discrete/string values
+/// decoded via the thread-local symbol map.
+///
+/// # Parameters
+///
+/// - `id`: String builtin id (e.g., `Uppercase`, `Substring`).
+/// - `args`: Strings in caller order; `substring` expects `(string, pos, len)`, `replace` expects `(string, pattern, replacement)`.
+///
+/// # Returns
+///
+/// `Some(String)` on success, `None` when the id is not a string builtin or arguments are insufficient / unparseable
+/// (`substring` returns `None` when `pos` fails to parse).
+///
+/// # Panics
+///
+/// Never panics; regex compilation failures fall back to literal replacement.
+///
+/// # Performance
+///
+/// `O(n)` where `n` is string length; `replace` compiles a `regex::Regex` per call.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_evaluator::transform::builtin::eval_string_builtin;
+/// use pmml_ir::ir::BuiltinId;
+///
+/// assert_eq!(eval_string_builtin(BuiltinId::Uppercase, &["hello".into()]), Some("HELLO".into()));
+/// assert_eq!(eval_string_builtin(BuiltinId::Concat, &["a".into(), "b".into(), "c".into()]), Some("abc".into()));
+/// assert_eq!(eval_string_builtin(BuiltinId::NormalizeSpace, &["  a  b ".into()]), Some("a b".into()));
+/// ```
 pub fn eval_string_builtin(id: BuiltinId, args: &[String]) -> Option<String> {
     match id {
         BuiltinId::Uppercase => Some(args.first()?.to_uppercase()),

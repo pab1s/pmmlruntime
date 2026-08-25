@@ -1,3 +1,21 @@
+//! NeuralNetwork evaluation — feed-forward with per-layer activation.
+//!
+//! Implements `NeuralNetwork` (Appendix B): inputs (`NeuralInput/@id → FieldId`)
+//! are seeded from `values[field]` (`Continuous → f64`, `Discrete`/`Missing → 0`),
+//! then each `NeuralLayer` computes `Σ con.weight * prev + bias` per `Neuron` and
+//! applies the layer's `activationFunction` (`logistic`/`sigmoid`, `tanh`, `identity`/`linear`,
+//! `exponential`, `square`, `sine`, etc.; unknown defaults to `logistic`). Layers are
+//! processed sequentially; the last layer's first neuron value is returned as `Continuous`.
+//! Classification via discrete `Output` is not yet mapped (regression output only).
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_neural_network`] — the single public entry point.
+//!
+//! # Performance
+//!
+//! `O(layers * neurons * cons)` multiply-add plus activation per neuron. No heap beyond the `HashMap<String,f64>` of computed ids.
+
 use pmml_core::Value;
 use pmml_ir::ir::NeuralNetworkIr;
 
@@ -18,6 +36,58 @@ fn activation(func: &str, x: f64) -> f64 {
     }
 }
 
+/// Evaluate a [`NeuralNetworkIr`] against a dense `values` array.
+///
+/// Seed `computed["id"]` from `NeuralInput`s (missing/`Discrete` → `0`), then for each
+/// `NeuralLayer` compute per-neuron `sum = bias + Σ weight * computed[from]` and store
+/// `activation(layer.activationFunction, sum)` back into `computed` and `last_layer_outputs`.
+/// Returns the first output of the final layer as `Continuous`; `Missing` when there are
+/// no layers or no inputs.
+///
+/// # Parameters
+///
+/// - `nn`: Lowered neural network (`NeuralNetworkIr`) with `neural_inputs`, `neural_layers` ordered input→output.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`](pmml_core::FieldId). Out-of-bounds → `Missing` → `0`.
+///
+/// # Returns
+///
+/// `Continuous(last_layer[0])` or `Missing` when the network is empty.
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked; unknown activations fall back to `logistic`.
+///
+/// # Performance
+///
+/// `O(layers * neurons * fan_in)`; each neuron does one `activation` call. `HashMap` lookup per `Con`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, Value};
+/// use pmml_ir::ir::*;
+/// use pmml_evaluator::models::evaluate_neural_network;
+///
+/// let f1 = FieldId(0);
+/// let f2 = FieldId(1);
+/// let nn = NeuralNetworkIr {
+///     function_name: "regression".into(),
+///     mining_schema: MiningSchemaIr { active_fields: vec![f1, f2], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     output: vec![],
+///     neural_inputs: vec![NeuralInputIr { id: "0".into(), field: f1 }, NeuralInputIr { id: "1".into(), field: f2 }],
+///     neural_layers: vec![
+///         NeuralLayerIr { number_of_neurons: 1, activation_function: "identity".into(), neurons: vec![
+///             NeuronIr { id: "hidden".into(), bias: 0.0, cons: vec![("0".into(), 1.0), ("1".into(), 1.0)] }
+///         ]},
+///         NeuralLayerIr { number_of_neurons: 1, activation_function: "identity".into(), neurons: vec![
+///             NeuronIr { id: "output".into(), bias: 0.0, cons: vec![("hidden".into(), 1.0)] }
+///         ]},
+///     ],
+///     activation_function: "logistic".into(),
+/// };
+/// let out = evaluate_neural_network(&nn, &[Value::Continuous(2.0), Value::Continuous(3.0)]);
+/// assert_eq!(out, Value::Continuous(5.0)); // identity: 2+3 → 5
+/// ```
 pub fn evaluate_neural_network(nn: &NeuralNetworkIr, values: &[Value]) -> Value {
     if nn.neural_layers.is_empty() || nn.neural_inputs.is_empty() {
         return Value::Missing;

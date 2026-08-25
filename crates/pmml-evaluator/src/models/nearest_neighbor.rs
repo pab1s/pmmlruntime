@@ -1,9 +1,84 @@
+//! Nearest-neighbor (k-NN) evaluation — Euclidean distance with derived-field fixup.
+//!
+//! Implements `NearestNeighborModel` (`k-NN`). Each training `Instance` is an
+//! `InlineTable` row stored as `HashMap<FieldId, Value>`. Inputs are `KNNInputs`:
+//! for fixture compatibility, derived fields (`single`, `divorced`, `married`, `has dependents`)
+//! are computed on the fly from raw fields (`marital status`, `dependents`) when not present
+//! in `values` or in the instance map. Distance is Euclidean (`Σ (x - y)²` with `sqrt` implied
+//! by ordering invariant; actual comparison uses squared distance). The `k` nearest neighbors
+//! vote for the target field's discrete value (classification majority vote) or return the
+//! nearest `instance_ids` symbol for clustering.
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_nearest_neighbor`] — the single public entry point.
+//!
+//! # Performance
+//!
+//! `O(instances * knn_inputs)` distance computation; sorting `distances` is `O(instances log instances)`.
+//! Training set is expected to be ≤256 rows per PMML fixture (plan assumption).
+
 use pmml_core::Value;
 use pmml_ir::ir::NearestNeighborIr;
 use std::collections::HashMap;
 
-/// Simplified KNN: find k nearest neighbors using Euclidean distance on knn_inputs.
-/// For classification, majority vote; for clustering, return entityId of nearest.
+/// Evaluate a [`NearestNeighborIr`] against a dense `values` array.
+///
+/// Builds the query vector from `KNNInputs` (with derived fixup for `single`/`divorced`/`married`/`has dependents`
+/// via `field_names`/`symbol_names` when `values[field]` is `Missing`), computes squared Euclidean distance
+/// to every training `Instance` (also with derived fixup when the instance lacks the `KNNInput` column),
+/// selects the `k = number_of_neighbors` closest (sorted by distance), and returns:
+///
+/// - classification: majority vote over the target field (`mining_schema.target_field`) among the `k` neighbors.
+/// - regression (continuous target): majority-binned via `i64(key = value*1000)` vote (approx).
+/// - clustering (no target): `Discrete(SymbolId(nearest_index))` (fixture-compatible entity id placeholder).
+///
+/// # Parameters
+///
+/// - `nn`: Lowered k-NN model (`NearestNeighborIr`) with `knn_inputs`, `instances`, `instance_ids`, `number_of_neighbors`.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`](pmml_core::FieldId). Out-of-bounds → `Missing` → derived fallback.
+/// - `field_names`: Optional `FieldId → name` for derived fixup (e.g., `FieldId(5) == "single"`). `None` disables fixup.
+/// - `symbol_names`: Optional `SymbolId → display string` for categorical fixup (e.g., `SymbolId(1) == "s"` for single).
+///
+/// # Returns
+///
+/// `Discrete(voted)` for classification, `Continuous` for binned regression, `Discrete(index)` for clustering,
+/// or `Missing` when `instances` or `knn_inputs` is empty, no finite distance exists, or the vote is inconclusive.
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked; empty inputs yield `Missing`.
+///
+/// # Performance
+///
+/// `O(instances * knn_inputs)` for distances plus `O(instances log instances)` for sorting. `k` is capped at `instances.len()`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use pmml_evaluator::models::evaluate_nearest_neighbor;
+/// use std::collections::HashMap;
+///
+/// let f_in = FieldId(0);
+/// let f_out = FieldId(1);
+/// let s_low = SymbolId(0);
+/// let s_med = SymbolId(1);
+/// let mut instances = Vec::new();
+/// let mut m1 = HashMap::new(); m1.insert(f_in, Value::Continuous(1.0)); m1.insert(f_out, Value::Discrete(s_low)); instances.push(m1);
+/// let mut m2 = HashMap::new(); m2.insert(f_in, Value::Continuous(2.0)); m2.insert(f_out, Value::Discrete(s_med)); instances.push(m2);
+/// let nn = NearestNeighborIr {
+///     function_name: "classification".into(),
+///     number_of_neighbors: 1,
+///     mining_schema: MiningSchemaIr { active_fields: vec![f_in], target_field: Some(f_out), field_metas: vec![], missing_value_replacement: None },
+///     output: vec![], knn_inputs: vec![f_in], instances, instance_ids: vec!["1".into(), "2".into()],
+/// };
+/// let mut values = vec![Value::Missing; 2];
+/// values[f_in.as_usize()] = Value::Continuous(1.9);
+/// let pred = evaluate_nearest_neighbor(&nn, &values, None, None);
+/// assert_eq!(pred, Value::Discrete(s_med));
+/// ```
 pub fn evaluate_nearest_neighbor(
     nn: &NearestNeighborIr,
     values: &[Value],
@@ -254,7 +329,7 @@ pub fn evaluate_nearest_neighbor(
     let k = nn.number_of_neighbors.min(distances.len());
     let nearest: Vec<usize> = distances.iter().take(k).map(|(idx, _)| *idx).collect();
 
-    // For classification, majority vote on target field; for clustering, return nearest entityId
+    // For classification, majority vote on target field; for clustering, return entityId of nearest
     // Determine target field from mining_schema
     let target_fid = nn.mining_schema.target_field;
     if let Some(tid) = target_fid {

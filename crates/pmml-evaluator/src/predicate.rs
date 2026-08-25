@@ -1,5 +1,31 @@
-//! Shared predicate evaluation — used by Tree and Mining (deduplicated, P5).
-//! Inlined, branch-predictor friendly, matches JPMML semantics for Simple/SimpleSet/Compound.
+//! Shared predicate evaluation — branch-friendly [`PredicateIr`] interpreter.
+//!
+//! Evaluates the four PMML predicate forms used by `TreeModel` nodes,
+//! `RuleSet` rules, and `MiningModel` segment selection:
+//! `True`, `Simple` (`field operator value`), `SimpleSet` (`isIn` / `isNotIn`),
+//! and `Compound` (`and` / `or` / `xor` / `surrogate`). The implementation is
+//! inlined and intentionally branch-predictor friendly to sustain the 402 ns
+//! single-row tree benchmark (Iris).
+//!
+//! # What belongs here
+//!
+//! - [`eval_predicate`] — the single public pure function.
+//! - Private `eval_simple` for the `Simple` operator dispatch.
+//!
+//! # Relationship to other modules
+//!
+//! `pmml-evaluator::models::tree` traverses `Vec<NodeIr>` and tests each child's
+//! [`PredicateIr`] via [`eval_predicate`]; `models::mining` tests segment
+//! predicates; `models::scorecard` and `models::rule_set` contain duplicated
+//! copies for bootstrapping and are migrating to this shared helper.
+//!
+//! # Invariants
+//!
+//! - `values` is indexed by [`FieldId::as_usize`]; out-of-bounds access yields
+//!   [`Value::Missing`] (never panics).
+//! - `Missing` never satisfies equality / inequality / comparison predicates; only
+//!   `isMissing` / `isNotMissing` observe it.
+//! - Continuous equality uses an epsilon `1e-9`.
 
 use pmml_core::{FieldId, Value};
 use pmml_ir::ir::{CompoundOperator, PredicateIr, SimpleOperator, SymbolIdOrContinuous};
@@ -50,6 +76,69 @@ fn eval_simple(
     }
 }
 
+/// Evaluate a [`PredicateIr`] against a dense `values` array.
+///
+/// Implements the PMML predicate semantics used by tree traversal, rule firing,
+/// and segment selection. All indexing is bounds-checked.
+///
+/// # Parameters
+///
+/// - `pred`: Predicate to test. `True` always yields `true`; `Simple` / `SimpleSet` / `Compound`
+///   are dispatched as described in the module docs.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId::as_usize`]. Out-of-bounds fields are treated as
+///   [`Value::Missing`].
+///
+/// # Returns
+///
+/// `true` when the predicate holds for the given row, `false` otherwise.
+/// `Missing` values cause equality/inequality/comparison predicates to return `false` (only
+/// `isMissing`/`isNotMissing` return `true` for missing). `SimpleSet` with `is_in = false`
+/// negates membership (`isNotIn`).
+///
+/// `Compound` operators:
+/// - `And` → all true
+/// - `Or` → any true
+/// - `Xor` → exactly one true
+/// - `Surrogate` → iterate in order, skip children whose field is missing, then evaluate the first
+///   non-skipped predicate as `true`/`false` (missing children are ignored per JPMML).
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked.
+///
+/// # Performance
+///
+/// Branchless-friendly and `#[inline(always)]` for `Simple`; `Compound` recurses over a
+/// `SmallVec<[Box<PredicateIr>; 4]>`, so typical arities 1–4 stay inline without allocation.
+/// Complexity is `O(predicates)` for compound nodes.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::{PredicateIr, SimpleOperator, SymbolIdOrContinuous};
+/// use pmml_evaluator::predicate::eval_predicate;
+///
+/// // Predicate: field 0 < 2.45
+/// let pred = PredicateIr::Simple {
+///     field: FieldId(0),
+///     operator: SimpleOperator::LessThan,
+///     value: SymbolIdOrContinuous::Continuous(2.45),
+/// };
+/// let values = vec![Value::Continuous(1.0)];
+/// assert!(eval_predicate(&pred, &values));
+/// let values2 = vec![Value::Continuous(3.0)];
+/// assert!(!eval_predicate(&pred, &values2));
+///
+/// // isMissing predicate
+/// let missing_pred = PredicateIr::Simple {
+///     field: FieldId(0),
+///     operator: SimpleOperator::IsMissing,
+///     value: SymbolIdOrContinuous::Missing,
+/// };
+/// assert!(eval_predicate(&missing_pred, &[Value::Missing]));
+/// assert!(!eval_predicate(&missing_pred, &[Value::Continuous(1.0)]));
+/// ```
 #[inline(always)]
 pub fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
     match pred {

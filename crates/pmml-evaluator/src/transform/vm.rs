@@ -1,5 +1,36 @@
-//! Bytecode VM for DerivedField expressions — Level 1 graph optimization.
-//! Handles 100+ builtins, Discretize, MapValues, NormContinuous, NormDiscrete, TextIndex, Aggregate, Lag.
+//! Bytecode VM for `DerivedField` expressions — DAG-ordered [`Op`] interpreter.
+//!
+//! This module is the `pmml-ir` bytecode interpreter. Each [`DerivedFieldIr`](pmml_ir::ir::DerivedFieldIr)
+//! carries a `Vec<Op>` produced by lowering (`TransformationDictionary` + model-local
+//! `DerivedField`s topologically sorted). [`eval_derived_fields`] walks that DAG and
+//! mutates the dense `&mut [Value]` array indexed by [`FieldId`](pmml_core::FieldId).
+//!
+//! Supported `Op`s: `PushField` / `PushConst`, `CallBuiltin` (100+ via `libm`/`statrs`/`chrono`/`regex`),
+//! `MapValues` / `MapValuesMulti`, `Discretize`, `NormContinuous` / `NormDiscrete`,
+//! `Lag` (thread-local ring buffer), `TextIndex`, aggregate, date-time and distribution builtins.
+//!
+//! # What belongs here
+//!
+//! - [`eval_derived_fields`] — the single public entry point for the hot path.
+//! - [`lag_update`] / [`lag_clear`] — session-level lag buffer management (previous rows).
+//! - [`vm_set_symbol_map`] — install the `SymbolId → String` map so string builtins can decode `Discrete` values.
+//!
+//! # Concurrency and side effects
+//!
+//! `Lag` uses a `thread_local!` `VecDeque<Value>` per `FieldId` (capacity 128). [`eval_derived_fields`]
+//! mutates `values[ DerivedFieldIr.field_id.as_usize() ]` and the thread-local lag state.
+//! The interpreter itself is `!Sync` due to the thread-local, but `Send` across threads.
+//!
+//! # Performance
+//!
+//! `O(fields * ops)` where `ops` is `DerivedFieldIr.bytecode.len()`. Stack allocation is `Vec<Value>` with
+//! capacity 8 (no heap for typical expressions). `NormContinuous` performs a linear scan over
+//! `linear_norms` (typically 2–5 entries, not cloned/sorted per row).
+//!
+//! # Invariants
+//!
+//! - `values` length must be at least `max_field_id + 1`; out-of-bounds writes are silently ignored.
+//! - `fields` must already be topologically sorted (guaranteed by `pmml-ir::lower`).
 
 use chrono::Timelike;
 use pmml_core::Value;
@@ -45,17 +76,136 @@ fn lag_push(field: pmml_core::FieldId, val: Value) {
     })
 }
 
+/// Record a value into the lag ring buffer for `field`.
+///
+/// Pushes `val` onto the per-thread `LAG_BUFFER` (`VecDeque` capped at 128 entries, `O(1)`).
+/// The next call to [`eval_derived_fields`] or to [`Op::Lag`] with the same `FieldId` can retrieve
+/// it via `n = 0` (most recent) or `n > 0` (look-back). Used by `pmml-session` before scoring
+/// the first row, and internally by [`eval_derived_fields`] for derived-field self-lag.
+///
+/// # Parameters
+///
+/// - `field`: Field whose history is updated (typically an active field or a derived field).
+/// - `val`: Value to push; `Missing` entries are still stored when pushed via the snapshot path
+///   but [`lag_update`] is usually called only with non-missing active values.
+///
+/// # Panics
+///
+/// Never panics.
+///
+/// # Side effects
+///
+/// Mutates the thread-local `LAG_BUFFER`. Caps length at 128 by popping the oldest entry.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, Value};
+/// use pmml_evaluator::transform::vm::{lag_update, lag_clear};
+/// lag_clear();
+/// lag_update(FieldId(0), Value::Continuous(1.0));
+/// lag_update(FieldId(0), Value::Continuous(2.0));
+/// // lag_get(FieldId(0), 0) would now be 2.0, n=1 → 1.0
+/// lag_clear();
+/// ```
 pub fn lag_update(field: pmml_core::FieldId, val: Value) {
     lag_push(field, val);
 }
 
+/// Clear the entire lag ring buffer on the current thread.
+///
+/// Removes all history for every `FieldId`. Call between scoring sessions or
+/// before a batch that should not see prior rows (e.g., per-file isolation in tests).
+///
+/// # Panics
+///
+/// Never panics.
+///
+/// # Side effects
+///
+/// Mutates the thread-local `LAG_BUFFER` (clears the `HashMap`).
+///
+/// # Examples
+///
+/// ```
+/// use pmml_evaluator::transform::vm::lag_clear;
+/// lag_clear(); // ensures a clean slate for the next row
+/// ```
 pub fn lag_clear() {
     LAG_BUFFER.with(|buf| buf.borrow_mut().clear());
 }
 
-/// Evaluate a slice of derived fields in DAG order, mutating `values` array.
-/// `values` is indexed by FieldId (as_usize). Caller ensures len = num_fields.
-/// Updates lag buffer for each active field before evaluation.
+/// Evaluate all `DerivedField` bytecode in DAG order, mutating `values` in place.
+///
+/// Walks `fields` (already topologically sorted by `pmml-ir::lower`) and for each
+/// [`DerivedFieldIr`] executes its `bytecode: Vec<Op>` via an internal stack machine
+/// (`Vec<Value>` capacity 8). The result is written to `values[field_id.as_usize()]` and
+/// the lag buffer is updated so the next row's `Lag(field, 1)` sees this row's value.
+///
+/// The interpreter supports the full `Op` set: `PushField`/`PushConst`, `CallBuiltin` (100+),
+/// `MapValues`/`MapValuesMulti`, `Discretize`, `NormContinuous`/`NormDiscrete`, `Lag` (with optional
+/// `LagAggregate`), `TextIndex`, and date/distribution builtins. Missing inputs propagate per PMML
+/// (e.g., `Add` with any `Missing` non-aggregate argument yields `Missing`).
+///
+/// # Parameters
+///
+/// - `fields`: Slice of [`DerivedFieldIr`] in DAG order (derived + transformation dictionary). Empty is allowed.
+/// - `values`: Dense mutable array indexed by [`FieldId::as_usize`](pmml_core::FieldId::as_usize). Must be at least
+///   `max_field_id + 1` long; shorter slices silently ignore out-of-bounds derived fields (bounds-checked).
+///
+/// # Returns
+///
+/// `Ok(())` on success. All `Op`s currently return a value; exceptional cases (e.g., stack underflow due to
+/// malformed bytecode) push `Missing` rather than erroring. The `Err(String)` variant is reserved for future
+/// invalid bytecode detection and is not triggered by well-formed IR from `lower`.
+///
+/// # Errors
+///
+/// `Err(String)` when bytecode is malformed and cannot be evaluated (currently never produced; malformed stacks
+/// yield `Missing`). Callers should treat `Err` as fatal IR corruption.
+///
+/// # Panics
+///
+/// Never panics on well-formed IR. All `FieldId` indexing is bounds-checked; stack underflow in `CallBuiltin`
+/// is handled by pushing `Missing`.
+///
+/// # Side effects
+///
+/// - Mutates `values[ DerivedFieldIr.field_id.as_usize() ]` for each derived field.
+/// - Mutates the thread-local lag buffer (`LAG_BUFFER`, capacity 128 per field) for every non-missing
+///   input and for each derived result (so `Lag` on both active and derived fields works across rows).
+///
+/// # Concurrency
+///
+/// `!Sync` due to `thread_local!` `LAG_BUFFER`; `Send` across threads. Each thread has an independent history.
+///
+/// # Performance
+///
+/// `O(fields.len() * ops_per_field)` where `ops_per_field = DerivedFieldIr.bytecode.len()`. Stack allocation
+/// is reused per field; `NormContinuous` is `O(linear_norms)` linear scan without cloning.
+/// Lag updates are `O(1)` via `VecDeque`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, Value};
+/// use pmml_core::field::{DataType, OpType};
+/// use pmml_ir::ir::{DerivedFieldIr, Op, SymbolIdOrContinuous, BuiltinId};
+/// use pmml_evaluator::transform::vm::{eval_derived_fields, lag_clear};
+///
+/// lag_clear();
+/// // DerivedField log_age = ln(age) where age is FieldId(0)
+/// let derived = DerivedFieldIr {
+///     field_id: FieldId(2),
+///     name: "log_age".into(),
+///     data_type: DataType::Double,
+///     op_type: OpType::Continuous,
+///     bytecode: vec![Op::PushField(FieldId(0)), Op::CallBuiltin(BuiltinId::Log, 1)],
+/// };
+/// let mut values = vec![Value::Continuous(10.0), Value::Missing, Value::Missing];
+/// eval_derived_fields(&[derived], &mut values).unwrap();
+/// assert!((values[2].as_f64().unwrap() - 10f64.ln()).abs() < 1e-9);
+/// ```
 pub fn eval_derived_fields(fields: &[DerivedFieldIr], values: &mut [Value]) -> Result<(), String> {
     // Push active field values into lag buffer before derived evaluation (for Lag that references active fields)
     // We don't have active list, but we can push all current values that are not Missing and not already in buffer?
@@ -119,6 +269,7 @@ fn value_to_f64(v: Value) -> Option<f64> {
     }
 }
 
+#[allow(dead_code)]
 fn value_to_string(v: Value) -> String {
     match v {
         Value::Continuous(f) => {
@@ -159,6 +310,36 @@ fn value_to_string(v: Value) -> String {
 thread_local! {
     static SYMBOL_STR_MAP: RefCell<HashMap<pmml_core::SymbolId, String>> = RefCell::new(HashMap::new());
 }
+/// Install the `SymbolId → String` map used to decode [`Value::Discrete`] for string builtins.
+///
+/// The VM stores discrete values as interned [`SymbolId`](pmml_core::SymbolId)s; to evaluate
+/// `uppercase`, `substring`, date functions, etc., it needs the original string for each id.
+/// Call this once per scoring session (or per `Ir` load) with `Ir.symbol_names` cloned.
+///
+/// # Parameters
+///
+/// - `map`: `SymbolId → display string` as produced by `pmml-ir::Interner` (e.g., `"2003-04-01"` for a date).
+///
+/// # Panics
+///
+/// Never panics.
+///
+/// # Side effects
+///
+/// Mutates the thread-local `SYMBOL_STR_MAP` (replaces its contents). Subsequent `eval_derived_fields`
+/// calls on the same thread will use this map until the next call.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::SymbolId;
+/// use pmml_evaluator::transform::vm::vm_set_symbol_map;
+/// use std::collections::HashMap;
+///
+/// let mut map = HashMap::new();
+/// map.insert(SymbolId(0), "hello".into());
+/// vm_set_symbol_map(map);
+/// ```
 pub fn vm_set_symbol_map(map: HashMap<pmml_core::SymbolId, String>) {
     SYMBOL_STR_MAP.with(|m| *m.borrow_mut() = map);
 }

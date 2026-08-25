@@ -1,3 +1,20 @@
+//! NaiveBayesModel evaluation — Bayes rule with Gaussian and categorical branches.
+//!
+//! Computes posterior log-probabilities per class as `ln(prior) + Σ ln(likelihood)`.
+//! Discrete inputs use `PairCounts` (`P(x|class) = count(x,class)/Σ count(x,·)`); continuous
+//! inputs use Gaussian `PDF(x; mean, variance)` from `TargetValueStats`. Missing inputs are
+//! skipped (marginalized). The class with maximal log-probability wins; a `threshold`
+//! (`NaiveBayesModel/@threshold`, default `0.001`) causes `Missing` when the normalized
+//! best-class probability (softmax of log-probs) falls below the threshold.
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_naive_bayes`] — the single public entry point.
+//!
+//! # Performance
+//!
+//! `O(classes * bayes_inputs)`; each `PairCounts` scan is `O(target_counts)` (small). No allocation beyond `log_probs` map.
+
 use pmml_core::Value;
 use pmml_ir::ir::NaiveBayesIr;
 
@@ -11,6 +28,60 @@ fn gaussian_pdf(x: f64, mean: f64, variance: f64) -> f64 {
     num / denom
 }
 
+/// Evaluate a [`NaiveBayesIr`] against a dense `values` array.
+///
+/// Implements JPMML `BayesInputs` semantics: for each target class from `bayes_output_counts`
+/// (priors), accumulate `ln(prior)` plus per-input contributions. Continuous inputs try
+/// `target_value_stats` (Gaussian) first; discrete inputs try `pair_counts` (categorical).
+/// Missing inputs contribute nothing. The maximal `log_prob` class is predicted.
+///
+/// `threshold` handling: when `nb.threshold > 0`, the best-class normalized probability
+/// `exp(log_best - max_log) / Σ exp(log_i - max_log)` is compared to `threshold`; when below,
+/// `Missing` is returned (low-confidence suppression per PMML).
+///
+/// # Parameters
+///
+/// - `nb`: Lowered Naive Bayes model (`NaiveBayesIr`) with priors, inputs, and threshold.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`](pmml_core::FieldId). Out-of-bounds fields are `Missing`.
+///
+/// # Returns
+///
+/// `Discrete(best_class)` or `Missing` when priors are empty, total prior is 0 and fallback cannot choose,
+/// or threshold filtering rejects the best class.
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked; `ln` on `0` yields `-inf` per IEEE 754 and is handled.
+///
+/// # Performance
+///
+/// `O(classes * inputs)` with small inner scans. Uses `ln`/`exp` per class for probability normalization when thresholding.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use pmml_evaluator::models::evaluate_naive_bayes;
+///
+/// let f = FieldId(0);
+/// let s_a = SymbolId(1);
+/// let s_b = SymbolId(2);
+/// let nb = NaiveBayesIr {
+///     function_name: "classification".into(),
+///     threshold: 0.001,
+///     mining_schema: MiningSchemaIr { active_fields: vec![f], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     output: vec![],
+///     bayes_inputs: vec![BayesInputIr {
+///         field: f,
+///         target_value_stats: vec![],
+///         pair_counts: vec![PairCountsIr { value: s_a, target_counts: vec![TargetValueCountIr { value: s_a, count: 9.0 }, TargetValueCountIr { value: s_b, count: 1.0 }] }],
+///     }],
+///     bayes_output_counts: vec![TargetValueCountIr { value: s_a, count: 10.0 }, TargetValueCountIr { value: s_b, count: 10.0 }],
+/// };
+/// let pred = evaluate_naive_bayes(&nb, &[Value::Discrete(s_a)]);
+/// assert_eq!(pred, Value::Discrete(s_a));
+/// ```
 pub fn evaluate_naive_bayes(nb: &NaiveBayesIr, values: &[Value]) -> Value {
     if nb.bayes_output_counts.is_empty() {
         return Value::Missing;

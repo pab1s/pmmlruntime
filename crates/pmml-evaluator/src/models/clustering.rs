@@ -1,6 +1,84 @@
+//! ClusteringModel evaluation — nearest centroid via comparison measure.
+//!
+//! Implements center-based clustering where each `Cluster` has a centroid vector
+//! aligned with `clustering_fields`. The evaluator builds the input vector from
+//! `values[ clustering_fields[i] ]` (all must be `Continuous`; `Missing` or `Discrete`
+//! yields `Missing`) and computes distance to every cluster using the `ComparisonMeasure`
+//! (`squaredEuclidean`, `euclidean`, `manhattan`, `chebyshev`; unknown defaults to
+//! squared Euclidean). The nearest cluster's `name: SymbolId` is returned as `Discrete`.
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_clustering`] — the single public entry point.
+//!
+//! # Performance
+//!
+//! `O(clusters * dims)` where `dims = clustering_fields.len()`. No allocation.
+
 use pmml_core::Value;
 use pmml_ir::ir::ClusteringIr;
 
+/// Evaluate a [`ClusteringIr`] against a dense `values` array.
+///
+/// Builds the input coordinate vector from `clustering.clustering_fields` and returns
+/// the id of the nearest cluster per `comparison_measure`. All clustering inputs must
+/// be `Continuous`; any `Missing` or `Discrete` input short-circuits to `Missing`.
+///
+/// Distance semantics:
+///
+/// - `squaredEuclidean` → `Σ (x - y)²`
+/// - `euclidean` → `√Σ (x - y)²`
+/// - `manhattan` → `Σ |x - y|`
+/// - `chebyshev` → `max |x - y|`
+/// - unknown → `Σ (x - y)²` (fallback)
+///
+/// Mismatched dimensionalities (`input_vec.len() != cluster.array.len()`) yield `INFINITY` for that cluster
+/// so it can never win.
+///
+/// # Parameters
+///
+/// - `clustering`: Lowered clustering model (`ClusteringIr`) with `clustering_fields` and `clusters`.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`](pmml_core::FieldId). Out-of-bounds fields are `Missing`.
+///
+/// # Returns
+///
+/// `Discrete(cluster.name)` for the nearest centroid, or `Missing` when `clusters` or `clustering_fields` is empty,
+/// any input coordinate is `Missing`/`Discrete`, or no finite distance was found.
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked.
+///
+/// # Performance
+///
+/// `O(clusters * dims)` with no allocation and `f64` arithmetic. Vector construction from `values` is `O(dims)`.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use pmml_evaluator::models::evaluate_clustering;
+///
+/// let f = FieldId(0);
+/// let s_neg = SymbolId(0);
+/// let s_pos = SymbolId(2);
+/// let clustering = ClusteringIr {
+///     function_name: "clustering".into(),
+///     model_class: "centerBased".into(),
+///     number_of_clusters: 2,
+///     mining_schema: MiningSchemaIr { active_fields: vec![f], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     comparison_measure: "squaredEuclidean".into(),
+///     clustering_fields: vec![f],
+///     clusters: vec![
+///         ClusterIr { name: s_neg, name_str: "negative".into(), array: vec![-3.0] },
+///         ClusterIr { name: s_pos, name_str: "positive".into(), array: vec![3.0] },
+///     ],
+///     output: vec![],
+/// };
+/// assert_eq!(evaluate_clustering(&clustering, &[Value::Continuous(2.8)]), Value::Discrete(s_pos));
+/// assert_eq!(evaluate_clustering(&clustering, &[Value::Missing]), Value::Missing);
+/// ```
 pub fn evaluate_clustering(clustering: &ClusteringIr, values: &[Value]) -> Value {
     if clustering.clusters.is_empty() || clustering.clustering_fields.is_empty() {
         return Value::Missing;

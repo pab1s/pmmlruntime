@@ -1,3 +1,23 @@
+//! MiningModel (segmentation) evaluation — combining segment predictions.
+//!
+//! Implements `MiningModel` with `Segmentation`. Each `Segment` has a
+//! [`PredicateIr`](pmml_ir::ir::PredicateIr) tested via [`crate::predicate::eval_predicate`];
+//! when true the segment's boxed `ModelIr` is evaluated (`Tree`, `Regression`,
+//! `Scorecard`, `Clustering`, etc.). `missingPredictionTreatment` (`ReturnMissing`,
+//! `SkipSegment`, `Continue`) controls how `Missing` segment outputs affect the ensemble.
+//! The ensemble is then combined per `multipleModelMethod` (`average`, `weightedAverage`,
+//! `sum`, `weightedSum`, `majorityVote`, `weightedMajorityVote`, `selectFirst`,
+//! `modelChain`, etc.). `modelChain` writes segment outputs back into `values`
+//! so later segments can consume them as additional fields.
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_mining`] — the single public entry point.
+//!
+//! # Performance
+//!
+//! `O(segments * segment_model_cost)`. No per-row allocation beyond a small `Vec<(Value, weight)>`.
+
 use pmml_core::Value;
 use pmml_ir::ir::{
     MiningIr, MissingPredictionTreatment, ModelIr, MultipleModelMethod, SymbolIdOrContinuous,
@@ -6,9 +26,80 @@ use std::collections::HashMap;
 
 use crate::predicate::eval_predicate;
 
-/// Evaluate mining model (segmentation) given values array.
-/// `values` is mutable shared array; segment outputs are written back to it.
-/// Returns final predicted Value.
+/// Evaluate a segmented [`MiningIr`] against a mutable `values` array.
+///
+/// Tests each segment's predicate via [`eval_predicate`](crate::predicate::eval_predicate). For each
+/// matching segment its model is evaluated (currently `Tree`, `Regression`, `Scorecard`, `Clustering`;
+/// other types yield `Missing`). `ModelChain` writes the segment's prediction into
+/// `values` for the next segment (target field and any field aliased by `Output`).
+///
+/// Missing handling per `missingPredictionTreatment`:
+/// - `ReturnMissing` → `Missing` immediately.
+/// - `SkipSegment` → ignore this segment.
+/// - `Continue` → push `Missing` into the predictions list and continue.
+///
+/// Combination per `multipleModelMethod`:
+/// - `Average` → mean of continuous predictions.
+/// - `WeightedAverage` → weighted mean.
+/// - `Sum` / `WeightedSum` → sum / weighted sum.
+/// - `MajorityVote` / `WeightedMajorityVote` → most frequent `Discrete` value.
+/// - `SelectFirst` / `SelectAll` → first prediction.
+/// - `ModelChain` → last prediction.
+/// - Others → last prediction.
+///
+/// # Parameters
+///
+/// - `mining`: The lowered `MiningModel`.
+/// - `values`: Dense mutable `&mut [Value]` indexed by [`FieldId`](pmml_core::FieldId). For `ModelChain`,
+///   intermediate outputs are written back here at `targetField` and any `OutputField` alias.
+/// - `field_names`: `FieldId → name` snapshot from `Ir` (for `ModelChain` tree probability aliasing).
+/// - `symbol_names`: `SymbolId → string` for probability lookup in `Tree` segment `ScoreDistribution`.
+/// - `name_to_id`: `name → FieldId` reverse map for writing `ModelChain` outputs.
+///
+/// # Returns
+///
+/// Combined predicted [`Value`] (typically `Continuous` for regression ensembles, `Discrete` for majority vote,
+/// `Missing` when no segment matches or `ReturnMissing` triggers).
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked.
+///
+/// # Performance
+///
+/// `O(segments)` predicate tests plus the cost of each segment's `evaluate_*`. Allocates only the `predictions` vec.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use pmml_evaluator::models::evaluate_mining;
+/// use std::collections::HashMap;
+///
+/// let f = FieldId(0);
+/// let tree = TreeIr {
+///     function_name: "regression".into(),
+///     missing_value_strategy: MissingValueStrategy::None,
+///     no_true_child_strategy: NoTrueChildStrategy::ReturnNullPrediction,
+///     nodes: vec![NodeIr { id: None, score: Some(SymbolIdOrContinuous::Continuous(1.0)), predicate: PredicateIr::True, children: vec![], default_child: None, score_distributions: vec![] }],
+///     mining_schema: MiningSchemaIr { active_fields: vec![f], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     targets: vec![], output: vec![],
+/// };
+/// let mining = MiningIr {
+///     function_name: "regression".into(),
+///     mining_schema: MiningSchemaIr { active_fields: vec![f], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     segmentation: SegmentationIr {
+///         multiple_model_method: MultipleModelMethod::Average,
+///         missing_prediction_treatment: MissingPredictionTreatment::ReturnMissing,
+///         segments: vec![SegmentIr { id: Some("s1".into()), predicate: PredicateIr::True, weight: 1.0, model: Box::new(ModelIr::Tree(tree)) }],
+///     },
+///     targets: vec![], output: vec![],
+/// };
+/// let mut values = vec![Value::Continuous(2.0)];
+/// let pred = evaluate_mining(&mining, &mut values, &HashMap::new(), &HashMap::new(), &HashMap::new());
+/// assert_eq!(pred, Value::Continuous(1.0));
+/// ```
 pub fn evaluate_mining(
     mining: &MiningIr,
     values: &mut [pmml_core::Value],

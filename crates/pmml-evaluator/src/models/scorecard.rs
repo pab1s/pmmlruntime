@@ -1,7 +1,81 @@
+//! Scorecard evaluation — summed `initialScore` plus per-characteristic `partialScore`.
+//!
+//! A `Scorecard` is a special regression-like model where each `Characteristic`
+//! contributes either the `partialScore` of its first matching `Attribute`
+//! predicate or its `baselineScore` when no attribute matches. Reason codes are
+//! collected but not yet ranked per `reasonCodeAlgorithm`; the score itself is
+//! returned as `Continuous`.
+//!
+//! # What belongs here
+//!
+//! - [`evaluate_scorecard`] — the single public entry point.
+//!
+//! # Performance
+//!
+//! `O(characteristics * attributes)` predicate tests; typically < 50 predicates total.
+//! No allocation beyond the `reason_codes` vec (currently unused).
+
 use pmml_core::Value;
 use pmml_ir::ir::{PredicateIr, ScorecardIr, SimpleOperator};
 
-/// Evaluate Scorecard: initialScore + sum over characteristics of partialScore or baselineScore.
+/// Evaluate a [`ScorecardIr`] against a dense `values` array.
+///
+/// Computes `total = initialScore + Σ characteristic_contribution` where each
+/// `Characteristic` scans its `Attribute`s in document order and adds the first
+/// `partialScore` whose predicate holds (via predicate logic mirroring
+/// [`crate::predicate::eval_predicate`]). When none matches, `baselineScore` is added.
+/// `reasonCode` propagation is tracked internally but not yet exposed via `Output`
+/// (the returned value is the raw `total`).
+///
+/// # Parameters
+///
+/// - `scorecard`: Lowered scorecard (`ScorecardIr`) with `initial_score`, `characteristics`, and per-attribute `PredicateIr`.
+/// - `values`: Dense `&[Value]` indexed by [`FieldId`](pmml_core::FieldId). Out-of-bounds fields are treated as `Missing`.
+///
+/// # Returns
+///
+/// `Continuous(total)` score. `Missing` is never returned (even for missing inputs a baseline applies).
+///
+/// # Panics
+///
+/// Never panics. All `FieldId` indexing is bounds-checked.
+///
+/// # Performance
+///
+/// `O(C * A)` where `C = characteristics.len()`, `A = attributes per characteristic`. Predicate dispatch
+/// is inline and branch-friendly; no heap allocation on the hot path except for the temporary `reason_codes` vec.
+///
+/// # Examples
+///
+/// ```
+/// use pmml_core::{FieldId, SymbolId, Value};
+/// use pmml_ir::ir::*;
+/// use pmml_evaluator::models::evaluate_scorecard;
+///
+/// let f_dept = FieldId(0);
+/// let f_age = FieldId(1);
+/// let sc = ScorecardIr {
+///     function_name: "regression".into(),
+///     initial_score: 0.0,
+///     use_reason_codes: false,
+///     reason_code_algorithm: "pointsAbove".into(),
+///     mining_schema: MiningSchemaIr { active_fields: vec![f_dept, f_age], target_field: None, field_metas: vec![], missing_value_replacement: None },
+///     characteristics: vec![
+///         CharacteristicIr { name: "deptScore".into(), reason_code: None, baseline_score: 10.0, attributes: vec![
+///             AttributeIr { partial_score: 5.0, predicate: PredicateIr::Simple { field: f_dept, operator: SimpleOperator::Equal, value: SymbolIdOrContinuous::Symbol(SymbolId(1)) }, reason_code: None },
+///             AttributeIr { partial_score: 2.0, predicate: PredicateIr::True, reason_code: None },
+///         ]},
+///         CharacteristicIr { name: "ageScore".into(), reason_code: None, baseline_score: 0.0, attributes: vec![
+///             AttributeIr { partial_score: 3.0, predicate: PredicateIr::Simple { field: f_age, operator: SimpleOperator::GreaterThan, value: SymbolIdOrContinuous::Continuous(30.0) }, reason_code: None },
+///         ]},
+///     ],
+///     output: vec![],
+/// };
+/// let vals = vec![Value::Discrete(SymbolId(1)), Value::Continuous(35.0)];
+/// assert_eq!(evaluate_scorecard(&sc, &vals), Value::Continuous(8.0)); // 5 + 3
+/// let vals2 = vec![Value::Discrete(SymbolId(99)), Value::Continuous(20.0)];
+/// assert_eq!(evaluate_scorecard(&sc, &vals2), Value::Continuous(2.0)); // 2 + 0 (baseline)
+/// ```
 pub fn evaluate_scorecard(scorecard: &ScorecardIr, values: &[Value]) -> Value {
     let mut total = scorecard.initial_score;
     let mut reason_codes: Vec<String> = Vec::new();
