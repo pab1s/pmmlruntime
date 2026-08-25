@@ -1,0 +1,21 @@
+[package]
+name = "fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pmml-xml = { path = "../crates/pmml-xml" }
+pmml-ir = { path = "../crates/pmml-ir" }
+pmml-core = { path = "../crates/pmml-core" }
+
+# Use --fuzzing with `cargo fuzz run fuzz_unmarshal`
+[[bin]]
+name = "fuzz_unmarshal"
+path = "fuzz_targets/fuzz_unmarshal.rs"
+test = false
+doc = false

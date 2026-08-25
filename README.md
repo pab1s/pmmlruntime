@@ -1,4 +1,4 @@
-# jpmml-evaluator-rs
+# pmmlruntime
 
 > **Rust port of [jpmml/jpmml-evaluator](https://github.com/jpmml/jpmml-evaluator) — PMML 4.4 reference evaluator**
 
@@ -14,8 +14,8 @@ Mechanical transpilation from Java → Rust following the strategy of [bun.com/b
 ## Repo layout (gitflow)
 
 - `main` — releasable (protected)
-- `develop` — integration (protected)
-- `chore/*` `feat/*` `fix/*` — work branches, PR → `develop` → `main`
+- `development` — integration (protected)
+- `chore/*` `feat/*` `fix/*` — work branches, PR → `development` → `main`
 
 ## Links
 

@@ -1,0 +1,15 @@
+[package]
+name = "pmml-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pmml-core = { path = "../pmml-core" }
+pmml-xml = { path = "../pmml-xml" }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+lasso = { workspace = true }
+smallvec = { workspace = true }
+indexmap = { workspace = true }
+memchr = { workspace = true }
