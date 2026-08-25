@@ -1,5 +1,5 @@
-use pmml_core::Value;
-use pmml_session::{PmmlEnv, Session, SessionOptions};
+use pmmlruntime::base::Value;
+use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use std::collections::HashMap;
 use std::path::Path;
 

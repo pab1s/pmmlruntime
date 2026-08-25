@@ -1,15 +1,5 @@
 [workspace]
-members = [
-  "crates/pmml-core",
-  "crates/pmml-xml",
-  "crates/pmml-ir",
-  "crates/pmml-evaluator",
-  "crates/pmml-session",
-  "crates/pmml-ffi",
-  "crates/pmml-bench",
-  "crates/pmml-python",
-  "crates/pmml-cli",
-]
+members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]
 resolver = "2"
 
 [workspace.package]
