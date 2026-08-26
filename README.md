@@ -41,38 +41,66 @@ Requires Rust 1.78+.
 
 ### Use it
 
-Single row:
+> **LightGBM, XGBoost, sklearn, R — same PMML, same code.**
+> After conversion there is no "LightGBM PMML" or "XGBoost PMML". `lightgbm2pmml` / `sklearn2pmml` / `r2pmml` all emit **one** standardized PMML 4.4 `MiningModel` (usually `Segmentation` `multipleModelMethod="sum"` over `TreeModel`s). The scoring engine never knows the original framework — all PMML files look the same.
+>
+> This section mirrors [JPMML-Evaluator basic usage](https://github.com/jpmml/jpmml-evaluator#basic-usage) and [advanced usage](https://github.com/jpmml/jpmml-evaluator#advanced-usage) in Rust (no JVM). Replace `model.pmml` with your `lightgbm.pmml` — nothing else changes.
+
+**Basic — single row** (`evaluator.evaluate(arguments)` in JPMML):
 
 ```rust
 use std::collections::HashMap;
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 
 let env = PmmlEnv::new();
+// same for lightgbm.pmml, xgboost.pmml, sklearn.pmml, ...
 let sess = Session::from_bytes(&env, &std::fs::read("model.pmml")?, SessionOptions::default())?;
+// or Session::from_file(&env, "lightgbm.pmml", SessionOptions::default())?
 
 let mut input = HashMap::new();
 input.insert("Petal.Length".to_string(), pmmlruntime::Value::Continuous(1.4));
 input.insert("Petal.Width".to_string(), pmmlruntime::Value::Continuous(0.2));
+// categorical example: let sid = sess.symbol_id("marketing").unwrap(); input.insert("dept".into(), pmmlruntime::Value::Discrete(sid));
 
 let out = sess.run(input)?;
 assert!(out.contains_key("predictedValue"));
 # Ok::<(), pmmlruntime::PmmlError>(())
 ```
 
-Batch from CSV:
+**Advanced — score an input data file (CSV)** (`evaluator.evaluate(batch)`):
 
 ```rust
-let batch = pmmlruntime::session::arrow::csv_str_to_record_batch(&std::fs::read_to_string("input.csv")?, None, true)?;
-let outs = sess.run_batch_arrow(&batch)?;
+// input.csv: header row must match MiningSchema active fields, e.g.
+// x
+// 0.5
+// 1.0
+let batch = pmmlruntime::session::arrow::csv_str_to_record_batch(
+    &std::fs::read_to_string("input.csv")?,
+    None, true
+).map_err(|e| anyhow::anyhow!(e))?;
+let outs = sess.run_batch_arrow(&batch)?; // Vec<HashMap<String,Value>>, one per row
 ```
 
-CLI:
+**LightGBM GBDT example** — `bench/pmml/GradientBoosterTest.pmml` is a minimal GBDT (3 `RegressionModel` stumps summed → `modelChain` to probability, structurally identical to a small LightGBM PMML). Run the runnable example with your file:
 
 ```sh
-cargo run -p pmml-cli -- inspect --model model.pmml
-cargo run -p pmml-cli -- run --model model.pmml --batch input.csv --output out.csv
-cargo run -p pmml-cli -- verify --model model.pmml
+# single (hard-coded x=1.0) — swap in your lightgbm.pmml
+cargo run -p pmmlruntime --example score_file -- bench/pmml/GradientBoosterTest.pmml
+cargo run -p pmmlruntime --example score_file -- lightgbm.pmml
+
+# batch from file → out.csv (header from Output/Targets)
+echo "x
+0.5
+1.0" > /tmp/in.csv
+cargo run -p pmmlruntime --example score_file -- lightgbm.pmml /tmp/in.csv --output out.csv
+
+# CLI equivalent (no Rust code)
+cargo run -p pmml-cli -- inspect --model lightgbm.pmml
+cargo run -p pmml-cli -- run --model lightgbm.pmml --batch input.csv --output out.csv
+cargo run -p pmml-cli -- verify --model lightgbm.pmml
 ```
+
+See `crates/pmmlruntime/examples/score_file.rs` (full annotated, prints `DataDictionary`/`MiningSchema`/`ModelIr`). For categorical fields use `sess.symbol_id("value").unwrap()` → `Value::Discrete(sid)`; for speed cache `FieldId` via `sess.field_id("age").unwrap()` and use `sess.run_with_ids(&[(fid, Value::Continuous(34.0))])` (~402 ns, JPMML `FieldValue` preparation).
 
 Python and C are available via `ffi` (C ABI) and `python` (pyo3) features.
 
