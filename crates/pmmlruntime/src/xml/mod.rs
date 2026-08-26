@@ -18,15 +18,17 @@ pub mod unmarshal;
 
 pub use reader::{new_reader, PmmlReader};
 pub use unmarshal::{
-    unmarshal, RawAssociationModel, RawAssociationRule, RawAttribute, RawBayesInput,
+    unmarshal, RawAlternate, RawAnomalyDetectionModel, RawAnomalyModel, RawAssociationModel,
+    RawAssociationRule, RawAttribute, RawBaseline, RawBaselineModel, RawBayesInput,
     RawCategoricalPredictor, RawCharacteristic, RawCluster, RawClusteringModel,
-    RawComparisonMeasure, RawCon, RawDataField, RawDefineFunction, RawDerivedField,
-    RawDiscretizeBin, RawExpression, RawFieldColumnPair, RawGeneralRegressionModel, RawInterval,
+    RawComparisonMeasure, RawCon, RawContinuousDistribution, RawCountTable, RawDataField,
+    RawDefineFunction, RawDerivedField, RawDiscreteDistribution, RawDiscretizeBin, RawExpression,
+    RawFieldColumnPair, RawFieldValue, RawFieldValueCount, RawGeneralRegressionModel, RawInterval,
     RawItem, RawItemset, RawLinearNorm, RawMiningField, RawMiningModel, RawNaiveBayesModel,
     RawNearestNeighborModel, RawNeuralInput, RawNeuralLayer, RawNeuralNetwork, RawNeuron, RawNode,
     RawNumericPredictor, RawOutputField, RawPairCounts, RawParameterField, RawPmml, RawPredicate,
     RawRegressionModel, RawRegressionTable, RawRuleSet, RawRuleSetModel, RawScoreDistribution,
     RawScorecard, RawSegment, RawSegmentModel, RawSegmentation, RawSimpleRule,
     RawSupportVectorMachineModel, RawTarget, RawTargetValue, RawTargetValueCount,
-    RawTargetValueStat, RawTreeModel,
+    RawTargetValueStat, RawTestDistributions, RawTreeModel,
 };
