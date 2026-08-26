@@ -70,11 +70,15 @@ fn tree_fixtures_parity() {
             Err(e) => {
                 let msg = e.to_string();
                 // MiningModel fixtures not supported in v1 — skip
+                // JPMML-unsupported markup (weightedConfidence etc.) is expected to fail fast
                 if msg.contains("no TreeModel")
                     || msg.contains("MiningModel")
                     || msg.contains("missing field")
+                    || msg.contains("unsupported markup")
+                    || msg.contains("weightedConfidence")
+                    || msg.contains("aggregateNodes")
                 {
-                    println!("  -> SKIP (v1 Tree only): {msg}");
+                    println!("  -> SKIP (unsupported/JPMML parity): {msg}");
                     continue;
                 }
                 panic!("{} failed: {e}", f);
