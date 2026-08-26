@@ -1,35 +1,34 @@
-//! `SessionOptions` — like `OrtSessionOptions` (graph opt level, threads, EP).
+//! `SessionOptions` — configuration for `Session` creation (graph optimization, threads, execution provider).
 //!
 //! Builder for `Session::from_bytes` / `from_file`. All fields have defaults so `SessionOptions::default()`
 //! is the common entry point. The builder consumes `self` and returns `Self` (fluent style).
 
-/// ONNX-style graph optimization level.
+/// Graph optimization level.
 ///
-/// Mirrors `GraphOptimizationLevel` in ORT. In v1 only `DisableAll` vs `EnableBasic` differ
-/// (bytecode vs interpreter); `EnableExtended`/`EnableAll` are stubs for SIMD/JIT in v2.
+/// Controls how much the IR is optimized before execution.
 ///
 /// # Variants
 ///
-/// - `DisableAll` — disable all graph opts (interpreter, cold path fastest for tiny models).
-/// - `EnableBasic` — basic opts (bytecode) — default in v1.
-/// - `EnableExtended` — extended (SIMD, batch) — stub in v1, active in v2.
-/// - `EnableAll` — all opts (includes JIT) — stub.
+/// - `DisableAll` — disable all graph opts (interpreter path, minimal cold overhead).
+/// - `EnableBasic` — basic opts (bytecode) — default.
+/// - `EnableExtended` — extended opts (SIMD, batch) — currently no-op, reserved for future use.
+/// - `EnableAll` — all opts (includes future JIT) — currently no-op.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum GraphOptimizationLevel {
     /// Disable all (interpreter, cold fastest).
     DisableAll = 0,
-    /// Basic (bytecode) — default v1.
+    /// Basic (bytecode) — default.
     #[default]
     EnableBasic = 1,
-    /// Extended (SIMD, batch) — stub v1, active v2.
+    /// Extended (SIMD, batch) — currently no-op.
     EnableExtended = 2,
-    /// All (includes JIT) — stub.
+    /// All (includes future JIT) — currently no-op.
     EnableAll = 3,
 }
 
 /// Execution provider kind.
 ///
-/// Mirrors `OrtExecutionProvider` selection. `Session::from_ir` matches on this to
+/// Selects how a batch is executed. `Session::from_ir` matches on this to
 /// box the concrete provider.
 ///
 /// # Variants
@@ -42,7 +41,7 @@ pub enum ExecutionProviderKind {
     #[default]
     CpuSerial,
     /// Parallel provider (`rayon`) for batch `>256` rows.
-    CpuBatched, // stub v1, ready for Rayon
+    CpuBatched,
 }
 
 /// Session options builder.

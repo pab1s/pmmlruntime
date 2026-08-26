@@ -8,7 +8,7 @@
 //!
 //! - `benches/scoring.rs` — `criterion_group!` benches for `tree_iris_single`, `tree_iris_batch_1k_sequential`, `tree_iris_batch_1k_parallel`, `tree_iris_batch_1k_parallel_ref`.
 //! - `src/bin/large_trial.rs` — `run_trial(size)` for 10k … 10M, with `time()` / `fmt_thr()` helpers and SIMD regression check.
-//! - `tests/tree_parity.rs` — parity vs JPMML (not in `src`).
+//! - `tests/tree_parity.rs` — parity vs PMML (not in `src`).
 //!
 //! # Performance targets
 //!

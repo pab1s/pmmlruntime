@@ -1,6 +1,6 @@
 //! TreeModel evaluation — flat node traversal with branchless predicates.
 //!
-//! Implements the `TreeModel` scoring path from JPMML: a flat `Vec<NodeIr>` with
+//! Implements the `TreeModel` scoring path from PMML: a flat `Vec<NodeIr>` with
 //! root at index 0, traversed iteratively without recursion. Predicate evaluation
 //! is delegated to [`crate::engine::predicate::eval_predicate`] (branch-predictor friendly).
 //! `missingValueStrategy` (`LastPrediction`, `NullPrediction`, `DefaultChild`) and

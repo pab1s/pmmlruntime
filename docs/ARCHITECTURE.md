@@ -1,25 +1,24 @@
 # Architecture — pmmlruntime
 
-> `0.1.0` · single crate `pmmlruntime` · `~26k` LOC Rust (`39121` raw, `~26k` non-blank) · `pmml.xsd:4,490` · `BENCHMARK.md` tables for 52 fixtures · **19/19 PMML 4.4 models**
+> `0.1.0` · `~26k` LOC Rust (`39121` raw, `~26k` non-blank) · `pmml.xsd:4,490` · `BENCHMARK.md` tables for 52 fixtures · **19/19 PMML 4.4 models**
 
 This document is the contributor-facing internals. For API contracts see `cargo doc --open`.
 
-## 1. Crate topology — single crate with modules (was 9 crates, now merged ONNX Runtime-style)
+## 1. Crate topology — modules
 
-Previously a 9-crate workspace (`pmml-core`, `pmml-xml`, `pmml-ir`, `pmml-evaluator`, `pmml-session`, …).
-Now a **single crate** `pmmlruntime` with modules — one `cargo add pmmlruntime` and one `cargo doc -p pmmlruntime` page:
+`pmmlruntime` modules:
 
 ```
 pmmlruntime/
-├─ base        # zero-cost types, arena, errors. No XML, no IR. Hot path foundation (was pmml-core).
-├─ xml         # Hardened quick-xml 0.37 → RawPmml (15475 LOC, 1:1 with pmml.xsd:4490, 19 models). Cold only (was pmml-xml).
-├─ ir          # Lower RawPmml → Ir (optimized, 2414 LOC ir.rs + 1521 lower). Interner (Rodeo cold) + verify (was pmml-ir).
-├─ engine      # Pure evaluation on &[Value]: mining_schema, 19 models, predicate, output, targets, transform/vm, simd (was pmml-evaluator).
-├─ session     # ONNX-style Session API: PmmlEnv + Session + Batch + ExecutionProvider. Primary user API (was pmml-session).
-├─ ffi         # C ABI (onnxruntime_c_api.h parity): PmmlEnv/Session opaque, PmmlCreate/Release (was pmml-ffi). Stub (P0 deferred to 0.2.0).
-├─ python      # pyo3 0.22 extension-module (future PySession). Stub now (was pmml-python, P0 deferred to 0.2.0).
-├─ cli         # clap CLI: pmml-runtime inspect/run/verify (was pmml-cli, now binary in workspace).
-└─ bench       # criterion + large_trial (10k/100k/1M/10M Arrow scaling) (was pmml-bench).
+├─ base        # zero-cost types, arena, errors. No XML, no IR. Hot path foundation.
+├─ xml         # Hardened quick-xml 0.37 → RawPmml (15475 LOC, 1:1 with pmml.xsd:4490, 19 models). Cold path only.
+├─ ir          # Lower RawPmml → Ir (optimized, 2414 LOC ir.rs + 1521 lower). Interner (Rodeo cold) + verify.
+├─ engine      # Pure evaluation on &[Value]: mining_schema, 19 models, predicate, output, targets, transform/vm, simd.
+├─ session     # Session API: PmmlEnv + Session + Batch + ExecutionProvider. Primary user API.
+├─ ffi         # C ABI: opaque PmmlEnv/Session handles, PmmlCreate/Release.
+├─ python      # pyo3 0.22 extension-module (future PySession). Stub, feature-gated.
+├─ cli         # clap CLI: pmml-runtime inspect/run/verify.
+└─ bench       # criterion + large_trial (10k/100k/1M/10M Arrow scaling).
 ```
 
 ```
@@ -28,7 +27,7 @@ use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 // re-exports also at crate root: use pmmlruntime::{Value, Session, PmmlEnv};
 ```
 
-Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=MIT OR Apache-2.0`, `members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]` (single lib + tools, old `pmml-*` heritage removed).
+Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=MIT OR Apache-2.0`, `members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]` (single lib + tools).
 
 ## 2. Data & control flow
 
@@ -42,7 +41,7 @@ Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `licen
       └────────────────────────────────────────────────────┘             └────────────┘
                                                         Session::run(HashMap<String,Value>)
                                                                    │
-                                                          with_value_buffer (stack 64 L1-hot)
+                                                           with_value_buffer (stack 64 L1 cache hot)
                                                                    │
                                                           Value[FieldId] = [Missing; needed]
                                                                    │
@@ -63,9 +62,9 @@ Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `licen
                                                           │
                                                           HashMap<String,Value> { predictedValue, target_name, Probability_* }
 
-Batch path (ONNX style):
+Batch path:
   Vec<HashMap<String,Value>> or RecordBatch ──► Batch trait ──► BatchCtx { name_to_id, col_map, output_fields } ──► provider.eval_batch ──► BatchResult
-     RowMajor (JPMML compat, 402ns single)         │  object-safe Send+Sync      no per-row alloc         rayon shard          Rows or Columnar
+     RowMajor (direct map, 402ns single)           │  object-safe Send+Sync      no per-row alloc         rayon shard          Rows or Columnar
      Columnar Arrow (61 ns/row 100k)               │  materialize_row → values[FieldId] = Value
 ```
 
@@ -96,7 +95,7 @@ See `docs/OWNERSHIP.tsv` for per-field `struct field type java_owner rust_owner 
 
 ## 5. Storage & serialization boundaries
 
-- **XML**: `quick-xml 0.37` pull `Reader` `trim_text(true)` + `expand_empty_elements = true`, DTD not expanded (XXE blocked), depth `512`, file `100 MB`. Replaces JPMML `jakarta.xml.bind` `XmlTransient`/`XmlJavaTypeAdapter` 267 hits. `Raw*` structs are owned `String`/`Vec` not zero-copy (cold).
+- **XML**: `quick-xml 0.37` pull `Reader` `trim_text(true)` + `expand_empty_elements = true`, DTD not expanded (XXE blocked), depth `512`, file `100 MB`. `Raw*` structs are owned `String`/`Vec` not zero-copy (cold path).
 - **IR**: `Ir` is `Arc` immutable, flat `Vec<NodeIr>` (branchless, `match` table jump), `DerivedFieldIr` `Vec<Op>` bytecode owned by `Ir`, `SmallVec<[PredicateIr;4]>` for node predicates.
 - **Arrow**: `arrow 53` `RecordBatch` zero-copy `Float64Array`/`StringArray`. `HashMap` for 1-row compat, `RecordBatch` for `>10k` (16.5M rows/s). `TableLocator` placeholder returns empty batch with schema (graceful). CSV `arrow::csv::Reader` → `RecordBatch` → `run_batch` → `arrow::csv::Writer`.
 - **SerDe**: `serde` for `Raw*` (future), `serde_json/yaml` for CLI, `rmp-serde` for Kryo parity (not yet, thin).
@@ -140,11 +139,11 @@ Gate `cargo bench -p pmml-bench -- --sample-size 30` must be `≤800 ns` single,
 | `LoadingCache` | `bumpalo::Bump` arena `thread_local!` + `Arc<Ir>` cache | `moka` Guava `LoadingCache` port | IR is immutable `Arc`, no cache invalidation; arena reset per `run` keeps capacity, `miri` clean, no `Drop` leak like `SSL_SESSION` 6.5KB/call in Bun |
 | `BiMap` | `AHashMap<String,FieldId>` hot + `HashMap` std API | `bimap` crate | Hot is `u32` index `values[field_id]` not `BiMap`; `lasso::Rodeo` only `lower()` cold, `AHashMap::get(&str)` zero-alloc via `Borrow<str>` `3×` vs SipHash |
 | `RangeMap` | `RangeMap` only where `continuousDomain` exists (rare) | Generic `rangemap` for all `MiningField` | Most `MiningField` no domain; no generalize |
-| `Visitor` 13 batteries | `enum ModelIr { Tree(TreeIr) }` + `match` + `lower` passes explicit | JPMML `Visitor` mutation of `PMMLObject` tree | Purity (no muta tree), `cargo check` crate-by-crate, swarm per-file without `stash` |
+| `Visitor` 13 batteries | `enum ModelIr { Tree(TreeIr) }` + `match` + `lower` passes explicit | Pure `match` over `enum ModelIr`; no tree mutation, explicit lower passes. |
 | Batch | `Batch` trait `RowMajor Vec<HashMap>` + `Columnar RecordBatch` (provider picks) | Only Arrow | Single row `HashMap` 402ns < Arrow >1µs + schema agreement; `Collection`/`List` (Association) and Python `dict` map naturally to `HashMap` |
 | Model strategy | Option A port `pmml-model` to Rust (this repo) | Option B JNI bridge `jni` crate | Removes JVM forever, single binary, WASM-ready, MIT/Apache-2.0 not AGPL; JNI keeps XML correctness for free but needs JVM at runtime |
 | License | `MIT OR Apache-2.0` (workspace) | `TBD` (README old) + upstream `AGPL-3.0` dual BSD | Transpilation ≠ relicense; green-field port can be MIT/Apache-2.0 before first code commit (now decided) |
-| Crate layout | single `pmmlruntime` with `base/xml/ir/engine/session` modules + tools `pmml-cli`/`pmml-bench` as separate workspace members | 9-crate workspace `pmml-core/xml/ir/evaluator/session/...` | ONNX Runtime inspiration: one `cargo add pmmlruntime`, one `cargo doc` page, <20k LOC; easier for users, workspace+facade is also valid but `pmml-*` heritage is `jpmml-evaluator` clone; `publish=false` heritage is redundant. Tools stay separate members (not `src/bin`) to avoid bloating lib with `clap`/`criterion`. |
+| Crate layout | single `pmmlruntime` with `base/xml/ir/engine/session` modules + tools `pmml-cli`/`pmml-bench` as separate workspace members | 9-crate workspace `pmml-core/xml/ir/evaluator/session/...` | Single crate: one `cargo add pmmlruntime`, one `cargo doc` page, <20k LOC; easier for users. Tools stay separate members (not `src/bin`) to avoid bloating lib with `clap`/`criterion`. |
 | `base` naming | `base` (`crate::base::{Value,FieldId,PmmlError,DataType}`, internals `arena/field/value/error`) | `core` (shadows `::core`), `types`/`common` (too narrow, `arena` is not a type) | `base` avoids `::core` shadowing, already used after merge, covers `arena`+`error`+`field`+`value`; `types` would exclude `arena`/`error`, `common` is vague. Documented in `crates/pmmlruntime/src/base/mod.rs`. |
 
 Ver `OWNERSHIP.tsv` for per-field ownership; `BENCHMARK.md` for Java vs Rust tables; `PLAN.md` for Bun anchor `535k Zig` → `50k hand + 20k generated` mechanical.

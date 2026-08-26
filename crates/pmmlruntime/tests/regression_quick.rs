@@ -7,7 +7,7 @@ fn regression_linear() {
     let paths = [
         "bench/pmml/RegressionOutputTest.pmml",
         "../../bench/pmml/RegressionOutputTest.pmml",
-        "/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator/src/test/resources/pmml/regression/RegressionOutputTest.pmml",
+        "/home/pab1s/Projects/pmml-migration/upstream/pmml-evaluator/pmml-evaluator/src/test/resources/pmml/regression/RegressionOutputTest.pmml",
     ];
     let mut bytes = None;
     for p in &paths {
@@ -38,7 +38,7 @@ fn mining_model_chain() {
     let paths = [
         "bench/pmml/ModelChainSimpleTest.pmml",
         "../../bench/pmml/ModelChainSimpleTest.pmml",
-        "/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator/src/test/resources/pmml/mining/ModelChainSimpleTest.pmml",
+        "/home/pab1s/Projects/pmml-migration/upstream/pmml-evaluator/pmml-evaluator/src/test/resources/pmml/mining/ModelChainSimpleTest.pmml",
     ];
     let mut bytes = None;
     for p in &paths {

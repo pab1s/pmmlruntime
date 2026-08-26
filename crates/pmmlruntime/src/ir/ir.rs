@@ -402,7 +402,7 @@ pub struct LinearNorm {
 ///
 /// Lowering normalizes function names to canonical `fn` strings (for example,
 /// `"add" | "+" → Add`) via `resolve_builtin` in [`mod@crate::ir::lower`].
-/// Grouping below mirrors the JPMML function registry for discoverability.
+/// Grouping below mirrors the PMML function registry for discoverability.
 ///
 /// # Examples
 ///
@@ -561,7 +561,7 @@ pub enum BuiltinId {
     DateTimeSecondsSince1970,
     /// `dateTimeSecondsSince[1980]`.
     DateTimeSecondsSince1980,
-    /// `dateTimeSecondsSince[0]` (unsupported per JPMML, rejected in lower).
+    /// `dateTimeSecondsSince[0]` (unsupported per PMML, rejected in lower).
     DateTimeSecondsSince0,
     /// `timeSeconds`.
     TimeSeconds,
@@ -632,7 +632,7 @@ pub enum BuiltinId {
 /// segments). Lowering picks the present model and returns `MissingField` or
 /// `UnsupportedMarkup` when none matches.
 ///
-/// See each variant's struct for model-specific semantics and JPMML
+/// See each variant's struct for model-specific semantics and PMML
 /// comparability notes.
 #[derive(Debug, Clone)]
 pub enum ModelIr {
@@ -2028,7 +2028,7 @@ pub struct TreeIr {
 
 /// How to handle `Missing` during tree traversal (`TreeModel/@missingValueStrategy`).
 ///
-/// Mirrors JPMML behaviour. The unsupported variants `WeightedConfidence` and
+/// Mirrors PMML behaviour. The unsupported variants `WeightedConfidence` and
 /// `AggregateNodes` are never produced by lowering (they would have been rejected
 /// earlier), but are preserved in the enum for `verify_ir` parity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2041,9 +2041,9 @@ pub enum MissingValueStrategy {
     DefaultChild,
     /// No special handling (`none`).
     None,
-    /// JPMML-unsupported: weighted confidence fallback (`weightedConfidence`).
+    /// PMML-unsupported: weighted confidence fallback (`weightedConfidence`).
     WeightedConfidence,
-    /// JPMML-unsupported: aggregate over leaves (`aggregateNodes`).
+    /// PMML-unsupported: aggregate over leaves (`aggregateNodes`).
     AggregateNodes,
 }
 
@@ -2153,7 +2153,7 @@ pub struct ScoreDistributionIr {
 
 /// Integer cast method for a [`TargetIr`] (`Target/@castInteger` may carry `Round | Ceiling | Floor`).
 ///
-/// Mirrors JPMML `CastInteger`.
+/// Mirrors PMML `CastInteger`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CastIntegerMethod {
     /// Round to nearest (`round`).
@@ -2183,7 +2183,7 @@ pub struct TargetValueIr {
 ///
 /// Controls post-processing of the raw model score: rescaling (`rescaleFactor`,
 /// `rescaleConstant`), optional clamping (`min`, `max`), and optional integer
-/// casting. Evaluator applies these in JPMML order.
+/// casting. Evaluator applies these in PMML order.
 #[derive(Debug, Clone)]
 pub struct TargetIr {
     /// `Target/@field` resolved to `FieldId` when declared (synthetic if needed).

@@ -1,7 +1,7 @@
 //! `pmml-runtime` CLI — `inspect` / `run` / `verify` subcommands (`clap` 4.5 derive).
 //!
 //! Thin wrapper over `pmml_session` and `pmml_xml`/`pmml_ir` for file-based scoring.
-//! It mirrors `jpmml-evaluator` CLI but ONNX-style: `PmmlEnv` + `Session` + `Batch`.
+//! It mirrors `pmml-evaluator` CLI but session-style: `PmmlEnv` + `Session` + `Batch`.
 //! All I/O is via `std::fs`; Arrow `csv` bridging uses `pmmlruntime::session::arrow` for batch.
 //!
 //! # Commands
@@ -20,12 +20,12 @@
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 
-/// CLI entry ( `pmml-runtime` v0.1.0, ONNX-style ).
+/// CLI entry ( `pmml-runtime` v0.1.0, session-style ).
 ///
 /// `clap` derive with subcommands `Inspect` / `Run` / `Verify`. `PmmlEnv` is created once
 /// per invocation; `Session` is built via `Session::from_file`.
 #[derive(Parser)]
-#[command(name = "pmml-runtime", version, about = "PMML 4.4 runtime — ONNX-style", long_about = None)]
+#[command(name = "pmml-runtime", version, about = "PMML 4.4 runtime — session-style", long_about = None)]
 struct Cli {
     /// Subcommand (`inspect`, `run`, `verify`).
     #[command(subcommand)]
@@ -120,7 +120,7 @@ fn main() -> anyhow::Result<()> {
 ///
 /// - `IO` if file read fails.
 /// - `Parse` / `UnsupportedMarkup` / `InvalidValue` from `unmarshal` / `lower` are mapped to `anyhow` with context.
-/// - Not an `Ir` `TreeModel` is reported as `No TreeModel (v1 only Tree supported)` but still prints `DataDictionary`.
+/// - Not an `Ir` `TreeModel` is reported as `No TreeModel` but still prints `DataDictionary`.
 ///
 /// # Panics
 ///
@@ -175,7 +175,7 @@ fn inspect(model: &str) -> anyhow::Result<()> {
             }
         );
     } else {
-        println!("No TreeModel (v1 only Tree supported)");
+        println!("No TreeModel");
     }
     Ok(())
 }

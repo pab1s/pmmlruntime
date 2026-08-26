@@ -1,6 +1,6 @@
 //! Unified error type — `thiserror` based, no backtrace on the hot path.
 //!
-//! [`PmmlError`] mirrors JPMML `PMMLException` + `UnsupportedMarkupException`.
+//! [`PmmlError`] mirrors PMML `PMMLException` + `UnsupportedMarkupException`.
 //! All `pmml-*` crates return `Result<T, PmmlError>`; the `Other` variant wraps
 //! `anyhow::Error` for IO/arrow interop but is never used in hot scoring.
 
@@ -8,7 +8,7 @@ use thiserror::Error;
 
 /// Top-level PMML error.
 ///
-/// Variants mirror `org.jpmml.model.PMMLException` and `UnsupportedMarkupException`.
+/// Variants mirror `org.pmml.model.PMMLException` and `UnsupportedMarkupException`.
 /// Use the constructor helpers ([`PmmlError::unsupported`], etc.) rather than
 /// constructing variants directly to keep messages consistent.
 ///

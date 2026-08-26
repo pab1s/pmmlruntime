@@ -9,7 +9,7 @@
 //! 3. Returns the first item of the `consequent` `Itemset`'s value.
 //!
 //! The PMML `InputTable` / `JoinTable` host factor for transactional inputs is not yet
-//! implemented; the v1 path handles single-item transactions as used by fixtures.
+//! implemented; the path handles single-item transactions as used by fixtures.
 //!
 //! # What belongs here
 //!
@@ -71,7 +71,7 @@ use crate::ir::AssociationIr;
 /// ```
 pub fn evaluate_association(assoc: &AssociationIr, values: &[Value]) -> Value {
     // Association evaluation: input transaction (active field) contains items; find matching rules.
-    // Full InputTable handling would require Host table join, but v1 handles simple discrete item input.
+    // Full InputTable handling would require Host table join, but handles simple discrete item input.
     // We also support transactional field where value is Discrete representing a single item (e.g., "milk")
     // and check which rules have antecedent containing that item.
     if assoc.mining_schema.active_fields.is_empty() {

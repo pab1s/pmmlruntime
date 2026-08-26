@@ -1,4 +1,4 @@
-//! Session — ONNX Runtime-style `Session` API.
+//! Session — session runtime-style `Session` API.
 
 #![allow(
     clippy::missing_errors_doc,

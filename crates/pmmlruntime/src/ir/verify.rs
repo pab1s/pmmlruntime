@@ -1,6 +1,6 @@
 //! Unsupported-markup inspector — fails fast on explicitly unsupported PMML 4.4.
 //!
-//! Mirrors `org.jpmml.evaluator.UnsupportedMarkupInspector` (JPMML). Called as
+//! Mirrors `org.pmml.evaluator.UnsupportedMarkupInspector` (PMML). Called as
 //! `verify_raw` before lowering and `verify_ir` after lowering. Vendor
 //! [`crate::ir::ExtensionIr`] is always allowed (stored, not evaluated).
 
@@ -80,11 +80,11 @@ pub fn verify_raw(raw: &RawPmml) -> Result<()> {
 
 /// Verifies an already-lowered [`Ir`] for unsupported constructs.
 ///
-/// Rejects JPMML-unsupported markup: `TreeModel/@missingValueStrategy`
+/// Rejects PMML-unsupported markup: `TreeModel/@missingValueStrategy`
 /// `weightedConfidence`/`aggregateNodes` and `ClusteringModel/@modelClass`
 /// `distributionBased` (features.md:42,51). `lower::parse_missing_strategy`
 /// preserves those variants so this check can fail fast like
-/// `org.jpmml.evaluator.UnsupportedMarkupInspector`.
+/// `org.pmml.evaluator.UnsupportedMarkupInspector`.
 ///
 /// # Errors
 ///

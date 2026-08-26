@@ -30,7 +30,7 @@ fn gaussian_pdf(x: f64, mean: f64, variance: f64) -> f64 {
 
 /// Evaluate a [`NaiveBayesIr`] against a dense `values` array.
 ///
-/// Implements JPMML `BayesInputs` semantics: for each target class from `bayes_output_counts`
+/// Implements PMML `BayesInputs` semantics: for each target class from `bayes_output_counts`
 /// (priors), accumulate `ln(prior)` plus per-input contributions. Continuous inputs try
 /// `target_value_stats` (Gaussian) first; discrete inputs try `pair_counts` (categorical).
 /// Missing inputs contribute nothing. The maximal `log_prob` class is predicted.
@@ -149,7 +149,7 @@ pub fn evaluate_naive_bayes(nb: &NaiveBayesIr, values: &[Value]) -> Value {
                     Value::Discrete(sid) => sid == pc.value,
                     Value::Continuous(_f) => {
                         // For categorical double like "1.0", need to handle as discrete string?
-                        // Try to compare as string via symbol? For v1, if actual is continuous but expected discrete, try to see if f as string matches
+                        // Try to compare as string via symbol?  if actual is continuous but expected discrete, try to see if f as string matches
                         // For simplicity, if actual is continuous and pc.value corresponds to discrete string representation of f, we can try
                         // But for now, just not match
                         false

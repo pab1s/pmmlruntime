@@ -5,9 +5,9 @@
 //! (typically `Segmentation` with `multipleModelMethod="sum"` over `TreeModel`s).
 //! The scoring engine never knows the original framework.
 //!
-//! This example mirrors JPMML-Evaluator's
-//! [basic usage](https://github.com/jpmml/jpmml-evaluator#basic-usage)
-//! and [advanced usage](https://github.com/jpmml/jpmml-evaluator#advanced-usage)
+//! This example mirrors PMML evaluator's
+//! [basic usage](https://github.com/pmml/pmml-evaluator#basic-usage)
+//! and [advanced usage](https://github.com/pmml/pmml-evaluator#advanced-usage)
 //! but in Rust (no JVM).
 //!
 //! Run:
@@ -137,7 +137,7 @@ fn main() -> anyhow::Result<()> {
         pmmlruntime::ir::ModelIr::BayesianNetwork(_) => println!("  Model: BayesianNetworkModel"),
     }
 
-    // 2a. Batch path — input data file (CSV). This is the "advanced" JPMML equivalent:
+    // 2a. Batch path — input data file (CSV). This is the "advanced" PMML equivalent:
     //     evaluator.evaluate(batch) → PMML's `ModelVerification` style.
     if let Some(csv) = csv_path {
         let csv_str = std::fs::read_to_string(&csv)?;
@@ -192,7 +192,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // 2b. Single-row path — JPMML "basic usage" `evaluator.evaluate(arguments)` equivalent.
+    // 2b. Single-row path — PMML "basic usage" `evaluator.evaluate(arguments)` equivalent.
     //     For a LightGBM PMML, active fields are whatever you trained on, e.g. age,income,dept.
     //     Unknown fields are ignored; missing fields become Value::Missing (MiningSchema handles
     //     outlier/missing/invalid per PMML spec).
@@ -248,8 +248,8 @@ fn main() -> anyhow::Result<()> {
     print_output(&out, &sess.ir);
 
     // 2c. Advanced: pre-resolved FieldId (avoid per-row HashMap<String,Value> hashing, ~402 ns vs ~1 µs)
-    //     Mirrors JPMML `InputField`/`FieldValue` preparation.
-    println!("\nAdvanced — FieldId batch (JPMML InputField/FieldValue equivalent, 402 ns single):");
+    //     Mirrors PMML `InputField`/`FieldValue` preparation.
+    println!("\nAdvanced — FieldId batch (PMML InputField/FieldValue equivalent, 402 ns single):");
     if let Some(fid) = sess.field_id("x") {
         let out2 = sess.run_with_ids(&[(fid, Value::Continuous(2.0))])?;
         print_output(&out2, &sess.ir);

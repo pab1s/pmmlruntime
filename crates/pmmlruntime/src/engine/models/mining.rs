@@ -161,7 +161,7 @@ pub fn evaluate_mining(
             // We already wrote Tree's probability outputs above. For Regression, its predictedValue is also an output.
             // For Regression segment, its output is typically named like "Pollen Index" or target field.
             // We need to ensure that regression's predictedValue is written to appropriate field for next segment if needed.
-            // For v1, we write the prediction to the target field of this regression's mining_schema (if any)
+            //  we write the prediction to the target field of this regression's mining_schema (if any)
             if let ModelIr::Regression(reg) = &*seg.model {
                 if let Some(target_fid) = reg.mining_schema.target_field {
                     if (target_fid.as_usize()) < values.len() {
@@ -277,7 +277,7 @@ pub fn evaluate_mining(
             .map(|(v, _)| v)
             .unwrap_or(Value::Missing),
         MultipleModelMethod::SelectAll => {
-            // Return first for v1
+            // Return first
             predictions
                 .into_iter()
                 .next()
@@ -300,7 +300,7 @@ fn write_tree_outputs(
     // We need to find the leaf node that gave this predicted value.
     // For now, we can compute probabilities from the leaf's ScoreDistributions.
     // We need to know which leaf was taken. Our evaluate_tree doesn't return leaf index.
-    // For v1, we can approximate: leaf is the one where score == predicted.
+    //  we can approximate: leaf is the one where score == predicted.
     // Iterate nodes that are leaves (no children) and score matches.
     for node in &tree.nodes {
         if !node.children.is_empty() {

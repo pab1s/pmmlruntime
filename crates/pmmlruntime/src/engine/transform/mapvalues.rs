@@ -19,7 +19,7 @@ use crate::base::{SymbolId, Value};
 
 /// Look up a discrete input in a `MapValues` table.
 ///
-/// Mirrors JPMML `MapValues` for a single `FieldColumnPair` plus
+/// Mirrors PMML `MapValues` for a single `FieldColumnPair` plus
 /// `InlineTable` / `TextIndex` derived fields. The table is an ordered
 /// `Vec<(input SymbolId, output SymbolId)>` produced during lowering; search
 /// is linear and returns the first match.

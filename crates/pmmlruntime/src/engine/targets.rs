@@ -1,6 +1,6 @@
 //! Targets post-processing — rescaling, clamping, and integer casting.
 //!
-//! Implements `TargetUtil` semantics from JPMML (`Target`/`Targets`): after a
+//! Implements `TargetUtil` semantics from PMML (`Target`/`Targets`): after a
 //! model produces a raw score, the first [`TargetIr`] is applied to that value.
 //! Categorical (`Discrete`) predictions pass through unchanged; continuous values
 //! are optionally clamped by `min`/`max`, rescaled by `rescaleFactor`/`rescaleConstant`,
@@ -30,7 +30,7 @@ use crate::ir::{CastIntegerMethod, TargetIr};
 /// Apply [`TargetIr`] post-processing to a predicted value.
 ///
 /// Single-target semantics: when `targets` is empty the input is returned as-is.
-/// Otherwise the first target is used and the following JPMML order is applied:
+/// Otherwise the first target is used and the following PMML order is applied:
 ///
 /// 1. **Missing** → search `targets[0].target_values` for the first `default_value.is_some()` and
 ///    return `Continuous(default)`; if none exists, return `Missing`.
@@ -101,7 +101,7 @@ pub fn apply_targets(targets: &[TargetIr], value: Value) -> Value {
     }
 
     // For non-missing, apply first target's transforms (or matching target if field matches)
-    // In JPMML, each Target corresponds to a target field; for single target, apply that one.
+    // In PMML, each Target corresponds to a target field; for single target, apply that one.
     // For simplicity, use first target.
     let t = &targets[0];
 
@@ -143,7 +143,7 @@ pub fn apply_targets(targets: &[TargetIr], value: Value) -> Value {
         }
         Value::Discrete(_) => {
             // For discrete, no rescale/min/max/cast; return as is
-            // JPMML would handle displayValue etc. via Output, not here
+            // PMML would handle displayValue etc. via Output, not here
             value
         }
         Value::Missing => value, // already handled missing case above, but keep
@@ -153,11 +153,11 @@ pub fn apply_targets(targets: &[TargetIr], value: Value) -> Value {
 /// Apply [`TargetIr`] with a classification prior-probability hint.
 ///
 /// For classification models where the prediction is [`Value::Missing`] and no
-/// `defaultValue` exists, JPMML would fall back to prior probabilities from
+/// `defaultValue` exists, PMML would fall back to prior probabilities from
 /// `TargetValue/@priorProbability`. This function currently delegates to
 /// [`apply_targets`] unchanged — prior handling is performed by the `Output`
 /// layer rather than here — but the parameter is retained for API compatibility
-/// with JPMML's `TargetUtil`.
+/// with PMML's `TargetUtil`.
 ///
 /// # Parameters
 ///

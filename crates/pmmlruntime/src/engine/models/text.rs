@@ -10,7 +10,7 @@
 //! euclidean). `Missing` propagates when input missing or dictionary empty.
 //!
 //! Tokenization is simple: lowercase + split on non-alphanumeric, trim empties.
-//! This mirrors a lightweight variant of JPMML's `TextUtil`.
+//! This mirrors a lightweight variant of PMML's `TextUtil`.
 //!
 //! # What belongs here
 //!

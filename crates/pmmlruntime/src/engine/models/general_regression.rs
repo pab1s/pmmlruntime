@@ -376,7 +376,7 @@ pub fn evaluate_general_regression_with_probs(
             } else {
                 // Try to infer reference category string as "High" for fixture?
                 // Look for category not in param_matrix but in DataDictionary for salCat
-                // For v1, we can try to find symbol for High via searching symbol_names for "High"
+                //  we can try to find symbol for High via searching symbol_names for "High"
                 if let Some((sid, _)) = symbol_names.iter().find(|(_, s)| *s == "High") {
                     probs.insert("High".to_string(), prob);
                     if prob > best_prob {

@@ -493,11 +493,11 @@ fn eval_lag(field: crate::base::FieldId, n: usize, aggregate: LagAggregate) -> V
         return lag_get(field, n);
     }
     // For aggregate, need to collect last n values (including current? PMML spec: lag with aggregate over last n values)
-    // JPMML lag with aggregate: if n>1 and aggregate != none, collect last n values and apply aggregate
+    // PMML lag with aggregate: if n>1 and aggregate != none, collect last n values and apply aggregate
     // We have buffer with last 128 values, where most recent is at back
     // Need to collect n values ending at lag n? Actually spec says Lag(field, n, aggregate) where aggregate over n values preceding? For n=1 and aggregate, it's just that one value?
     // Simplify: collect values for indices [len-n .. len) but if we want lag n, we need values before that?
-    // JPMML: Lag.field n aggregate: if n=0, return current; if n=1, previous; if n=2, two steps ago, etc. For aggregate, it aggregates over n values up to lag?
+    // PMML: Lag.field n aggregate: if n=0, return current; if n=1, previous; if n=2, two steps ago, etc. For aggregate, it aggregates over n values up to lag?
     // For n=3, aggregate=avg, need average of last 3 values before current? Let's implement as average of last n values from buffer (excluding current if n>0)
     let vals: Vec<Value> = LAG_BUFFER.with(|buf| {
         let map = buf.borrow();
@@ -983,7 +983,7 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
                                 if strs.len() >= 2 {
                                     let input = &strs[0];
                                     let pat = &strs[1];
-                                    // Use regex crate (JPMML parity)
+                                    // Use regex crate (PMML parity)
                                     match regex::Regex::new(pat) {
                                         Ok(re) => Value::Continuous(if re.find(input).is_some() {
                                             1.0
