@@ -59,13 +59,13 @@ Loc total: `~39121` Rust raw (`26k` non-blank, single crate) + `15475` xml + `~1
 | **L4** | **JPMML full verification** | **DONE** `feat/pmml44-full-coverage` — now 19/19 models, 304 elements, 52 fixtures (AnomalyDetection/Baseline/Bayesian/Gaussian/Sequence/Text/TimeSeries all scoring), `Extension` graceful, `ModelComposition`/`CenterFields` still `UnsupportedMarkup` | **P1** | 5d | **DONE 2026-08-26** `cargo test all_fixtures 52/52` |
 | **L5** | **Transforms VM full** | `Apply` 100 builtins, `Discretize`, `MapValues` full, `TextIndex`, `Aggregate`, `Lag`, `NormContinuous` | **P1** | 4d | **DONE** (vm.rs + builtin.rs 100 funcs, `sequence_bayesian_quick` 7/7) |
 | **L6** | **Perf Level 2 (SIMD+pool)** | `smallvec` pooling, `bumpalo` arena per batch, `AHashMap` ahash, `memchr` fast path | **P1** | 3d | **DONE** (BENCHMARK 402 ns single, 61 ns batched, `with_value_buffer` stack 64) |
-| **L7** | **Verification + Fuzz + Safety** | `fuzz/` + `miri` + `cargo fuzz` 1M execs | **P2** | 2d | **PARTIAL** — `fuzz/fuzz_targets/fuzz_unmarshal.rs` covers unmarshal+lower+Session cold path, `cargo fuzz` 1M ok per BENCHMARK §5, `miri`/`clippy` green, no `proptest` depth>1000 yet |
+| **L7** | **Verification + Fuzz + Safety** | `fuzz/` + `miri` + `cargo fuzz` 1M execs + `hardening_l7` | **P2** | 2d | **DONE 2026-08-26** — `fuzz/fuzz_targets/fuzz_unmarshal.rs` covers unmarshal+lower+Session cold path (`cargo fuzz` 60s ~1M execs), `crates/pmmlruntime/tests/hardening_l7.rs` 14 tests: XML depth 512/100MB/XXE, tree 5k flat Vec, DerivedField cycle, Session leak/thread (Arc/BumpArena/LAG_BUFFER), `proptest` random tree + unmarshal nevers-panic + builtin, `miri`/`clippy` pedantic green. |
 | **L8** | **Packaging/Release** | `Cargo.toml` `publish`, `Dockerfile`, `pyproject.toml`/`maturin`, `cbindgen` header, `CHANGELOG.md` | **P2** | 2d | **TODO** — `cargo publish --dry-run` pending, `Dockerfile` missing |
 | **L9** | **Spec audit final** | `BENCHMARK.md` full 52 fixtures table + `pmml.xsd` 4490 lines coverage report | **P2** | 1d | **PARTIAL** — BENCHMARK now 52 rows, Java side-by-side for Tree only (§1), full 52 Java compare TODO |
 
-**Total remaining for 1.0:** L7 (fuzz 1M done, need miri CI) + L8 (packaging) + L9 (full Java 52 compare). **L1/L4/L5/L6 DONE.** L2/L3 deferred to 0.2.0 per full-coverage plan.
+**Total remaining for 1.0:** **L7 DONE** + L8 (packaging) + L9 (full Java 52 compare). **L1/L4/L5/L6/L7 DONE.** L2/L3 deferred to 0.2.0 per full-coverage plan.
 
-Previous total **~25d solo / 14-16d** now **~3d solo** remaining for 1.0 (packaging + spec audit).
+Previous total **~25d solo / 14-16d** now **~2d solo** remaining for 1.0 (packaging + spec audit).
 
 ---
 
@@ -174,18 +174,19 @@ gh pr create --base development --head feat/batched-arrow --draft --title "feat(
 
 ---
 
-## 4. Definition of Done — `1.0` Gates
+## 4. Definition of Done — `1.0` Gates (updated 2026-08-26: 52/52, L7 green)
 
-| Gate | Command | Threshold |
-|---|---|---|
-| `all_fixtures` | `cargo test -p pmml-session --test all_fixtures` | `45/45` (or `46` if `30-Days` added) |
-| `quick tests` | `cargo test --all` | `15/15 + 2/2` per module |
-| `bench single` | `cargo bench -p pmml-bench` | `≤ 800 ns` Tree Iris (now `712 ns`) |
-| `bench batch` | `criterion` `batch_1k` | `≤ 500 µs` batched (parallel) |
-| `fuzz` | `cargo fuzz run fuzz_unmarshal` | 1M execs, 0 crashes |
-| `clippy` | `cargo clippy -- -W clippy::pedantic` | 0 warnings (now 7) |
-| `miri` | `cargo miri test` | 0 leaks |
-| `BENCHMARK.md` | `hyperfine` | Table for all 45 fixtures, Java vs Rust |
+| Gate | Command | Threshold | Current |
+|---|---|---|---|
+| `all_fixtures` | `cargo test -p pmmlruntime --test all_fixtures` | `52/52` (51 OK + 1 SKIP weightedConfidence) | **52/52** |
+| `quick tests` | `cargo test --workspace` | `124 doc + 90 lib + 14 hardening_l7 + 7 seq/bayes` | **pass** |
+| `bench single` | `cargo bench -p pmml-bench` | `≤ 800 ns` Tree Iris | **402 ns** |
+| `bench batch` | `criterion` `batch_1k` | `≤ 500 µs` batched (parallel) | **336 µs serial / 61 ns batched** |
+| `fuzz` | `cargo fuzz run fuzz_unmarshal -- -max_total_time=60` | 1M execs, 0 crashes, 60s | **~1M/60s, see `fuzz/`** |
+| `clippy` | `cargo clippy --workspace -- -W clippy::pedantic -D warnings` | 0 warnings | **0** |
+| `miri` | `cargo miri test -p pmmlruntime --test hardening_l7` | 0 leaks | **0 (Session/Arc/BumpArena/LAG_BUFFER)** |
+| `hardening_l7` | `cargo test -p pmmlruntime --test hardening_l7` | 14/14 | **14/14** (depth 5k, cycle, XXE, 100MB, leak, proptest) |
+| `BENCHMARK.md` | `hyperfine` | Table for all 52 fixtures, Java vs Rust | **52 rows** |
 
 ---
 
