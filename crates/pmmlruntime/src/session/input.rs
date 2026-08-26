@@ -1,6 +1,6 @@
 //! Value conversion helpers — replaces `Session::string_to_value`.
 //!
-//! Mirrors ONNX `OrtValue` string vs tensor handling: PMML `Value` needs
+//! Mirrors session `Value` string vs tensor handling: PMML `Value` needs
 //! `FieldId` + `DataType`/`OpType` to decide `Continuous` vs `Discrete`.
 //! This module is `pub(crate)`; `Session` exposes `field_id`/`symbol_id` for callers.
 //!
@@ -19,7 +19,7 @@ use crate::base::{FieldId, SymbolId, Value};
 ///
 /// # Parameters
 ///
-/// - `_field_name`: unused in v1 (kept for future diagnostics; field name that owns this value).
+/// - `_field_name`: reserved for diagnostics (kept for future diagnostics; field name that owns this value).
 /// - `s`: raw string from CSV / user input.
 /// - `field_id`: `Some(FieldId)` if field is known from `DataDictionary`, else `None`.
 /// - `data_type`: `Some(DataType)` if `field_id` was found in `Ir.data_dictionary`, else `None`.

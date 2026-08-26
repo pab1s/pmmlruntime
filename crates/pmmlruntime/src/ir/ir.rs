@@ -402,7 +402,7 @@ pub struct LinearNorm {
 ///
 /// Lowering normalizes function names to canonical `fn` strings (for example,
 /// `"add" | "+" → Add`) via `resolve_builtin` in [`mod@crate::ir::lower`].
-/// Grouping below mirrors the JPMML function registry for discoverability.
+/// Grouping below mirrors the PMML function registry for discoverability.
 ///
 /// # Examples
 ///
@@ -561,7 +561,7 @@ pub enum BuiltinId {
     DateTimeSecondsSince1970,
     /// `dateTimeSecondsSince[1980]`.
     DateTimeSecondsSince1980,
-    /// `dateTimeSecondsSince[0]` (unsupported per JPMML, rejected in lower).
+    /// `dateTimeSecondsSince[0]` (unsupported per PMML, rejected in lower).
     DateTimeSecondsSince0,
     /// `timeSeconds`.
     TimeSeconds,
@@ -632,7 +632,7 @@ pub enum BuiltinId {
 /// segments). Lowering picks the present model and returns `MissingField` or
 /// `UnsupportedMarkup` when none matches.
 ///
-/// See each variant's struct for model-specific semantics and JPMML
+/// See each variant's struct for model-specific semantics and PMML
 /// comparability notes.
 #[derive(Debug, Clone)]
 pub enum ModelIr {
@@ -660,6 +660,20 @@ pub enum ModelIr {
     Association(AssociationIr),
     /// `RuleSetModel` (`RuleSet` with ordered simple rules).
     RuleSet(RuleSetIr),
+    /// `AnomalyDetectionModel` (wrapper over any model with `MeanClusterDistances`).
+    AnomalyDetection(AnomalyDetectionIr),
+    /// `BaselineModel` (change-detection / hypothesis testing via `TestDistributions`).
+    Baseline(BaselineIr),
+    /// `TimeSeriesModel` (ARIMA / ExponentialSmoothing / GARCH / StateSpace / Spectral).
+    TimeSeries(TimeSeriesIr),
+    /// `GaussianProcessModel` (kernel-based regression with `TrainingInstances`).
+    GaussianProcess(GaussianProcessIr),
+    /// `TextModel` (bag-of-words / TF-IDF with `DocumentTermMatrix`).
+    Text(TextIr),
+    /// `SequenceModel` (ordered itemsets / set predicates with sequence rules).
+    Sequence(SequenceModelIr),
+    /// `BayesianNetworkModel` (directed acyclic graph with discrete/continuous nodes).
+    BayesianNetwork(BayesianNetworkIr),
 }
 
 /// Lowered `RegressionModel`.
@@ -1194,6 +1208,805 @@ pub struct RuleSetIr {
     pub rules: Vec<SimpleRuleIr>,
 }
 
+/// Lowered `AnomalyDetectionModel` — wrapper around an embedded model.
+///
+/// Mirrors `pmml.xsd:AnomalyDetectionModel` (`1718-1737`). The embedded `MODEL-ELEMENT`
+/// (`Tree`, `Regression`, `Mining`, `Clustering`, `SVM`, …) is scored first; the outer
+/// model then maps the raw score to an anomaly value per `algorithm_type`.
+///
+/// - `iforest` → `2^(-avg_path / c(n))` where `c(n)=2*H(n-1)-2*(n-1)/n`, `H(k)=ln(k)+γ`.
+/// - `clusterMeanDist` → `distance_to_cluster / mean_cluster_distances[cluster]`.
+/// - otherwise → raw embedded score.
+#[derive(Debug, Clone)]
+pub struct AnomalyDetectionIr {
+    /// `AnomalyDetectionModel/@functionName`.
+    pub function_name: String,
+    /// `AnomalyDetectionModel/@algorithmType` (`iforest`, `ocsvm`, `clusterMeanDist`, `other`).
+    pub algorithm_type: String,
+    /// `AnomalyDetectionModel/@sampleDataSize` parsed as `f64` if present.
+    pub sample_data_size: Option<f64>,
+    /// Mining schema for the outer model.
+    pub mining_schema: MiningSchemaIr,
+    /// Output fields.
+    pub output: Vec<OutputFieldIr>,
+    /// `Targets` (rare for anomaly, but preserved).
+    pub targets: Vec<TargetIr>,
+    /// Embedded model (`MODEL-ELEMENT`).
+    pub model: Box<ModelIr>,
+    /// `MeanClusterDistances/Array` values, one per cluster (for `clusterMeanDist`).
+    pub mean_cluster_distances: Option<Vec<f64>>,
+}
+
+/// Test statistic for `BaselineModel/TestDistributions/@testStatistic`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaselineTestStatistic {
+    /// `zValue` — `(x-mean)/sqrt(var)`.
+    ZValue,
+    /// `chiSquareIndependence`.
+    ChiSquareIndependence,
+    /// `chiSquareDistribution`.
+    ChiSquareDistribution,
+    /// `CUSUM` — `max(reset, prev + log(f1/f0))`.
+    Cusum,
+    /// `scalarProduct`.
+    ScalarProduct,
+}
+
+/// Continuous baseline distribution.
+#[derive(Debug, Clone)]
+pub enum ContinuousDistributionIr {
+    /// `AnyDistribution` with `mean`/`variance`.
+    Any { mean: f64, variance: f64 },
+    /// `GaussianDistribution` with `mean`/`variance`.
+    Gaussian { mean: f64, variance: f64 },
+    /// `PoissonDistribution` with `mean`.
+    Poisson { mean: f64 },
+    /// `UniformDistribution` with `lower`/`upper`.
+    Uniform { lower: f64, upper: f64 },
+}
+
+/// Single `FieldValueCount` inside a `CountTable`.
+#[derive(Debug, Clone)]
+pub struct FieldValueCountIr {
+    /// Field id (`FieldValueCount/@field`).
+    pub field: FieldId,
+    /// Value symbol (`@value` interned).
+    pub value: SymbolId,
+    /// Count (`@count`).
+    pub count: f64,
+}
+
+/// Discrete `CountTable` (or `NormalizedCountTable`).
+#[derive(Debug, Clone)]
+pub struct CountTableIr {
+    /// `CountTable/@sample` if present.
+    pub sample: Option<f64>,
+    /// Flat `FieldValueCount` entries.
+    pub entries: Vec<FieldValueCountIr>,
+}
+
+/// Discrete baseline distribution.
+#[derive(Debug, Clone)]
+pub enum DiscreteDistributionIr {
+    /// `CountTable`.
+    CountTable(CountTableIr),
+    /// `NormalizedCountTable`.
+    NormalizedCountTable(CountTableIr),
+    /// List of `FieldRef/@field` for `chiSquareIndependence`.
+    FieldRefs(Vec<FieldId>),
+}
+
+/// Lowered `TestDistributions` inside `BaselineModel`.
+#[derive(Debug, Clone)]
+pub struct TestDistributionsIr {
+    /// `TestDistributions/@field` (target for baseline test).
+    pub field: FieldId,
+    /// Name of the test field (for materialization).
+    pub field_name: String,
+    /// `TestDistributions/@testStatistic`.
+    pub test_statistic: BaselineTestStatistic,
+    /// `TestDistributions/@resetValue` (for `CUSUM`).
+    pub reset_value: f64,
+    /// `TestDistributions/@windowSize`.
+    pub window_size: i32,
+    /// `TestDistributions/@weightField` if any.
+    pub weight_field: Option<FieldId>,
+    /// `TestDistributions/@normalizationScheme` if any.
+    pub normalization_scheme: Option<String>,
+    /// `Baseline` continuous or discrete.
+    pub baseline_continuous: Option<ContinuousDistributionIr>,
+    /// Baseline discrete (alternative storage for discrete case).
+    pub baseline_discrete: Option<DiscreteDistributionIr>,
+    /// `Alternate` continuous (only for `CUSUM`).
+    pub alternate: Option<ContinuousDistributionIr>,
+}
+
+/// Lowered `BaselineModel` (change-detection).
+#[derive(Debug, Clone)]
+pub struct BaselineIr {
+    /// `BaselineModel/@functionName`.
+    pub function_name: String,
+    /// Mining schema.
+    pub mining_schema: MiningSchemaIr,
+    /// Output fields.
+    pub output: Vec<OutputFieldIr>,
+    /// Targets.
+    pub targets: Vec<TargetIr>,
+    /// Single `TestDistributions`.
+    pub test_distributions: TestDistributionsIr,
+}
+
+/// Best-fit algorithm for `TimeSeriesModel/@bestFit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeSeriesAlgorithm {
+    ARIMA,
+    ExponentialSmoothing,
+    SeasonalTrendDecomposition,
+    SpectralAnalysis,
+    StateSpaceModel,
+    GARCH,
+}
+
+/// Single `TimeValue` inside `TimeSeries`.
+#[derive(Debug, Clone)]
+pub struct TimeValueIr {
+    pub index: Option<i32>,
+    pub time: Option<String>,
+    pub value: f64,
+    pub standard_error: Option<f64>,
+}
+
+/// `TimeCycle` inside `TimeAnchor`.
+#[derive(Debug, Clone)]
+pub struct TimeCycleIr {
+    pub length: Option<i32>,
+    pub type_: Option<String>,
+    pub display_name: Option<String>,
+    pub array: Vec<i32>,
+}
+
+/// `TimeException` inside `TimeAnchor`.
+#[derive(Debug, Clone)]
+pub struct TimeExceptionIr {
+    pub type_: String,
+    pub count: Option<i32>,
+    pub array: Vec<i32>,
+}
+
+/// `TimeAnchor` inside `TimeSeries`.
+#[derive(Debug, Clone)]
+pub struct TimeAnchorIr {
+    pub type_: Option<String>,
+    pub offset: Option<i32>,
+    pub stepsize: Option<i32>,
+    pub display_name: Option<String>,
+    pub time_cycles: Vec<TimeCycleIr>,
+    pub time_exceptions: Vec<TimeExceptionIr>,
+}
+
+/// One `TimeSeries` history inside `TimeSeriesModel`.
+#[derive(Debug, Clone)]
+pub struct TimeSeriesDataIr {
+    pub usage: String,
+    pub start_time: Option<f64>,
+    pub end_time: Option<f64>,
+    pub interpolation_method: String,
+    pub field: Option<FieldId>,
+    pub field_name: Option<String>,
+    pub time_anchor: Option<TimeAnchorIr>,
+    pub time_values: Vec<TimeValueIr>,
+}
+
+/// `Level` for `ExponentialSmoothing`.
+#[derive(Debug, Clone)]
+pub struct LevelIr {
+    pub alpha: Option<f64>,
+    pub smoothed_value: f64,
+}
+/// `Trend_ExpoSmooth` for `ExponentialSmoothing`.
+#[derive(Debug, Clone)]
+pub struct TrendExpoSmoothIr {
+    pub trend: String,
+    pub gamma: Option<f64>,
+    pub phi: Option<f64>,
+    pub smoothed_value: Option<f64>,
+    pub array: Vec<f64>,
+}
+/// `Seasonality_ExpoSmooth` for `ExponentialSmoothing`.
+#[derive(Debug, Clone)]
+pub struct SeasonalityExpoSmoothIr {
+    pub type_: String,
+    pub period: i32,
+    pub unit: Option<String>,
+    pub phase: Option<i32>,
+    pub delta: Option<f64>,
+    pub array: Vec<f64>,
+}
+/// Lowered `ExponentialSmoothing`.
+#[derive(Debug, Clone)]
+pub struct ExponentialSmoothingIr {
+    pub rmse: Option<f64>,
+    pub transformation: String,
+    pub level: LevelIr,
+    pub trend: Option<TrendExpoSmoothIr>,
+    pub seasonality: Option<SeasonalityExpoSmoothIr>,
+    pub time_values: Vec<TimeValueIr>,
+}
+
+/// `AR` coefficients.
+#[derive(Debug, Clone)]
+pub struct ArIr {
+    pub array: Vec<f64>,
+}
+/// `MACoefficients`.
+#[derive(Debug, Clone)]
+pub struct MaCoefficientsIr {
+    pub array: Vec<f64>,
+}
+/// `Residuals`.
+#[derive(Debug, Clone)]
+pub struct ResidualsIr {
+    pub array: Vec<f64>,
+}
+/// `MA` with coefficients and residuals.
+#[derive(Debug, Clone)]
+pub struct MaIr {
+    pub ma_coefficients: Option<MaCoefficientsIr>,
+    pub residuals: Option<ResidualsIr>,
+}
+/// `NonseasonalComponent`.
+#[derive(Debug, Clone)]
+pub struct NonseasonalComponentIr {
+    pub p: usize,
+    pub d: usize,
+    pub q: usize,
+    pub ar: Option<ArIr>,
+    pub ma: Option<MaIr>,
+}
+/// `SeasonalComponent`.
+#[derive(Debug, Clone)]
+pub struct SeasonalComponentIr {
+    pub p: usize,
+    pub d: usize,
+    pub q: usize,
+    pub period: usize,
+    pub ar: Option<ArIr>,
+    pub ma: Option<MaIr>,
+}
+/// `NonseasonalFactor` for transfer function.
+#[derive(Debug, Clone)]
+pub struct NonseasonalFactorIr {
+    pub difference: Option<i32>,
+    pub maximum_order: Option<i32>,
+    pub array: Vec<f64>,
+}
+/// `SeasonalFactor` for transfer function.
+#[derive(Debug, Clone)]
+pub struct SeasonalFactorIr {
+    pub difference: Option<i32>,
+    pub maximum_order: Option<i32>,
+    pub array: Vec<f64>,
+}
+/// `Numerator`.
+#[derive(Debug, Clone)]
+pub struct NumeratorIr {
+    pub nonseasonal_factor: Option<NonseasonalFactorIr>,
+    pub seasonal_factor: Option<SeasonalFactorIr>,
+}
+/// `Denominator`.
+#[derive(Debug, Clone)]
+pub struct DenominatorIr {
+    pub nonseasonal_factor: Option<NonseasonalFactorIr>,
+    pub seasonal_factor: Option<SeasonalFactorIr>,
+}
+/// `TrendCoefficients`.
+#[derive(Debug, Clone)]
+pub struct TrendCoefficientsIr {
+    pub array: Vec<f64>,
+}
+/// `TransferFunctionValues`.
+#[derive(Debug, Clone)]
+pub struct TransferFunctionValuesIr {
+    pub array: Vec<f64>,
+}
+/// `RegressorValues`.
+#[derive(Debug, Clone)]
+pub struct RegressorValuesIr {
+    pub time_series: Option<Box<TimeSeriesDataIr>>,
+    pub trend_coefficients: Option<TrendCoefficientsIr>,
+    pub transfer_function_values: Option<TransferFunctionValuesIr>,
+}
+/// `DynamicRegressor`.
+#[derive(Debug, Clone)]
+pub struct DynamicRegressorIr {
+    pub field: FieldId,
+    pub field_name: String,
+    pub transformation: String,
+    pub delay: i32,
+    pub future_values_method: String,
+    pub target_field: Option<FieldId>,
+    pub numerator: Option<NumeratorIr>,
+    pub denominator: Option<DenominatorIr>,
+    pub regressor_values: Option<RegressorValuesIr>,
+}
+/// `Theta` entry.
+#[derive(Debug, Clone)]
+pub struct ThetaIr {
+    pub i: Option<i32>,
+    pub j: Option<i32>,
+    pub theta: f64,
+}
+#[derive(Debug, Clone)]
+pub struct FinalThetaIr {
+    pub thetas: Vec<ThetaIr>,
+}
+#[derive(Debug, Clone)]
+pub struct FinalNoiseIr {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct FinalPredictedNoiseIr {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct FinalNuIr {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct FinalStateVectorIr {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct HVectorIr {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct FinalOmegaIr {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct KalmanStateIr {
+    pub final_omega: Option<FinalOmegaIr>,
+    pub final_state_vector: Option<FinalStateVectorIr>,
+    pub h_vector: Option<HVectorIr>,
+}
+#[derive(Debug, Clone)]
+pub struct ThetaRecursionStateIr {
+    pub final_noise: Option<FinalNoiseIr>,
+    pub final_predicted_noise: Option<FinalPredictedNoiseIr>,
+    pub final_theta: Option<FinalThetaIr>,
+    pub final_nu: Option<FinalNuIr>,
+}
+#[derive(Debug, Clone)]
+pub struct MaximumLikelihoodStatIr {
+    pub method: String,
+    pub period_deficit: i32,
+    pub kalman_state: Option<KalmanStateIr>,
+    pub theta_recursion_state: Option<ThetaRecursionStateIr>,
+}
+#[derive(Debug, Clone)]
+pub struct OutlierEffectIr {
+    pub type_: String,
+    pub start_time: f64,
+    pub magnitude: f64,
+    pub damping_coefficient: Option<f64>,
+}
+/// Lowered `ARIMA`.
+#[derive(Debug, Clone)]
+pub struct ArimaIr {
+    pub rmse: Option<f64>,
+    pub transformation: String,
+    pub constant_term: f64,
+    pub prediction_method: String,
+    pub nonseasonal_component: Option<NonseasonalComponentIr>,
+    pub seasonal_component: Option<SeasonalComponentIr>,
+    pub dynamic_regressors: Vec<DynamicRegressorIr>,
+    pub maximum_likelihood_stat: Option<MaximumLikelihoodStatIr>,
+    pub outlier_effects: Vec<OutlierEffectIr>,
+}
+/// `ARMAPart` for GARCH.
+#[derive(Debug, Clone)]
+pub struct ArmaPartIr {
+    pub constant: f64,
+    pub p: i32,
+    pub q: i32,
+    pub ar: Option<ArIr>,
+    pub ma: Option<MaIr>,
+}
+#[derive(Debug, Clone)]
+pub struct PastVariancesIr {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct ResidualSquareCoefficientsIr {
+    pub residuals: Option<ResidualsIr>,
+    pub ma_coefficients: Option<MaCoefficientsIr>,
+}
+#[derive(Debug, Clone)]
+pub struct VarianceCoefficientsIr {
+    pub past_variances: Option<PastVariancesIr>,
+    pub ma_coefficients: Option<MaCoefficientsIr>,
+}
+#[derive(Debug, Clone)]
+pub struct GarchPartIr {
+    pub constant: f64,
+    pub gp: i32,
+    pub gq: i32,
+    pub residual_square_coefficients: Option<ResidualSquareCoefficientsIr>,
+    pub variance_coefficients: Option<VarianceCoefficientsIr>,
+}
+#[derive(Debug, Clone)]
+pub struct GarchIr {
+    pub arma_part: Option<ArmaPartIr>,
+    pub garch_part: Option<GarchPartIr>,
+}
+/// `StateVector` etc for StateSpace.
+#[derive(Debug, Clone)]
+pub struct StateVectorIr {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct TransitionMatrixIr {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct MeasurementMatrixIr {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct InterceptVectorIr {
+    pub type_: Option<String>,
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct PredictedStateCovarianceMatrixIr {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct SelectedStateCovarianceMatrixIr {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct ObservationVarianceMatrixIr {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct PsiVectorIr {
+    pub target_field: Option<String>,
+    pub variance: Option<String>,
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct StateSpaceModelIr {
+    pub variance: Option<f64>,
+    pub period: Option<String>,
+    pub intercept: f64,
+    pub state_vector: Option<StateVectorIr>,
+    pub transition_matrix: Option<TransitionMatrixIr>,
+    pub measurement_matrix: Option<MeasurementMatrixIr>,
+    pub intercept_vector: Option<InterceptVectorIr>,
+    pub predicted_state_covariance_matrix: Option<PredictedStateCovarianceMatrixIr>,
+    pub selected_state_covariance_matrix: Option<SelectedStateCovarianceMatrixIr>,
+    pub observation_variance_matrix: Option<ObservationVarianceMatrixIr>,
+    pub psi_vector: Option<PsiVectorIr>,
+    pub dynamic_regressors: Vec<DynamicRegressorIr>,
+}
+#[derive(Debug, Clone)]
+pub struct SpectralAnalysisIr {}
+#[derive(Debug, Clone)]
+pub struct SeasonalTrendDecompositionIr {}
+/// Lowered `TimeSeriesModel`.
+#[derive(Debug, Clone)]
+pub struct TimeSeriesIr {
+    pub function_name: String,
+    pub model_name: Option<String>,
+    pub algorithm_name: Option<String>,
+    pub best_fit: TimeSeriesAlgorithm,
+    pub is_scorable: bool,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    pub targets: Vec<TargetIr>,
+    pub time_series: Vec<TimeSeriesDataIr>,
+    pub spectral_analysis: Option<SpectralAnalysisIr>,
+    pub arima: Option<ArimaIr>,
+    pub exponential_smoothing: Option<ExponentialSmoothingIr>,
+    pub seasonal_trend_decomposition: Option<SeasonalTrendDecompositionIr>,
+    pub state_space_model: Option<StateSpaceModelIr>,
+    pub garch: Option<GarchIr>,
+}
+
+/// Kernel for `GaussianProcessIr`.
+#[derive(Debug, Clone)]
+pub enum GaussianKernelIr {
+    /// `RadialBasisKernel` — `exp(-gamma * lambda * ||x-y||^2)`.
+    RadialBasis {
+        gamma: f64,
+        noise_variance: f64,
+        lambda: f64,
+        description: Option<String>,
+    },
+    /// `ARDSquaredExponentialKernel` — `exp(-gamma * Σ (diff^2)/(2*lambda_i^2))`.
+    ARDSquaredExponential {
+        gamma: f64,
+        noise_variance: f64,
+        lambdas: Vec<Vec<f64>>,
+        description: Option<String>,
+    },
+    /// `AbsoluteExponentialKernel` — `exp(-gamma * Σ |diff|/lambda_i)`.
+    AbsoluteExponential {
+        gamma: f64,
+        noise_variance: f64,
+        lambdas: Vec<Vec<f64>>,
+        description: Option<String>,
+    },
+    /// `GeneralizedExponentialKernel` — `exp(-gamma * ||x-y||^degree)`.
+    GeneralizedExponential {
+        gamma: f64,
+        noise_variance: f64,
+        lambdas: Vec<Vec<f64>>,
+        degree: f64,
+        description: Option<String>,
+    },
+}
+
+/// Lowered `GaussianProcessModel`.
+#[derive(Debug, Clone)]
+pub struct GaussianProcessIr {
+    /// `GaussianProcessModel/@functionName`.
+    pub function_name: String,
+    /// `GaussianProcessModel/@modelName`.
+    pub model_name: Option<String>,
+    /// Mining schema.
+    pub mining_schema: MiningSchemaIr,
+    /// Output fields.
+    pub output: Vec<OutputFieldIr>,
+    /// Targets.
+    pub targets: Vec<TargetIr>,
+    /// Kernel choice.
+    pub kernel: GaussianKernelIr,
+    /// `TrainingInstances` instance fields (for column mapping).
+    pub instance_fields: Vec<FieldId>,
+    /// Training rows as dense maps `FieldId -> Value`.
+    pub training_instances:
+        Vec<std::collections::HashMap<crate::base::FieldId, crate::base::Value>>,
+    /// Training inputs pre-parsed as numeric vectors aligned with `instance_fields` / active fields for fast kernel.
+    pub training_vectors: Vec<Vec<f64>>,
+    /// Training target values aligned with `training_instances` for regression (`Continuous`) or classification (`Discrete`).
+    pub training_targets: Vec<crate::base::Value>,
+    /// `TrainingInstances/@isTransformed`.
+    pub is_transformed: bool,
+}
+
+/// A single document in `TextModel` corpus.
+#[derive(Debug, Clone)]
+pub struct TextDocumentIr {
+    /// `TextDocument/@id`.
+    pub id: String,
+    /// Interned `TextDocument/@id` as `SymbolId`.
+    pub id_symbol: SymbolId,
+    /// `TextDocument/@name`.
+    pub name: Option<String>,
+}
+
+/// Normalization for `TextModel`.
+#[derive(Debug, Clone)]
+pub struct TextNormalizationIr {
+    /// `localTermWeights` (`termFrequency`, `binary`, `logarithmic`, `augmentedNormalizedTermFrequency`).
+    pub local_term_weights: String,
+    /// `globalTermWeights` (`inverseDocumentFrequency`, `none`, `GFIDF`, etc.).
+    pub global_term_weights: String,
+    /// `documentNormalization` (`none`, `cosine`).
+    pub document_normalization: String,
+}
+
+/// Similarity metric for `TextModel`.
+#[derive(Debug, Clone)]
+pub struct TextSimilarityIr {
+    /// `similarityType` (`cosine`, `euclidean`).
+    pub similarity_type: String,
+}
+
+/// Lowered `TextModel`.
+#[derive(Debug, Clone)]
+pub struct TextIr {
+    /// `TextModel/@functionName`.
+    pub function_name: String,
+    /// `TextModel/@modelName`.
+    pub model_name: Option<String>,
+    /// Mining schema.
+    pub mining_schema: MiningSchemaIr,
+    /// Output fields.
+    pub output: Vec<OutputFieldIr>,
+    /// Targets.
+    pub targets: Vec<TargetIr>,
+    /// `TextDictionary` terms in order (`numberOfTerms == terms.len()`).
+    pub dictionary: Vec<String>,
+    /// `TextCorpus` documents in order.
+    pub corpus: Vec<TextDocumentIr>,
+    /// `DocumentTermMatrix` dense rows `docs x terms`.
+    pub document_term_matrix: Vec<Vec<f64>>,
+    /// Optional `TextModelNormalization`.
+    pub normalization: Option<TextNormalizationIr>,
+    /// Optional `TextModelSimiliarity`.
+    pub similarity: Option<TextSimilarityIr>,
+    /// `TextModel/@numberOfTerms`.
+    pub number_of_terms: usize,
+    /// `TextModel/@numberOfDocuments`.
+    pub number_of_documents: usize,
+}
+
+/// Constraints for `SequenceIr`.
+#[derive(Debug, Clone)]
+pub struct SequenceConstraintsIr {
+    pub minimum_number_of_items: Option<usize>,
+    pub maximum_number_of_items: Option<usize>,
+    pub minimum_support: Option<f64>,
+    pub minimum_confidence: Option<f64>,
+}
+
+/// SetPredicate for `SequenceIr`.
+#[derive(Debug, Clone)]
+pub struct SetPredicateIr {
+    pub id: String,
+    pub field: FieldId,
+    pub values: Vec<SymbolId>,
+}
+
+/// Delimiter for Sequence.
+#[derive(Debug, Clone)]
+pub struct DelimiterIr {
+    pub delimiter: String,
+    pub gap: String,
+}
+
+/// Time statistics.
+#[derive(Debug, Clone)]
+pub struct TimeIr {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub mean: Option<f64>,
+    pub standard_deviation: Option<f64>,
+}
+
+/// Sequence — ordered sets.
+#[derive(Debug, Clone)]
+pub struct SequenceIr {
+    pub id: String,
+    pub number_of_sets: Option<usize>,
+    pub occurrence: Option<i64>,
+    pub support: Option<f64>,
+    pub sets: Vec<String>,
+    pub follow_sets: Vec<(DelimiterIr, Option<TimeIr>, String)>,
+    pub time: Option<TimeIr>,
+}
+
+/// SequenceRule — antecedent -> consequent.
+#[derive(Debug, Clone)]
+pub struct SequenceRuleIr {
+    pub id: String,
+    pub number_of_sets: usize,
+    pub occurrence: i64,
+    pub support: f64,
+    pub confidence: f64,
+    pub lift: Option<f64>,
+    pub antecedent: String,
+    pub consequent: String,
+    pub delimiter: DelimiterIr,
+    pub time_between: Option<TimeIr>,
+    pub time_total: Option<TimeIr>,
+}
+
+/// Lowered `SequenceModel`.
+#[derive(Debug, Clone)]
+pub struct SequenceModelIr {
+    pub function_name: String,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    pub targets: Vec<TargetIr>,
+    pub constraints: Option<SequenceConstraintsIr>,
+    pub items: Vec<ItemIr>,
+    pub itemsets: Vec<ItemsetIr>,
+    pub set_predicates: Vec<SetPredicateIr>,
+    pub sequences: Vec<SequenceIr>,
+    pub sequence_rules: Vec<SequenceRuleIr>,
+}
+
+/// Parent value for Bayesian.
+#[derive(Debug, Clone)]
+pub struct BayesianParentValueIr {
+    pub parent: FieldId,
+    pub value: SymbolId,
+}
+
+/// Value probability for Bayesian discrete.
+#[derive(Debug, Clone)]
+pub struct BayesianValueProbabilityIr {
+    pub value: SymbolId,
+    pub probability: f64,
+}
+
+/// Discrete conditional probability table.
+#[derive(Debug, Clone)]
+pub struct DiscreteConditionalTableIr {
+    pub parent_values: Vec<BayesianParentValueIr>,
+    pub value_probabilities: Vec<BayesianValueProbabilityIr>,
+    pub count: Option<f64>,
+}
+
+/// Continuous distribution bytecode for Bayesian.
+#[derive(Debug, Clone)]
+pub enum BayesianContinuousDistributionIr {
+    Normal {
+        mean: Vec<Op>,
+        variance: Vec<Op>,
+    },
+    Lognormal {
+        mean: Vec<Op>,
+        variance: Vec<Op>,
+    },
+    Uniform {
+        lower: Vec<Op>,
+        upper: Vec<Op>,
+    },
+    Triangular {
+        mean: Vec<Op>,
+        lower: Vec<Op>,
+        upper: Vec<Op>,
+    },
+}
+
+/// Continuous conditional probability.
+#[derive(Debug, Clone)]
+pub struct ContinuousConditionalTableIr {
+    pub parent_values: Vec<BayesianParentValueIr>,
+    pub distributions: Vec<BayesianContinuousDistributionIr>,
+    pub count: Option<f64>,
+}
+
+/// Discrete Bayesian node.
+#[derive(Debug, Clone)]
+pub struct DiscreteBayesianNodeIr {
+    pub name: String,
+    pub field: FieldId,
+    pub count: Option<f64>,
+    pub value_probabilities: Vec<BayesianValueProbabilityIr>,
+    pub conditional_tables: Vec<DiscreteConditionalTableIr>,
+    pub derived_fields: Vec<DerivedFieldIr>,
+}
+
+/// Continuous Bayesian node.
+#[derive(Debug, Clone)]
+pub struct ContinuousBayesianNodeIr {
+    pub name: String,
+    pub field: FieldId,
+    pub count: Option<f64>,
+    pub distributions: Vec<BayesianContinuousDistributionIr>,
+    pub conditional_tables: Vec<ContinuousConditionalTableIr>,
+    pub derived_fields: Vec<DerivedFieldIr>,
+}
+
+/// Bayesian node enum.
+#[derive(Debug, Clone)]
+pub enum BayesianNodeIr {
+    Discrete(DiscreteBayesianNodeIr),
+    Continuous(ContinuousBayesianNodeIr),
+}
+
+/// Lowered `BayesianNetworkModel`.
+#[derive(Debug, Clone)]
+pub struct BayesianNetworkIr {
+    pub function_name: String,
+    pub model_name: Option<String>,
+    pub algorithm_name: Option<String>,
+    pub model_type: Option<String>,
+    pub inference_method: Option<String>,
+    pub is_scorable: bool,
+    pub mining_schema: MiningSchemaIr,
+    pub output: Vec<OutputFieldIr>,
+    pub targets: Vec<TargetIr>,
+    pub nodes: Vec<BayesianNodeIr>,
+}
+
 /// Lowered `TreeModel`.
 #[derive(Debug, Clone)]
 pub struct TreeIr {
@@ -1215,7 +2028,7 @@ pub struct TreeIr {
 
 /// How to handle `Missing` during tree traversal (`TreeModel/@missingValueStrategy`).
 ///
-/// Mirrors JPMML behaviour. The unsupported variants `WeightedConfidence` and
+/// Mirrors PMML behaviour. The unsupported variants `WeightedConfidence` and
 /// `AggregateNodes` are never produced by lowering (they would have been rejected
 /// earlier), but are preserved in the enum for `verify_ir` parity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1228,9 +2041,9 @@ pub enum MissingValueStrategy {
     DefaultChild,
     /// No special handling (`none`).
     None,
-    /// JPMML-unsupported: weighted confidence fallback (`weightedConfidence`).
+    /// PMML-unsupported: weighted confidence fallback (`weightedConfidence`).
     WeightedConfidence,
-    /// JPMML-unsupported: aggregate over leaves (`aggregateNodes`).
+    /// PMML-unsupported: aggregate over leaves (`aggregateNodes`).
     AggregateNodes,
 }
 
@@ -1340,7 +2153,7 @@ pub struct ScoreDistributionIr {
 
 /// Integer cast method for a [`TargetIr`] (`Target/@castInteger` may carry `Round | Ceiling | Floor`).
 ///
-/// Mirrors JPMML `CastInteger`.
+/// Mirrors PMML `CastInteger`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CastIntegerMethod {
     /// Round to nearest (`round`).
@@ -1370,7 +2183,7 @@ pub struct TargetValueIr {
 ///
 /// Controls post-processing of the raw model score: rescaling (`rescaleFactor`,
 /// `rescaleConstant`), optional clamping (`min`, `max`), and optional integer
-/// casting. Evaluator applies these in JPMML order.
+/// casting. Evaluator applies these in PMML order.
 #[derive(Debug, Clone)]
 pub struct TargetIr {
     /// `Target/@field` resolved to `FieldId` when declared (synthetic if needed).

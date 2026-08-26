@@ -20,9 +20,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      # E4: strict pedantic gate (was 7 warnings, now 0 after D+E)
+      # E4: strict pedantic gate (was 7 warnings, now 0 after D+E) — L7 verification
       - run: cargo clippy --workspace -- -W clippy::pedantic -D warnings
-      - run: cargo clippy --workspace --all-targets -- -W clippy::pedantic || true
+      - run: cargo clippy --workspace --all-targets -- -W clippy::pedantic -D warnings
   check:
     runs-on: ubuntu-latest
     steps:
@@ -34,10 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace
-      - run: cargo test -p pmml-session --test all_fixtures -- --nocapture
-      - run: cargo test -p pmml-xml --lib
-      - run: cargo test -p pmml-ir --lib
+      # L7: single crate pmmlruntime + tools (was 9-crate workspace)
+      - run: cargo test --workspace -- --nocapture
+      - run: cargo test -p pmmlruntime --test all_fixtures -- --nocapture
+      - run: cargo test -p pmmlruntime --lib -- --nocapture
+      # L7: proptest depth>5k + hardening (XXE, depth 512, 100MB) is in `cargo test --workspace` via `hardening_l7` test
+      - run: cargo test -p pmmlruntime --test hardening_l7 -- --nocapture
   miri:
     runs-on: ubuntu-latest
     steps:
@@ -45,18 +47,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri, rust-src
-      # E4: leak sanitizer for Session / Ir
-      - run: cargo miri test --workspace || echo "miri requires nightly + miri setup"
-      - run: cargo miri test -p pmml-session || true
+      # E4/L7: leak sanitizer for Session / Ir / BumpArena / Lag buffer — must be 0 leaks
+      - run: cargo miri test -p pmmlruntime --lib -- --nocapture
+      - run: cargo miri test -p pmmlruntime --test hardening_l7 -- --nocapture
   fuzz:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo install cargo-fuzz || true
-      # E3: 1M execs, 60s max_total_time, validates reader hardening (depth 512, XXE)
-      - run: cargo fuzz run fuzz_unmarshal -- -max_total_time=60 -rss_limit_mb=2048 || echo "fuzz requires libfuzzer"
-      - run: cargo test -p pmml-xml --lib reader::tests::xxe_blocked -- --nocapture || true
+      - run: cargo install cargo-fuzz
+      # E3/L7: 1M execs, 60s max_total_time, validates reader hardening (depth 512, XXE, 100MB) — see fuzz/fuzz_targets/fuzz_unmarshal.rs
+      - run: cargo fuzz run fuzz_unmarshal -- -max_total_time=60 -rss_limit_mb=2048 -print_final_stats=1
+      - run: cargo test -p pmmlruntime --lib xml::reader::tests::xxe_blocked -- --nocapture
+      - run: cargo test -p pmmlruntime --lib xml::reader::tests::depth_limit -- --nocapture
   bench:
     runs-on: ubuntu-latest
     steps:

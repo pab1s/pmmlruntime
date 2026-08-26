@@ -1,7 +1,7 @@
 //! Output field evaluation — mapping model scores to [`ResultFeature`] values.
 //!
 //! Implements the PMML `Output` semantics for the 26 [`ResultFeature`] values.
-//! Four features are unsupported per JPMML (`confidenceIntervalLower`,
+//! Four features are unsupported per PMML (`confidenceIntervalLower`,
 //! `confidenceIntervalUpper`, `standardError`, `standardDeviation`) and are
 //! mapped to [`Value::Missing`] in non-strict mode or to
 //! [`crate::base::error::PmmlError::UnsupportedMarkup`] in strict mode.
@@ -35,7 +35,7 @@ use std::collections::HashMap;
 /// Convenience wrapper around [`build_output_with_context`] with no auxiliary context.
 /// Handles all 26 [`ResultFeature`] values; the 4 unsupported features resolve to
 /// [`Value::Missing`] (backward-compatible). Use [`build_output_strict`] for strict
-/// JPMML parity.
+/// PMML parity.
 ///
 /// # Parameters
 ///
@@ -228,14 +228,14 @@ pub fn build_output_with_context(
             ResultFeature::PredictedValue => predicted,
             ResultFeature::PredictedDisplayValue => {
                 // Try to map Discrete predicted to its displayValue via symbol_names or target field
-                // For minimal, return predicted; for JPMML parity, we would look up DataField Value displayValue or TargetValue displayValue
+                // For minimal, return predicted; for PMML parity, we would look up DataField Value displayValue or TargetValue displayValue
                 // Since we don't have that mapping here, return predicted
                 // If predicted is Discrete and symbol_names contains display mapping, we could use it
                 predicted
             }
             ResultFeature::TransformedValue | ResultFeature::Decision | ResultFeature::Warning => {
                 // TransformedValue and Decision are typically derived via OutputField expression (Apply etc.)
-                // For minimal JPMML parity, if expression_bytecode is present, we would evaluate it via vm.
+                // For minimal PMML parity, if expression_bytecode is present, we would evaluate it via vm.
                 // Currently expression_bytecode is None for most, so return predicted
                 // Warning is list of warnings; for now return Missing or empty
                 if of.feature == ResultFeature::Warning {
@@ -324,7 +324,7 @@ pub fn build_output_with_context(
             | ResultFeature::StandardDeviation
             | ResultFeature::ConfidenceIntervalLower
             | ResultFeature::ConfidenceIntervalUpper => {
-                // Explicitly unsupported per JPMML spec (is_unsupported() true)
+                // Explicitly unsupported per PMML spec (is_unsupported() true)
                 // Return Missing; caller could also return Err(PmmlError::UnsupportedMarkup)
                 Value::Missing
             }

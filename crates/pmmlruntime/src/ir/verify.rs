@@ -1,6 +1,6 @@
 //! Unsupported-markup inspector — fails fast on explicitly unsupported PMML 4.4.
 //!
-//! Mirrors `org.jpmml.evaluator.UnsupportedMarkupInspector` (JPMML). Called as
+//! Mirrors `org.pmml.evaluator.UnsupportedMarkupInspector` (PMML). Called as
 //! `verify_raw` before lowering and `verify_ir` after lowering. Vendor
 //! [`crate::ir::ExtensionIr`] is always allowed (stored, not evaluated).
 
@@ -60,6 +60,13 @@ pub fn verify_raw(raw: &RawPmml) -> Result<()> {
         && raw.general_regression_model.is_none()
         && raw.association_model.is_none()
         && raw.rule_set_model.is_none()
+        && raw.anomaly_detection_model.is_none()
+        && raw.baseline_model.is_none()
+        && raw.time_series_model.is_none()
+        && raw.gaussian_process_model.is_none()
+        && raw.text_model.is_none()
+        && raw.sequence_model.is_none()
+        && raw.bayesian_network_model.is_none()
         && raw.unsupported_model.is_none()
         && raw.data_dictionary.is_empty()
     {
@@ -73,15 +80,16 @@ pub fn verify_raw(raw: &RawPmml) -> Result<()> {
 
 /// Verifies an already-lowered [`Ir`] for unsupported constructs.
 ///
-/// Currently ensures that `TreeIr.missing_value_strategy` is one of the
-/// supported variants (`lastPrediction`, `nullPrediction`, `defaultChild`,
-/// `none`). Lowering already coerces unknown strings to `nullPrediction`, so
-/// this is a defense-in-depth check.
+/// Rejects PMML-unsupported markup: `TreeModel/@missingValueStrategy`
+/// `weightedConfidence`/`aggregateNodes` and `ClusteringModel/@modelClass`
+/// `distributionBased` (features.md:42,51). `lower::parse_missing_strategy`
+/// preserves those variants so this check can fail fast like
+/// `org.pmml.evaluator.UnsupportedMarkupInspector`.
 ///
 /// # Errors
 ///
-/// Currently always returns `Ok(())`; reserved for future `ResultFeature`
-/// or `MiningFunction` rejection (`PmmlError::UnsupportedMarkup`) without changing call sites.
+/// Returns `PmmlError::UnsupportedMarkup` for the two Tree strategies and
+/// for `distributionBased` clustering. Vendor `Extension` is always `Ok`.
 ///
 /// # Examples
 ///
@@ -93,15 +101,33 @@ pub fn verify_raw(raw: &RawPmml) -> Result<()> {
 /// assert!(verify_ir(&ir).is_ok());
 /// ```
 pub fn verify_ir(ir: &Ir) -> Result<()> {
-    // Check for unsupported ResultFeature etc — already filtered in lower.
-    // Check for unsupported mining_function? Tree supports classification/regression.
-    if let crate::ir::ModelIr::Tree(tree) = &ir.model {
-        // Check missingValueStrategy is one of allowed
-        // Allowed: lastPrediction, nullPrediction, defaultChild
-        // Already validated in lower; if unknown, error
-        let _ = tree.missing_value_strategy;
+    match &ir.model {
+        crate::ir::ModelIr::Tree(tree) => match tree.missing_value_strategy {
+            crate::ir::MissingValueStrategy::WeightedConfidence => {
+                return Err(unsupported(
+                    "TreeModel/@missingValueStrategy='weightedConfidence'",
+                ))
+            }
+            crate::ir::MissingValueStrategy::AggregateNodes => {
+                return Err(unsupported(
+                    "TreeModel/@missingValueStrategy='aggregateNodes'",
+                ))
+            }
+            _ => {}
+        },
+        crate::ir::ModelIr::Clustering(cl) if cl.model_class == "distributionBased" => {
+            return Err(unsupported(
+                "ClusteringModel/@modelClass='distributionBased'",
+            ));
+        }
+        _ => {}
     }
     Ok(())
+}
+
+/// Strict alias — same as [`verify_ir`] (kept for callers that used `verify_ir_strict`).
+pub fn verify_ir_strict(ir: &Ir) -> Result<()> {
+    verify_ir(ir)
 }
 
 /// Constructs a `PmmlError::UnsupportedMarkup` with the standard prefix.

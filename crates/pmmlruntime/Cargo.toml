@@ -6,8 +6,8 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Rust port of JPMML Evaluator — PMML 4.4 runtime (single crate, JPMML + ONNX Runtime)"
-keywords = ["pmml", "jpmml", "onnx", "scoring", "machine-learning"]
+description = "PMML 4.4 runtime — session-based execution, Arrow batch, hardened XML (single crate)"
+keywords = ["pmml", "scoring", "machine-learning"]
 categories = ["science"]
 
 [dependencies]

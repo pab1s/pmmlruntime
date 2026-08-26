@@ -1,8 +1,8 @@
-//! Batch abstraction — ONNX-style `Batch`/`BatchResult` for PMML scoring.
+//! Batch abstraction — session-style `Batch`/`BatchResult` for PMML scoring.
 //!
-//! Design mirrors ONNX Runtime `OrtValue` + `OrtIoBinding`:
+//! Design mirrors session runtime `Value` + `batch binding`:
 //! - `Batch` is the single logical input type, with two physical layouts:
-//!   * `RowMajor` (`Vec<HashMap<String,Value>>` / `&[HashMap]`) — JPMML compat, ergonomic for single row
+//!   * `RowMajor` (`Vec<HashMap<String,Value>>` / `&[HashMap]`) — PMML compat, ergonomic for single row
 //!   * `Columnar` (`RecordBatch`) — Arrow zero-copy, for `>10k` rows (16.5M rows/s)
 //! - `BatchCtx` holds `Session`'s `name_to_id`/`symbol_str_to_id`/`Ir` refs to avoid per-row allocation
 //! - `ExecutionProvider::eval_batch` shards via `rayon`; `Session` only materializes `Value[FieldId]`
@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 /// Hint for provider to choose SIMD/parallel strategy.
 ///
-/// `RowMajor` is `Vec<HashMap<String, Value>>` (JPMML compat, ergonomic). `Columnar` is `RecordBatch`
+/// `RowMajor` is `Vec<HashMap<String, Value>>` (PMML compat, ergonomic). `Columnar` is `RecordBatch`
 /// (Arrow zero-copy, best at `>10k` rows). Provider's [`preferred_format`](crate::session::providers::ExecutionProvider::preferred_format)
 /// hints, but `Session` keeps both so callers aren't forced into Arrow for single rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

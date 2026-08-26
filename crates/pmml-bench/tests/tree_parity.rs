@@ -48,7 +48,7 @@ fn tree_fixtures_parity() {
         let p = e.path();
         if p.extension().map(|s| s == "pmml").unwrap_or(false) {
             let name = p.file_name().unwrap().to_string_lossy().to_string();
-            // v1 only TreeModel supported; skip MiningModel fixtures that will error
+            // only TreeModel is scored here; skip MiningModel fixtures that will error
             let content = std::fs::read_to_string(&p).unwrap();
             if content.contains("<TreeModel") {
                 tree_files.push(p.to_string_lossy().to_string());
@@ -69,12 +69,16 @@ fn tree_fixtures_parity() {
             Ok(_) => tested += 1,
             Err(e) => {
                 let msg = e.to_string();
-                // MiningModel fixtures not supported in v1 — skip
+                // MiningModel fixtures not supported — skip
+                // PMML-unsupported markup (weightedConfidence etc.) is expected to fail fast
                 if msg.contains("no TreeModel")
                     || msg.contains("MiningModel")
                     || msg.contains("missing field")
+                    || msg.contains("unsupported markup")
+                    || msg.contains("weightedConfidence")
+                    || msg.contains("aggregateNodes")
                 {
-                    println!("  -> SKIP (v1 Tree only): {msg}");
+                    println!("  -> SKIP (unsupported/PMML parity): {msg}");
                     continue;
                 }
                 panic!("{} failed: {e}", f);

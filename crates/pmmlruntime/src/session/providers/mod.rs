@@ -1,4 +1,4 @@
-//! Execution providers — ONNX `IExecutionProvider` analogy for PMML scoring.
+//! Execution providers — session `ExecutionProvider` analogy for PMML scoring.
 //!
 //! Providers own batch sharding and per-row evaluation. `Session` only materializes
 //! `Value[FieldId]` via `with_value_buffer` and maps outputs; providers do `DerivedFields`
@@ -14,7 +14,7 @@ use crate::base::{Result, Value};
 use crate::ir::Ir;
 use crate::session::batch::{Batch, BatchCtx, BatchResult};
 
-/// Execution provider trait — mirrors `IExecutionProvider` in ONNX Runtime.
+/// Execution provider trait — mirrors `ExecutionProvider` in session runtime.
 ///
 /// Providers are `Send + Sync` so a single `Session` can be shared across threads.
 /// `Session` builds a [`BatchCtx`] (no per-row allocation) and delegates to `eval_batch`;

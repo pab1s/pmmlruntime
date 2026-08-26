@@ -2,7 +2,7 @@
 //!
 //! This module is the **cold path**: `bytes: &[u8]` → [`unmarshal`] → [`RawPmml`] → `crate::ir::lower` → `Ir`.
 //! It is a ~5.8 kLOC `quick-xml` pull parser that mirrors `pmml.xsd:4490` and
-//! `org.jpmml.model` — 304 elements, mixed attribute/element ordering, and
+//! `org.pmml.model` — 304 elements, mixed attribute/element ordering, and
 //! vendor `Extension` payloads — without `serde`.
 //!
 //! # What belongs here
@@ -24,16 +24,15 @@
 //! # Supported PMML subset
 //!
 //! - `DataDictionary` — all `DataField` + `Value`.
-//! - 12 model types: `TreeModel`, `RegressionModel`, `MiningModel` (with `Segmentation`),
+//! - 16 model types: `TreeModel`, `RegressionModel`, `MiningModel` (with `Segmentation`),
 //!   `Scorecard`, `ClusteringModel`, `NaiveBayesModel`, `NearestNeighborModel`,
 //!   `SupportVectorMachineModel`, `GeneralRegressionModel`, `AssociationModel`,
-//!   `RuleSetModel`, `NeuralNetwork`. Each keeps its own `MiningSchema`, `Output`, `Targets`
-//!   and `LocalTransformations` (`Vec<RawDerivedField>`).
+//!   `RuleSetModel`, `NeuralNetwork`, `AnomalyDetectionModel`, `BaselineModel`,
+//!   `SequenceModel`, `BayesianNetworkModel`, `TimeSeriesModel`, `GaussianProcessModel`, `TextModel`.
+//!   Each keeps its own `MiningSchema`, `Output`, `Targets` and `LocalTransformations` (`Vec<RawDerivedField>`).
 //! - `TransformationDictionary` — `DerivedField` + `DefineFunction` + expression tree (`RawExpression`).
 //! - `Extension` — gracefully stored as [`RawExtension`] (`extender`/`name`/`value`/`content`), not evaluated.
-//! - Unsupported markup — 8 `pmml.xsd` models (`AnomalyDetectionModel`, `BaselineModel`,
-//!   `BayesianNetworkModel`, `GaussianProcessModel`, `SequenceModel`, `TextModel`,
-//!   `TimeSeriesModel`, `ModelComposition`/`CenterFields`) plus any `*Model` suffix are captured as
+//! - Unsupported markup — 2 `pmml.xsd` legacy models (`ModelComposition`/`CenterFields`) plus any unknown `*Model` suffix are captured as
 //!   `RawPmml::unsupported_model: Option<String>` for `crate::ir::verify_raw` to reject with
 //!   `UnsupportedMarkup`.
 //!
@@ -241,7 +240,7 @@ pub struct RawOutputField {
 ///
 /// - `function_name`: `functionName` (`"classification"`, `"regression"`, …) — determines result handling.
 /// - `missing_value_strategy` / `no_true_child_strategy`: `missingValueStrategy` / `noTrueChildStrategy`
-///   (`"lastPrediction"`, `"defaultChild"`, …). `None` means JPMML default.
+///   (`"lastPrediction"`, `"defaultChild"`, …). `None` means PMML default.
 /// - `mining_schema`: `MiningSchema` — ordered `MiningField` list, first `predicted` is the target.
 /// - `output`: `Output` — `OutputField` list; may be empty (evaluator synthesizes `predictedValue`).
 /// - `targets`: `Targets` — post-processing; currently always empty (see `RawTarget`).
@@ -353,13 +352,16 @@ pub struct RawSegment {
 }
 
 #[derive(Debug, Clone)]
-/// The model embedded in a [`RawSegment`] — currently `Tree` or `Regression`.
+/// The model embedded in a [`RawSegment`] — `Tree`, `Regression` or nested `Mining`.
 ///
 /// Matches PMML `MiningModel` `Segmentation` where each `Segment` may contain a
-/// `TreeModel` or `RegressionModel` (and historically an inline `Regression` element).
+/// `TreeModel`, `RegressionModel`, `MiningModel` (GBDT ensembles such as LightGBM
+/// `lightgbm2pmml` emit a `MiningModel` `modelChain` whose first segment is a `MiningModel`
+/// `sum` over stumps), and historically an inline `Regression` element.
 pub enum RawSegmentModel {
     Tree(RawTreeModel),
     Regression(RawRegressionModel),
+    Mining(Box<RawMiningModel>),
 }
 
 #[derive(Debug, Clone)]
@@ -1038,7 +1040,7 @@ pub struct RawVectorInstance {
 /// - `predicate`: node guard [`RawPredicate`] — `True` (root), `SimplePredicate`, `CompoundPredicate`, `SimpleSetPredicate`.
 /// - `score_distributions`: `ScoreDistribution` list — per-class `recordCount`.
 /// - `children`: child `Node`s, in document order.
-/// - `default_child`: `defaultChild` — id of the default child for JPMML's `DefaultChild` handling.
+/// - `default_child`: `defaultChild` — id of the default child for PMML's `DefaultChild` handling.
 ///
 /// Missing `predicate` defaults to `True` (defensive). `default_child` is `None` when absent.
 /// See [`RawTreeModel::root`] and [`RawPredicate`].
@@ -1294,9 +1296,870 @@ pub enum RawExpression {
 }
 
 #[derive(Debug, Clone)]
+/// Anomaly detection inner model — the embedded `MODEL-ELEMENT` inside `AnomalyDetectionModel`.
+/// Any of the 12 supported models may appear; `AnomalyDetectionModel` itself is excluded per XSD.
+pub enum RawAnomalyModel {
+    Tree(RawTreeModel),
+    Regression(RawRegressionModel),
+    Mining(Box<RawMiningModel>),
+    Scorecard(RawScorecard),
+    Clustering(RawClusteringModel),
+    NaiveBayes(RawNaiveBayesModel),
+    NearestNeighbor(RawNearestNeighborModel),
+    SupportVectorMachine(RawSupportVectorMachineModel),
+    NeuralNetwork(RawNeuralNetwork),
+    GeneralRegression(RawGeneralRegressionModel),
+    Association(RawAssociationModel),
+    RuleSet(RawRuleSetModel),
+}
+
+#[derive(Debug, Clone)]
+/// Raw `AnomalyDetectionModel` — mirrors `pmml.xsd:AnomalyDetectionModel` (1718-1737).
+pub struct RawAnomalyDetectionModel {
+    pub function_name: String,
+    pub algorithm_type: String,
+    pub model_name: Option<String>,
+    pub sample_data_size: Option<String>,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub model: RawAnomalyModel,
+    pub mean_cluster_distances: Option<Vec<f64>>,
+}
+
+#[derive(Debug, Clone)]
+/// Continuous distribution choice for `BaselineModel` / `TestDistributions`.
+pub enum RawContinuousDistribution {
+    Any { mean: f64, variance: f64 },
+    Gaussian { mean: f64, variance: f64 },
+    Poisson { mean: f64 },
+    Uniform { lower: f64, upper: f64 },
+}
+
+#[derive(Debug, Clone)]
+/// A single `<FieldValueCount>` inside a `CountTable`.
+pub struct RawFieldValueCount {
+    pub field: String,
+    pub value: String,
+    pub count: f64,
+}
+
+#[derive(Debug, Clone)]
+/// A recursive `<FieldValue>` inside a `CountTable` — field/value plus nested counts.
+pub struct RawFieldValue {
+    pub field: String,
+    pub value: String,
+    pub field_values: Vec<RawFieldValue>,
+    pub field_value_counts: Vec<RawFieldValueCount>,
+}
+
+#[derive(Debug, Clone)]
+/// A `<CountTable>` or `<NormalizedCountTable>` — discrete baseline distribution.
+pub struct RawCountTable {
+    pub sample: Option<f64>,
+    pub field_values: Vec<RawFieldValue>,
+    pub field_value_counts: Vec<RawFieldValueCount>,
+}
+
+#[derive(Debug, Clone)]
+/// Discrete distribution choice for `BaselineModel`.
+pub enum RawDiscreteDistribution {
+    CountTable(RawCountTable),
+    NormalizedCountTable(RawCountTable),
+    FieldRefs(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+/// Content of a `<Baseline>` element — either continuous or discrete.
+pub struct RawBaseline {
+    pub continuous: Option<RawContinuousDistribution>,
+    pub discrete: Option<RawDiscreteDistribution>,
+}
+
+#[derive(Debug, Clone)]
+/// Content of an `<Alternate>` element — only continuous per XSD.
+pub struct RawAlternate {
+    pub distribution: RawContinuousDistribution,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `<TestDistributions>` inside `BaselineModel`.
+pub struct RawTestDistributions {
+    pub field: String,
+    pub test_statistic: String,
+    pub reset_value: f64,
+    pub window_size: i32,
+    pub weight_field: Option<String>,
+    pub normalization_scheme: Option<String>,
+    pub baseline: RawBaseline,
+    pub alternate: Option<RawAlternate>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `BaselineModel` — mirrors `pmml.xsd:BaselineModel` (3659-3815).
+pub struct RawBaselineModel {
+    pub function_name: String,
+    pub model_name: Option<String>,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub test_distributions: RawTestDistributions,
+}
+
+#[derive(Debug, Clone)]
+/// A single `Lambda` array for Gaussian kernels (`ARDSquaredExponentialKernel` etc.).
+pub struct RawLambda {
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw kernel choice for `GaussianProcessModel` — mirrors `pmml.xsd:4405-4489`.
+pub enum RawGaussianKernel {
+    RadialBasis {
+        description: Option<String>,
+        gamma: f64,
+        noise_variance: f64,
+        lambda: f64,
+    },
+    ARDSquaredExponential {
+        description: Option<String>,
+        gamma: f64,
+        noise_variance: f64,
+        lambdas: Vec<RawLambda>,
+    },
+    AbsoluteExponential {
+        description: Option<String>,
+        gamma: f64,
+        noise_variance: f64,
+        lambdas: Vec<RawLambda>,
+    },
+    GeneralizedExponential {
+        description: Option<String>,
+        gamma: f64,
+        noise_variance: f64,
+        lambdas: Vec<RawLambda>,
+        degree: f64,
+    },
+}
+
+#[derive(Debug, Clone)]
+/// Raw `TrainingInstances` — mirrors `pmml.xsd:TrainingInstances` (InstanceFields + InlineTable).
+pub struct RawTrainingInstances {
+    pub is_transformed: bool,
+    pub record_count: Option<i32>,
+    pub field_count: Option<i32>,
+    pub instance_fields: Vec<RawInstanceField>,
+    pub instances: Vec<std::collections::HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `GaussianProcessModel` — mirrors `pmml.xsd:GaussianProcessModel` (4405-4489).
+pub struct RawGaussianProcessModel {
+    pub model_name: Option<String>,
+    pub function_name: String,
+    pub algorithm_name: Option<String>,
+    pub optimizer: Option<String>,
+    pub is_scorable: bool,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub kernel: RawGaussianKernel,
+    pub training_instances: RawTrainingInstances,
+}
+
+#[derive(Debug, Clone)]
+/// A single `<TextDocument>` inside `TextCorpus`.
+pub struct RawTextDocument {
+    pub id: String,
+    pub name: Option<String>,
+    pub length: Option<i32>,
+    pub file: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `TextDictionary` — list of terms (`STRING-ARRAY`).
+pub struct RawTextDictionary {
+    pub terms: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `DocumentTermMatrix` — dense matrix `nbRows x nbCols`.
+pub struct RawDocumentTermMatrix {
+    pub matrix: Vec<Vec<f64>>,
+    pub nb_rows: Option<i32>,
+    pub nb_cols: Option<i32>,
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `TextModelNormalization` — mirrors `pmml.xsd:TextModelNormalization`.
+pub struct RawTextNormalization {
+    pub local_term_weights: String,
+    pub global_term_weights: String,
+    pub document_normalization: String,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `TextModelSimiliarity` — mirrors `pmml.xsd:TextModelSimiliarity` (note PMML typo).
+pub struct RawTextSimilarity {
+    pub similarity_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `TextModel` — mirrors `pmml.xsd:TextModel` (4071-4183).
+pub struct RawTextModel {
+    pub model_name: Option<String>,
+    pub function_name: String,
+    pub algorithm_name: Option<String>,
+    pub number_of_terms: usize,
+    pub number_of_documents: usize,
+    pub is_scorable: bool,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub text_dictionary: RawTextDictionary,
+    pub text_corpus: Vec<RawTextDocument>,
+    pub document_term_matrix: RawDocumentTermMatrix,
+    pub normalization: Option<RawTextNormalization>,
+    pub similarity: Option<RawTextSimilarity>,
+}
+
+#[derive(Debug, Clone)]
+/// A `<TimeValue>` inside `TimeSeries` — mirrors `pmml.xsd:TimeValue`.
+pub struct RawTimeValue {
+    pub index: Option<i32>,
+    pub time: Option<String>,
+    pub value: f64,
+    pub standard_error: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<TimeCycle>` inside `TimeAnchor`.
+pub struct RawTimeCycle {
+    pub length: Option<i32>,
+    pub type_: Option<String>,
+    pub display_name: Option<String>,
+    pub array: Vec<i32>,
+}
+
+#[derive(Debug, Clone)]
+/// `<TimeException>` inside `TimeAnchor`.
+pub struct RawTimeException {
+    pub type_: String,
+    pub count: Option<i32>,
+    pub array: Vec<i32>,
+}
+
+#[derive(Debug, Clone)]
+/// `<TimeAnchor>` inside `TimeSeries`.
+pub struct RawTimeAnchor {
+    pub type_: Option<String>,
+    pub offset: Option<i32>,
+    pub stepsize: Option<i32>,
+    pub display_name: Option<String>,
+    pub time_cycles: Vec<RawTimeCycle>,
+    pub time_exceptions: Vec<RawTimeException>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `<TimeSeries>` — mirrors `pmml.xsd:TimeSeries`.
+pub struct RawTimeSeries {
+    pub usage: Option<String>,
+    pub start_time: Option<f64>,
+    pub end_time: Option<f64>,
+    pub interpolation_method: Option<String>,
+    pub field: Option<String>,
+    pub time_anchor: Option<RawTimeAnchor>,
+    pub time_values: Vec<RawTimeValue>,
+}
+
+#[derive(Debug, Clone)]
+/// `<Level>` inside `ExponentialSmoothing`.
+pub struct RawLevel {
+    pub alpha: Option<f64>,
+    pub smoothed_value: f64,
+}
+
+#[derive(Debug, Clone)]
+/// `<Trend_ExpoSmooth>` inside `ExponentialSmoothing`.
+pub struct RawTrendExpoSmooth {
+    pub trend: Option<String>,
+    pub gamma: Option<f64>,
+    pub phi: Option<f64>,
+    pub smoothed_value: Option<f64>,
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<Seasonality_ExpoSmooth>` inside `ExponentialSmoothing`.
+pub struct RawSeasonalityExpoSmooth {
+    pub type_: String,
+    pub period: i32,
+    pub unit: Option<String>,
+    pub phase: Option<i32>,
+    pub delta: Option<f64>,
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `ExponentialSmoothing` — mirrors `pmml.xsd:ExponentialSmoothing`.
+pub struct RawExponentialSmoothing {
+    pub rmse: Option<f64>,
+    pub transformation: Option<String>,
+    pub level: RawLevel,
+    pub trend: Option<RawTrendExpoSmooth>,
+    pub seasonality: Option<RawSeasonalityExpoSmooth>,
+    pub time_values: Vec<RawTimeValue>,
+}
+
+#[derive(Debug, Clone)]
+/// `<AR>` inside `NonseasonalComponent`/`SeasonalComponent`.
+pub struct RawAR {
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<MACoefficients>` inside `MA`.
+pub struct RawMACoefficients {
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<Residuals>` inside `MA` / `ResidualSquareCoefficients`.
+pub struct RawResiduals {
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<MA>` inside `NonseasonalComponent`/`SeasonalComponent`.
+pub struct RawMA {
+    pub ma_coefficients: Option<RawMACoefficients>,
+    pub residuals: Option<RawResiduals>,
+}
+
+#[derive(Debug, Clone)]
+/// `<NonseasonalComponent>` inside `ARIMA`.
+pub struct RawNonseasonalComponent {
+    pub p: usize,
+    pub d: usize,
+    pub q: usize,
+    pub ar: Option<RawAR>,
+    pub ma: Option<RawMA>,
+}
+
+#[derive(Debug, Clone)]
+/// `<SeasonalComponent>` inside `ARIMA`.
+pub struct RawSeasonalComponent {
+    pub p: usize,
+    pub d: usize,
+    pub q: usize,
+    pub period: usize,
+    pub ar: Option<RawAR>,
+    pub ma: Option<RawMA>,
+}
+
+#[derive(Debug, Clone)]
+/// `<NonseasonalFactor>` inside `Numerator`/`Denominator`.
+pub struct RawNonseasonalFactor {
+    pub difference: Option<i32>,
+    pub maximum_order: Option<i32>,
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<SeasonalFactor>` inside `Numerator`/`Denominator`.
+pub struct RawSeasonalFactor {
+    pub difference: Option<i32>,
+    pub maximum_order: Option<i32>,
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<Numerator>` inside `DynamicRegressor`.
+pub struct RawNumerator {
+    pub nonseasonal_factor: Option<RawNonseasonalFactor>,
+    pub seasonal_factor: Option<RawSeasonalFactor>,
+}
+
+#[derive(Debug, Clone)]
+/// `<Denominator>` inside `DynamicRegressor`.
+pub struct RawDenominator {
+    pub nonseasonal_factor: Option<RawNonseasonalFactor>,
+    pub seasonal_factor: Option<RawSeasonalFactor>,
+}
+
+#[derive(Debug, Clone)]
+/// `<TrendCoefficients>` inside `RegressorValues`.
+pub struct RawTrendCoefficients {
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<TransferFunctionValues>` inside `RegressorValues`.
+pub struct RawTransferFunctionValues {
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<RegressorValues>` inside `DynamicRegressor`.
+pub struct RawRegressorValues {
+    pub time_series: Option<Box<RawTimeSeries>>,
+    pub trend_coefficients: Option<RawTrendCoefficients>,
+    pub transfer_function_values: Option<RawTransferFunctionValues>,
+}
+
+#[derive(Debug, Clone)]
+/// `<DynamicRegressor>` inside `ARIMA` / `StateSpaceModel`.
+pub struct RawDynamicRegressor {
+    pub field: String,
+    pub transformation: Option<String>,
+    pub delay: Option<i32>,
+    pub future_values_method: Option<String>,
+    pub target_field: Option<String>,
+    pub numerator: Option<RawNumerator>,
+    pub denominator: Option<RawDenominator>,
+    pub regressor_values: Option<RawRegressorValues>,
+}
+
+#[derive(Debug, Clone)]
+/// `<Theta>` inside `FinalTheta`.
+pub struct RawTheta {
+    pub i: Option<i32>,
+    pub j: Option<i32>,
+    pub theta: f64,
+}
+
+#[derive(Debug, Clone)]
+/// `<FinalTheta>` inside `ThetaRecursionState`.
+pub struct RawFinalTheta {
+    pub thetas: Vec<RawTheta>,
+}
+
+#[derive(Debug, Clone)]
+/// `<FinalNoise>` etc — wrapper for REAL-ARRAY.
+pub struct RawFinalNoise {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct RawFinalPredictedNoise {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct RawFinalNu {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct RawFinalStateVector {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct RawHVector {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct RawFinalOmega {
+    pub matrix: Vec<Vec<f64>>,
+}
+
+#[derive(Debug, Clone)]
+/// `<KalmanState>` inside `MaximumLikelihoodStat`.
+pub struct RawKalmanState {
+    pub final_omega: Option<RawFinalOmega>,
+    pub final_state_vector: Option<RawFinalStateVector>,
+    pub h_vector: Option<RawHVector>,
+}
+
+#[derive(Debug, Clone)]
+/// `<ThetaRecursionState>` inside `MaximumLikelihoodStat`.
+pub struct RawThetaRecursionState {
+    pub final_noise: Option<RawFinalNoise>,
+    pub final_predicted_noise: Option<RawFinalPredictedNoise>,
+    pub final_theta: Option<RawFinalTheta>,
+    pub final_nu: Option<RawFinalNu>,
+}
+
+#[derive(Debug, Clone)]
+/// `<MaximumLikelihoodStat>` inside `ARIMA`.
+pub struct RawMaximumLikelihoodStat {
+    pub method: String,
+    pub period_deficit: Option<i32>,
+    pub kalman_state: Option<RawKalmanState>,
+    pub theta_recursion_state: Option<RawThetaRecursionState>,
+}
+
+#[derive(Debug, Clone)]
+/// `<OutlierEffect>` inside `ARIMA`.
+pub struct RawOutlierEffect {
+    pub type_: String,
+    pub start_time: f64,
+    pub magnitude: f64,
+    pub damping_coefficient: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `ARIMA` — mirrors `pmml.xsd:ARIMA`.
+pub struct RawARIMA {
+    pub rmse: Option<f64>,
+    pub transformation: Option<String>,
+    pub constant_term: f64,
+    pub prediction_method: Option<String>,
+    pub nonseasonal_component: Option<RawNonseasonalComponent>,
+    pub seasonal_component: Option<RawSeasonalComponent>,
+    pub dynamic_regressors: Vec<RawDynamicRegressor>,
+    pub maximum_likelihood_stat: Option<RawMaximumLikelihoodStat>,
+    pub outlier_effects: Vec<RawOutlierEffect>,
+}
+
+#[derive(Debug, Clone)]
+/// `<ARMAPart>` inside `GARCH`.
+pub struct RawARMAPart {
+    pub constant: f64,
+    pub p: i32,
+    pub q: i32,
+    pub ar: Option<RawAR>,
+    pub ma: Option<RawMA>,
+}
+
+#[derive(Debug, Clone)]
+/// `<PastVariances>` inside `VarianceCoefficients`.
+pub struct RawPastVariances {
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `<ResidualSquareCoefficients>` inside `GARCHPart`.
+pub struct RawResidualSquareCoefficients {
+    pub residuals: Option<RawResiduals>,
+    pub ma_coefficients: Option<RawMACoefficients>,
+}
+
+#[derive(Debug, Clone)]
+/// `<VarianceCoefficients>` inside `GARCHPart`.
+pub struct RawVarianceCoefficients {
+    pub past_variances: Option<RawPastVariances>,
+    pub ma_coefficients: Option<RawMACoefficients>,
+}
+
+#[derive(Debug, Clone)]
+/// `<GARCHPart>` inside `GARCH`.
+pub struct RawGARCHPart {
+    pub constant: f64,
+    pub gp: i32,
+    pub gq: i32,
+    pub residual_square_coefficients: Option<RawResidualSquareCoefficients>,
+    pub variance_coefficients: Option<RawVarianceCoefficients>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `GARCH` — mirrors `pmml.xsd:GARCH`.
+pub struct RawGARCH {
+    pub arma_part: Option<RawARMAPart>,
+    pub garch_part: Option<RawGARCHPart>,
+}
+
+#[derive(Debug, Clone)]
+/// `<StateVector>` etc for `StateSpaceModel`.
+pub struct RawStateVector {
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct RawTransitionMatrix {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct RawMeasurementMatrix {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct RawInterceptVector {
+    pub type_: Option<String>,
+    pub array: Vec<f64>,
+}
+#[derive(Debug, Clone)]
+pub struct RawPredictedStateCovarianceMatrix {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct RawSelectedStateCovarianceMatrix {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct RawObservationVarianceMatrix {
+    pub matrix: Vec<Vec<f64>>,
+}
+#[derive(Debug, Clone)]
+pub struct RawPsiVector {
+    pub target_field: Option<String>,
+    pub variance: Option<String>,
+    pub array: Vec<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `StateSpaceModel` — mirrors `pmml.xsd:StateSpaceModel`.
+pub struct RawStateSpaceModel {
+    pub variance: Option<f64>,
+    pub period: Option<String>,
+    pub intercept: f64,
+    pub state_vector: Option<RawStateVector>,
+    pub transition_matrix: Option<RawTransitionMatrix>,
+    pub measurement_matrix: Option<RawMeasurementMatrix>,
+    pub intercept_vector: Option<RawInterceptVector>,
+    pub predicted_state_covariance_matrix: Option<RawPredictedStateCovarianceMatrix>,
+    pub selected_state_covariance_matrix: Option<RawSelectedStateCovarianceMatrix>,
+    pub observation_variance_matrix: Option<RawObservationVarianceMatrix>,
+    pub psi_vector: Option<RawPsiVector>,
+    pub dynamic_regressors: Vec<RawDynamicRegressor>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `SpectralAnalysis` — empty (Extension only).
+pub struct RawSpectralAnalysis {}
+
+#[derive(Debug, Clone)]
+/// Raw `SeasonalTrendDecomposition` — empty.
+pub struct RawSeasonalTrendDecomposition {}
+
+#[derive(Debug, Clone)]
+/// Raw `TimeSeriesModel` — mirrors `pmml.xsd:TimeSeriesModel` (2596-2620).
+pub struct RawTimeSeriesModel {
+    pub model_name: Option<String>,
+    pub function_name: String,
+    pub algorithm_name: Option<String>,
+    pub best_fit: String,
+    pub is_scorable: bool,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub time_series: Vec<RawTimeSeries>,
+    pub spectral_analysis: Option<RawSpectralAnalysis>,
+    pub arima: Option<RawARIMA>,
+    pub exponential_smoothing: Option<RawExponentialSmoothing>,
+    pub seasonal_trend_decomposition: Option<RawSeasonalTrendDecomposition>,
+    pub state_space_model: Option<RawStateSpaceModel>,
+    pub garch: Option<RawGARCH>,
+}
+
+#[derive(Debug, Clone)]
+/// Constraints for `SequenceModel` — mirrors `pmml.xsd:Constraints`.
+pub struct RawConstraints {
+    pub minimum_number_of_items: Option<usize>,
+    pub maximum_number_of_items: Option<usize>,
+    pub minimum_number_of_antecedent_items: Option<usize>,
+    pub maximum_number_of_antecedent_items: Option<usize>,
+    pub minimum_number_of_consequent_items: Option<usize>,
+    pub maximum_number_of_consequent_items: Option<usize>,
+    pub minimum_support: Option<f64>,
+    pub minimum_confidence: Option<f64>,
+    pub minimum_lift: Option<f64>,
+    pub minimum_total_sequence_time: Option<f64>,
+    pub maximum_total_sequence_time: Option<f64>,
+    pub minimum_itemset_separation_time: Option<f64>,
+    pub maximum_itemset_separation_time: Option<f64>,
+    pub minimum_ant_cons_separation_time: Option<f64>,
+    pub maximum_ant_cons_separation_time: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `SetPredicate` — `supersetOf` set membership (deprecated as of 3.1).
+pub struct RawSetPredicate {
+    pub id: String,
+    pub field: String,
+    pub array: String,
+}
+
+#[derive(Debug, Clone)]
+/// `Delimiter` between Itemsets/Sequences.
+pub struct RawDelimiter {
+    pub delimiter: String,
+    pub gap: String,
+}
+
+#[derive(Debug, Clone)]
+/// `Time` statistics.
+pub struct RawTime {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub mean: Option<f64>,
+    pub standard_deviation: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// `SetReference` — reference to Itemset or SetPredicate by `setId`.
+pub struct RawSetReference {
+    pub set_id: String,
+}
+
+#[derive(Debug, Clone)]
+/// One FOLLOW-SET inside `Sequence`.
+pub struct RawFollowSet {
+    pub delimiter: RawDelimiter,
+    pub time: Option<RawTime>,
+    pub set_reference: RawSetReference,
+}
+
+#[derive(Debug, Clone)]
+/// `Sequence` — ordered collection of Itemsets/SetPredicates.
+pub struct RawSequence {
+    pub id: String,
+    pub number_of_sets: Option<usize>,
+    pub occurrence: Option<i64>,
+    pub support: Option<f64>,
+    pub sets: Vec<RawSetReference>,
+    pub follow_sets: Vec<RawFollowSet>,
+    pub time: Option<RawTime>,
+}
+
+#[derive(Debug, Clone)]
+/// `SequenceRule` — antecedent -> consequent.
+pub struct RawSequenceRule {
+    pub id: String,
+    pub number_of_sets: usize,
+    pub occurrence: i64,
+    pub support: f64,
+    pub confidence: f64,
+    pub lift: Option<f64>,
+    pub antecedent_seq_id: String,
+    pub consequent_seq_id: String,
+    pub delimiter: RawDelimiter,
+    pub time_between: Option<RawTime>,
+    pub time_total: Option<RawTime>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `SequenceModel` — mirrors `pmml.xsd:SequenceModel` (1757-1941).
+pub struct RawSequenceModel {
+    pub model_name: Option<String>,
+    pub function_name: String,
+    pub algorithm_name: Option<String>,
+    pub number_of_transactions: Option<usize>,
+    pub max_number_of_items_per_transaction: Option<usize>,
+    pub avg_number_of_items_per_transaction: Option<f64>,
+    pub number_of_transaction_groups: Option<usize>,
+    pub max_number_of_ta_per_ta_group: Option<usize>,
+    pub avg_number_of_ta_per_ta_group: Option<f64>,
+    pub is_scorable: bool,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub constraints: Option<RawConstraints>,
+    pub items: Vec<RawItem>,
+    pub itemsets: Vec<RawItemset>,
+    pub set_predicates: Vec<RawSetPredicate>,
+    pub sequences: Vec<RawSequence>,
+    pub sequence_rules: Vec<RawSequenceRule>,
+}
+
+#[derive(Debug, Clone)]
+/// ParentValue for Bayesian network.
+pub struct RawBayesianParentValue {
+    pub parent: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone)]
+/// ValueProbability for Bayesian network.
+pub struct RawBayesianValueProbability {
+    pub value: String,
+    pub probability: f64,
+}
+
+#[derive(Debug, Clone)]
+/// DiscreteConditionalProbability.
+pub struct RawDiscreteConditionalProbability {
+    pub parent_values: Vec<RawBayesianParentValue>,
+    pub value_probabilities: Vec<RawBayesianValueProbability>,
+    pub count: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// Continuous distribution variant for BN.
+pub enum RawBayesianContinuousDistribution {
+    Normal {
+        mean: RawExpression,
+        variance: RawExpression,
+    },
+    Lognormal {
+        mean: RawExpression,
+        variance: RawExpression,
+    },
+    Uniform {
+        lower: RawExpression,
+        upper: RawExpression,
+    },
+    Triangular {
+        mean: RawExpression,
+        lower: RawExpression,
+        upper: RawExpression,
+    },
+}
+
+#[derive(Debug, Clone)]
+/// One ContinuousDistribution wrapper (BN).
+pub struct RawBayesianContinuousDistributionWrapper {
+    pub distribution: RawBayesianContinuousDistribution,
+}
+
+#[derive(Debug, Clone)]
+/// ContinuousConditionalProbability.
+pub struct RawBayesianContinuousConditionalProbability {
+    pub parent_values: Vec<RawBayesianParentValue>,
+    pub distributions: Vec<RawBayesianContinuousDistributionWrapper>,
+    pub count: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+/// DiscreteNode.
+pub struct RawDiscreteNode {
+    pub name: String,
+    pub count: Option<f64>,
+    pub derived_fields: Vec<RawDerivedField>,
+    pub value_probabilities: Vec<RawBayesianValueProbability>,
+    pub conditional_probabilities: Vec<RawDiscreteConditionalProbability>,
+}
+
+#[derive(Debug, Clone)]
+/// ContinuousNode.
+pub struct RawContinuousNode {
+    pub name: String,
+    pub count: Option<f64>,
+    pub derived_fields: Vec<RawDerivedField>,
+    pub distributions: Vec<RawBayesianContinuousDistributionWrapper>,
+    pub conditional_probabilities: Vec<RawBayesianContinuousConditionalProbability>,
+}
+
+#[derive(Debug, Clone)]
+/// Bayesian node choice.
+pub enum RawBayesianNode {
+    Discrete(RawDiscreteNode),
+    Continuous(RawContinuousNode),
+}
+
+#[derive(Debug, Clone)]
+/// Raw `BayesianNetworkModel` — mirrors `pmml.xsd:BayesianNetworkModel` (3816-4023).
+pub struct RawBayesianNetworkModel {
+    pub model_name: Option<String>,
+    pub function_name: String,
+    pub algorithm_name: Option<String>,
+    pub model_type: Option<String>,
+    pub inference_method: Option<String>,
+    pub is_scorable: bool,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub nodes: Vec<RawBayesianNode>,
+}
+
+#[derive(Debug, Clone)]
 /// Top-level PMML document produced by [`unmarshal`] — the `RawPmml` IR pre-lowering.
 ///
-/// Holds `DataDictionary` plus at most one of the 12 supported model types, plus
+/// Holds `DataDictionary` plus at most one of the 16 supported model types, plus
 /// `TransformationDictionary`, `Extension`s and a possible `unsupported_model` tag.
 ///
 /// All `Option<Model>` fields are `None` when the document contains a different model
@@ -1306,12 +2169,12 @@ pub enum RawExpression {
 /// # Fields
 ///
 /// - `data_dictionary`: `DataDictionary` `DataField` list — field schema, always present (may be empty for malformed PMML).
-/// - `tree_model` / `regression_model` / `mining_model` / `scorecard` / `clustering_model` / `naive_bayes_model` / `nearest_neighbor_model` / `support_vector_machine_model` / `neural_network` / `general_regression_model` / `association_model` / `rule_set_model`:
-///   the 12 supported model slots. `Some` when that model element was present; otherwise `None`.
+/// - `tree_model` / `regression_model` / `mining_model` / `scorecard` / `clustering_model` / `naive_bayes_model` / `nearest_neighbor_model` / `support_vector_machine_model` / `neural_network` / `general_regression_model` / `association_model` / `rule_set_model` / `anomaly_detection_model` / `baseline_model` / `sequence_model` / `bayesian_network_model`:
+///   the 16 supported model slots. `Some` when that model element was present; otherwise `None`.
 /// - `transformation_dictionary`: `TransformationDictionary` / `LocalTransformations` `DerivedField` list (global, model-local fields are also merged here for convenience).
 /// - `define_functions`: `TransformationDictionary` `DefineFunction` list.
 /// - `extensions`: top-level `Extension` elements, gracefully kept.
-/// - `unsupported_model`: `Some(tag)` when an unsupported `*Model` (`AnomalyDetectionModel`, `BayesianNetworkModel`, …) was encountered; see module docs for the full list. `crate::ir::verify_raw` rejects this with `UnsupportedMarkup`.
+/// - `unsupported_model`: `Some(tag)` when an unsupported `*Model` (`ModelComposition`/`CenterFields` or unknown) was encountered; see module docs for the full list. `crate::ir::verify_raw` rejects this with `UnsupportedMarkup`.
 ///
 /// # Links
 ///
@@ -1344,6 +2207,13 @@ pub struct RawPmml {
     pub general_regression_model: Option<RawGeneralRegressionModel>,
     pub association_model: Option<RawAssociationModel>,
     pub rule_set_model: Option<RawRuleSetModel>,
+    pub anomaly_detection_model: Option<RawAnomalyDetectionModel>,
+    pub baseline_model: Option<RawBaselineModel>,
+    pub time_series_model: Option<RawTimeSeriesModel>,
+    pub gaussian_process_model: Option<RawGaussianProcessModel>,
+    pub text_model: Option<RawTextModel>,
+    pub sequence_model: Option<RawSequenceModel>,
+    pub bayesian_network_model: Option<RawBayesianNetworkModel>,
     /// TransformationDictionary derived fields (global)
     pub transformation_dictionary: Vec<RawDerivedField>,
     /// TransformationDictionary define functions
@@ -2813,7 +3683,7 @@ fn parse_tree_model(
                         local_derived_fields.extend(fields);
                     }
                     _ => {
-                        // skip ModelStats, Targets, Extension, etc for v1
+                        // skip ModelStats, Targets, Extension, etc
                         // Need to consume subtree if it's Start
                         if tag == "Targets" || tag == "ModelStats" || tag == "ModelExplanation" {
                             let mut depth = 1usize;
@@ -3241,6 +4111,10 @@ fn parse_segment(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> R
                     "RegressionModel" => {
                         let rm = parse_regression_model(reader, &e)?;
                         model = Some(RawSegmentModel::Regression(rm));
+                    }
+                    "MiningModel" => {
+                        let mm = parse_mining_model(reader, &e)?;
+                        model = Some(RawSegmentModel::Mining(Box::new(mm)));
                     }
                     "Regression" => {
                         // Embedded Regression inside MiningModel (PMML 4.1 style)
@@ -6409,6 +7283,7686 @@ fn parse_rule_set_model(
     })
 }
 
+fn parse_mean_cluster_distances(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<f64>> {
+    let mut buf = Vec::new();
+    let mut values = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let mut inner2 = Vec::new();
+                let mut txt = String::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Text(t)) => {
+                            txt = t.unescape().unwrap_or_default().into_owned();
+                        }
+                        Ok(Event::End(end))
+                            if String::from_utf8_lossy(end.name().as_ref()) == "Array" =>
+                        {
+                            break
+                        }
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+                for part in txt.split_whitespace() {
+                    if let Ok(v) = part.parse::<f64>() {
+                        values.push(v);
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "MeanClusterDistances" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(values)
+}
+
+fn parse_anomaly_detection_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawAnomalyDetectionModel> {
+    let function_name = attr_required(start, "functionName", "AnomalyDetectionModel")?;
+    let algorithm_type = attr(start, "algorithmType").unwrap_or_else(|| "other".to_string());
+    let model_name = attr(start, "modelName");
+    let sample_data_size = attr(start, "sampleDataSize");
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut mean_cluster_distances: Option<Vec<f64>> = None;
+    let mut anomaly_model: Option<RawAnomalyModel> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "MeanClusterDistances" => {
+                        let vals = parse_mean_cluster_distances(reader)?;
+                        mean_cluster_distances = Some(vals);
+                    }
+                    "TreeModel" => {
+                        let tm = parse_tree_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Tree(tm));
+                    }
+                    "RegressionModel" => {
+                        let rm = parse_regression_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Regression(rm));
+                    }
+                    "MiningModel" => {
+                        let mm = parse_mining_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Mining(Box::new(mm)));
+                    }
+                    "Scorecard" => {
+                        let sc = parse_scorecard(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Scorecard(sc));
+                    }
+                    "ClusteringModel" => {
+                        let cm = parse_clustering_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Clustering(cm));
+                    }
+                    "NaiveBayesModel" => {
+                        let nb = parse_naive_bayes_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::NaiveBayes(nb));
+                    }
+                    "NearestNeighborModel" => {
+                        let nn = parse_nearest_neighbor_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::NearestNeighbor(nn));
+                    }
+                    "SupportVectorMachineModel" => {
+                        let svm = parse_support_vector_machine_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::SupportVectorMachine(svm));
+                    }
+                    "NeuralNetwork" => {
+                        let nn = parse_neural_network(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::NeuralNetwork(nn));
+                    }
+                    "GeneralRegressionModel" => {
+                        let gr = parse_general_regression_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::GeneralRegression(gr));
+                    }
+                    "AssociationModel" => {
+                        let am = parse_association_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Association(am));
+                    }
+                    "RuleSetModel" => {
+                        let rsm = parse_rule_set_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::RuleSet(rsm));
+                    }
+                    _ => {
+                        // skip unknown (Extension, ModelStats, etc.)
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "TreeModel" => {
+                        let tm = parse_tree_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Tree(tm));
+                    }
+                    "ClusteringModel" => {
+                        let cm = parse_clustering_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Clustering(cm));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "AnomalyDetectionModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let model = anomaly_model.ok_or_else(|| PmmlError::ParseError {
+        context: "AnomalyDetectionModel".into(),
+        message: "missing embedded MODEL-ELEMENT".into(),
+    })?;
+    Ok(RawAnomalyDetectionModel {
+        function_name,
+        algorithm_type,
+        model_name,
+        sample_data_size,
+        mining_schema,
+        output,
+        targets: Vec::new(),
+        local_derived_fields,
+        model,
+        mean_cluster_distances,
+    })
+}
+
+fn parse_continuous_distribution(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+    tag: &str,
+) -> Result<RawContinuousDistribution> {
+    match tag {
+        "AnyDistribution" => {
+            let mean = attr(start, "mean")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let variance = attr(start, "variance")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            // consume until end
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref()) == "AnyDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Any { mean, variance })
+        }
+        "GaussianDistribution" => {
+            let mean = attr(start, "mean")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let variance = attr(start, "variance")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref())
+                            == "GaussianDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Gaussian { mean, variance })
+        }
+        "PoissonDistribution" => {
+            let mean = attr(start, "mean")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref())
+                            == "PoissonDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Poisson { mean })
+        }
+        "UniformDistribution" => {
+            let lower = attr(start, "lower")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let upper = attr(start, "upper")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref())
+                            == "UniformDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Uniform { lower, upper })
+        }
+        _ => Err(PmmlError::ParseError {
+            context: "Distribution".into(),
+            message: format!("unknown continuous distribution {tag}"),
+        }),
+    }
+}
+
+fn parse_count_table(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawCountTable> {
+    let sample = attr(start, "sample").and_then(|s| s.parse::<f64>().ok());
+    let mut field_value_counts = Vec::new();
+    let mut field_values = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "FieldValueCount" => {
+                        let field = attr_required(&e, "field", "FieldValueCount")?;
+                        let value = attr_required(&e, "value", "FieldValueCount")?;
+                        let count = attr(&e, "count")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        field_value_counts.push(RawFieldValueCount {
+                            field,
+                            value,
+                            count,
+                        });
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "FieldValueCount" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                            break;
+                        }
+                    }
+                    "FieldValue" => {
+                        // simplified: treat nested as opaque, but try to collect inner counts
+                        let field = attr(&e, "field").unwrap_or_default();
+                        let value = attr(&e, "value").unwrap_or_default();
+                        let mut inner = Vec::new();
+                        let mut nested_fvcs = Vec::new();
+                        let nested_fvs = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(iv)) if tag_name(&iv) == "FieldValueCount" => {
+                                    let f = attr_required(&iv, "field", "FieldValueCount")?;
+                                    let v = attr_required(&iv, "value", "FieldValueCount")?;
+                                    let c = attr(&iv, "count")
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.0);
+                                    nested_fvcs.push(RawFieldValueCount {
+                                        field: f,
+                                        value: v,
+                                        count: c,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "FieldValueCount" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(iv)) if tag_name(&iv) == "FieldValueCount" => {
+                                    let f = attr_required(&iv, "field", "FieldValueCount")?;
+                                    let v = attr_required(&iv, "value", "FieldValueCount")?;
+                                    let c = attr(&iv, "count")
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.0);
+                                    nested_fvcs.push(RawFieldValueCount {
+                                        field: f,
+                                        value: v,
+                                        count: c,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "FieldValue" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        field_values.push(RawFieldValue {
+                            field,
+                            value,
+                            field_values: nested_fvs,
+                            field_value_counts: nested_fvcs,
+                        });
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                if tag == "FieldValueCount" {
+                    let field = attr_required(&e, "field", "FieldValueCount")?;
+                    let value = attr_required(&e, "value", "FieldValueCount")?;
+                    let count = attr(&e, "count")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    field_value_counts.push(RawFieldValueCount {
+                        field,
+                        value,
+                        count,
+                    });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "CountTable"
+                    || String::from_utf8_lossy(end.name().as_ref()) == "NormalizedCountTable" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawCountTable {
+        sample,
+        field_values,
+        field_value_counts,
+    })
+}
+
+fn parse_test_distributions(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTestDistributions> {
+    let field = attr_required(start, "field", "TestDistributions")?;
+    let test_statistic = attr_required(start, "testStatistic", "TestDistributions")?;
+    let reset_value = attr(start, "resetValue")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let window_size = attr(start, "windowSize")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
+    let weight_field = attr(start, "weightField");
+    let normalization_scheme = attr(start, "normalizationScheme");
+    let mut baseline: Option<RawBaseline> = None;
+    let mut alternate: Option<RawAlternate> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "Baseline" => {
+                        let mut cont: Option<RawContinuousDistribution> = None;
+                        let mut disc: Option<RawDiscreteDistribution> = None;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    match itag.as_str() {
+                                        "AnyDistribution"
+                                        | "GaussianDistribution"
+                                        | "PoissonDistribution"
+                                        | "UniformDistribution" => {
+                                            let d = parse_continuous_distribution(
+                                                reader, &inner_e, &itag,
+                                            )?;
+                                            cont = Some(d);
+                                        }
+                                        "CountTable" => {
+                                            let ct = parse_count_table(reader, &inner_e)?;
+                                            disc = Some(RawDiscreteDistribution::CountTable(ct));
+                                        }
+                                        "NormalizedCountTable" => {
+                                            let ct = parse_count_table(reader, &inner_e)?;
+                                            disc = Some(
+                                                RawDiscreteDistribution::NormalizedCountTable(ct),
+                                            );
+                                        }
+                                        "FieldRef" => {
+                                            // collect FieldRefs for chiSquareIndependence
+                                            let mut refs = Vec::new();
+                                            let field_name =
+                                                attr_required(&inner_e, "field", "FieldRef")?;
+                                            refs.push(field_name);
+                                            // consume end
+                                            let mut skip = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut skip) {
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FieldRef" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    Ok(Event::Empty(_)) => break,
+                                                    _ => {}
+                                                }
+                                                skip.clear();
+                                                break;
+                                            }
+                                            // check for more FieldRefs siblings
+                                            let mut extra = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut extra) {
+                                                    Ok(Event::Start(ff))
+                                                        if tag_name(&ff) == "FieldRef" =>
+                                                    {
+                                                        let f = attr_required(
+                                                            &ff, "field", "FieldRef",
+                                                        )?;
+                                                        refs.push(f);
+                                                        let mut s2 = Vec::new();
+                                                        loop {
+                                                            match reader.read_event_into(&mut s2) {
+                                                                Ok(Event::End(end))
+                                                                    if String::from_utf8_lossy(
+                                                                        end.name().as_ref(),
+                                                                    ) == "FieldRef" =>
+                                                                {
+                                                                    break
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                            s2.clear();
+                                                            break;
+                                                        }
+                                                    }
+                                                    Ok(Event::Empty(ff))
+                                                        if tag_name(&ff) == "FieldRef" =>
+                                                    {
+                                                        let f = attr_required(
+                                                            &ff, "field", "FieldRef",
+                                                        )?;
+                                                        refs.push(f);
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "Baseline" =>
+                                                    {
+                                                        // Baseline ends after FieldRefs; outer assignment handles it
+                                                        break;
+                                                    }
+                                                    _ => {
+                                                        // peek whether next is End Baseline by checking buffer? simplified
+                                                        // if we haven't seen End, continue
+                                                        // For now, try to detect FieldRef vs other
+                                                        // If not FieldRef, put back? Not easy.
+                                                        // We'll assume FieldRefs case ends with Baseline end, so break
+                                                        // But if tag not FieldRef, we treat as end of baseline
+                                                        // Check if End Baseline
+                                                        // We need to handle generically: if we see End Baseline, break
+                                                        // Otherwise skip
+                                                        // Since we are in inner loop for Baseline children, we can check tag
+                                                        // But we are peeking one event ahead; if it's not Start FieldRef nor Empty FieldRef, it's likely End Baseline
+                                                        // So we push refs and then break to outer handling
+                                                        // To simplify, if extra contains End Baseline, handle
+                                                        break;
+                                                    }
+                                                }
+                                                extra.clear();
+                                                // after collecting, set disc and break inner
+                                            }
+                                            disc = Some(RawDiscreteDistribution::FieldRefs(refs));
+                                        }
+                                        _ => {
+                                            let mut depth = 1usize;
+                                            let mut skip = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut skip) {
+                                                    Ok(Event::Start(_)) => depth += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        depth -= 1;
+                                                        if depth == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == itag
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                skip.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    match itag.as_str() {
+                                        "GaussianDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            cont = Some(RawContinuousDistribution::Gaussian {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "AnyDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            cont = Some(RawContinuousDistribution::Any {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "PoissonDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            cont =
+                                                Some(RawContinuousDistribution::Poisson { mean });
+                                        }
+                                        "UniformDistribution" => {
+                                            let lower = attr(&inner_e, "lower")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let upper = attr(&inner_e, "upper")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            cont = Some(RawContinuousDistribution::Uniform {
+                                                lower,
+                                                upper,
+                                            });
+                                        }
+                                        "FieldRef" => {
+                                            let f = attr_required(&inner_e, "field", "FieldRef")?;
+                                            // For Empty FieldRef inside Baseline, need to collect multiple
+                                            // Here we may have only one; handle second via next loop
+                                            let refs = vec![f];
+                                            // peek next inner_e already consumed; continue loop will handle next
+                                            // So set disc now and let loop continue to collect more
+                                            // To keep simple, set disc with current refs; later will extend if more
+                                            // For now, handle single case; multi will be built by subsequent iterations
+                                            // But we need to not overwrite. So push.
+                                            // Instead collect by extending existing FieldRefs if present
+                                            if let Some(RawDiscreteDistribution::FieldRefs(
+                                                existing,
+                                            )) = &disc
+                                            {
+                                                let mut new_refs = existing.clone();
+                                                new_refs.extend(refs);
+                                                disc = Some(RawDiscreteDistribution::FieldRefs(
+                                                    new_refs,
+                                                ));
+                                            } else {
+                                                disc =
+                                                    Some(RawDiscreteDistribution::FieldRefs(refs));
+                                            }
+                                        }
+                                        "CountTable" => {
+                                            let ct = RawCountTable {
+                                                sample: attr(&inner_e, "sample")
+                                                    .and_then(|s| s.parse::<f64>().ok()),
+                                                field_values: Vec::new(),
+                                                field_value_counts: Vec::new(),
+                                            };
+                                            disc = Some(RawDiscreteDistribution::CountTable(ct));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Baseline" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        baseline = Some(RawBaseline {
+                            continuous: cont,
+                            discrete: disc,
+                        });
+                    }
+                    "Alternate" => {
+                        let mut dist_opt: Option<RawContinuousDistribution> = None;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    if matches!(
+                                        itag.as_str(),
+                                        "AnyDistribution"
+                                            | "GaussianDistribution"
+                                            | "PoissonDistribution"
+                                            | "UniformDistribution"
+                                    ) {
+                                        let d =
+                                            parse_continuous_distribution(reader, &inner_e, &itag)?;
+                                        dist_opt = Some(d);
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    match itag.as_str() {
+                                        "GaussianDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            dist_opt = Some(RawContinuousDistribution::Gaussian {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "AnyDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            dist_opt = Some(RawContinuousDistribution::Any {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "PoissonDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            dist_opt =
+                                                Some(RawContinuousDistribution::Poisson { mean });
+                                        }
+                                        "UniformDistribution" => {
+                                            let lower = attr(&inner_e, "lower")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let upper = attr(&inner_e, "upper")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            dist_opt = Some(RawContinuousDistribution::Uniform {
+                                                lower,
+                                                upper,
+                                            });
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Alternate" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        if let Some(d) = dist_opt {
+                            alternate = Some(RawAlternate { distribution: d });
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                // Empty Alternate/Baseline not typical; ignore
+                if tag == "Baseline" || tag == "Alternate" {
+                    // empty -> no dist
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "TestDistributions" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let baseline = baseline.ok_or_else(|| PmmlError::ParseError {
+        context: "TestDistributions".into(),
+        message: "missing Baseline".into(),
+    })?;
+    Ok(RawTestDistributions {
+        field,
+        test_statistic,
+        reset_value,
+        window_size,
+        weight_field,
+        normalization_scheme,
+        baseline,
+        alternate,
+    })
+}
+
+fn parse_baseline_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawBaselineModel> {
+    let function_name = attr_required(start, "functionName", "BaselineModel")?;
+    let model_name = attr(start, "modelName");
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut targets = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut test_distributions: Option<RawTestDistributions> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Targets" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    // consume inner Target
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Target" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: Vec::new(),
+                                    });
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: Vec::new(),
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Targets" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "TestDistributions" => {
+                        let td = parse_test_distributions(reader, &e)?;
+                        test_distributions = Some(td);
+                    }
+                    _ => {
+                        if tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                            || tag == "ModelVerification"
+                        {
+                            let mut depth = 1usize;
+                            let mut inner = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(Event::Empty(_)) => {}
+                                    _ => {}
+                                }
+                                inner.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "BaselineModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let td = test_distributions.ok_or_else(|| PmmlError::ParseError {
+        context: "BaselineModel".into(),
+        message: "missing TestDistributions".into(),
+    })?;
+    Ok(RawBaselineModel {
+        function_name,
+        model_name,
+        mining_schema,
+        output,
+        targets,
+        local_derived_fields,
+        test_distributions: td,
+    })
+}
+
+// ---------- GaussianProcess and TextModel helpers ----------
+
+fn collect_string_array_text(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    array_start: &BytesStart,
+) -> Result<Vec<String>> {
+    let mut txt = String::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Text(t)) => txt.push_str(&t.unescape().unwrap_or_default()),
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Array" => break,
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let mut out = Vec::new();
+    for part in txt.split_whitespace() {
+        if !part.is_empty() {
+            out.push(part.to_string());
+        }
+    }
+    let _ = array_start;
+    Ok(out)
+}
+
+fn collect_string_array_text_with_quotes(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    array_start: &BytesStart,
+) -> Result<Vec<String>> {
+    // For n==0 or quoted strings: split whitespace but keep as tokens; PMML Array type string splits on whitespace per spec.
+    collect_string_array_text(reader, array_start)
+}
+
+fn parse_training_instances(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTrainingInstances> {
+    let is_transformed = attr(start, "isTransformed")
+        .map(|s| s == "true")
+        .unwrap_or(false);
+    let record_count = attr(start, "recordCount").and_then(|s| s.parse::<i32>().ok());
+    let field_count = attr(start, "fieldCount").and_then(|s| s.parse::<i32>().ok());
+    let mut instance_fields: Vec<RawInstanceField> = Vec::new();
+    let mut instances: Vec<std::collections::HashMap<String, String>> = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "InstanceFields" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(f_e)) if tag_name(&f_e) == "InstanceField" => {
+                                    let field = attr_required(&f_e, "field", "InstanceField")?;
+                                    let column =
+                                        attr(&f_e, "column").unwrap_or_else(|| field.clone());
+                                    instance_fields.push(RawInstanceField { field, column });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "InstanceField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            Ok(Event::Eof) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(f_e)) if tag_name(&f_e) == "InstanceField" => {
+                                    let field = attr_required(&f_e, "field", "InstanceField")?;
+                                    let column =
+                                        attr(&f_e, "column").unwrap_or_else(|| field.clone());
+                                    instance_fields.push(RawInstanceField { field, column });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "InstanceFields" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "InlineTable" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(row_e)) if tag_name(&row_e) == "row" => {
+                                    let mut row_buf = Vec::new();
+                                    let mut row_map: std::collections::HashMap<String, String> =
+                                        std::collections::HashMap::new();
+                                    loop {
+                                        match reader.read_event_into(&mut row_buf) {
+                                            Ok(Event::Start(cell_e)) => {
+                                                let col_name = tag_name(&cell_e);
+                                                let mut cell_buf = Vec::new();
+                                                let mut cell_val = String::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut cell_buf) {
+                                                        Ok(Event::Text(t)) => {
+                                                            cell_val = t
+                                                                .unescape()
+                                                                .unwrap_or_default()
+                                                                .into_owned();
+                                                        }
+                                                        Ok(Event::End(end)) => {
+                                                            let tag = String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            )
+                                                            .into_owned();
+                                                            if tag == col_name {
+                                                                row_map.insert(
+                                                                    col_name.clone(),
+                                                                    cell_val.clone(),
+                                                                );
+                                                            }
+                                                            break;
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    cell_buf.clear();
+                                                }
+                                            }
+                                            Ok(Event::Empty(cell_e)) => {
+                                                let col_name = tag_name(&cell_e);
+                                                row_map.insert(col_name, String::new());
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "row" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        row_buf.clear();
+                                    }
+                                    if !row_map.is_empty() {
+                                        instances.push(row_map);
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "InlineTable" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "TableLocator" => {
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TableLocator" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            skip.clear();
+                            break;
+                        }
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) if tag_name(&e) == "TableLocator" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "TrainingInstances" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTrainingInstances {
+        is_transformed,
+        record_count,
+        field_count,
+        instance_fields,
+        instances,
+    })
+}
+
+fn parse_lambda_array(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawLambda> {
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                array = vals;
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Extension" => {
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0
+                                && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                            {
+                                break;
+                            }
+                        }
+                        Ok(Event::Empty(_)) => {}
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Lambda" => {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawLambda { array })
+}
+
+fn parse_gaussian_process_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawGaussianProcessModel> {
+    let model_name = attr(start, "modelName");
+    let function_name = attr_required(start, "functionName", "GaussianProcessModel")?;
+    let algorithm_name = attr(start, "algorithmName");
+    let optimizer = attr(start, "optimizer");
+    let is_scorable = attr(start, "isScorable")
+        .map(|s| s != "false")
+        .unwrap_or(true);
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut targets: Vec<RawTarget> = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut kernel: Option<RawGaussianKernel> = None;
+    let mut training_instances: Option<RawTrainingInstances> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            Ok(Event::Eof) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "RadialBasisKernel" => {
+                        let description = attr(&e, "description");
+                        let gamma = attr(&e, "gamma")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let noise_variance = attr(&e, "noiseVariance")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let lambda = attr(&e, "lambda")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        // consume to End
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "RadialBasisKernel" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        kernel = Some(RawGaussianKernel::RadialBasis {
+                            description,
+                            gamma,
+                            noise_variance,
+                            lambda,
+                        });
+                    }
+                    "ARDSquaredExponentialKernel" => {
+                        let description = attr(&e, "description");
+                        let gamma = attr(&e, "gamma")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let noise_variance = attr(&e, "noiseVariance")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let mut lambdas = Vec::new();
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Lambda" => {
+                                    let lam = parse_lambda_array(reader, &inner_e)?;
+                                    lambdas.push(lam);
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Lambda" => {
+                                    lambdas.push(RawLambda { array: vec![] });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ARDSquaredExponentialKernel" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        kernel = Some(RawGaussianKernel::ARDSquaredExponential {
+                            description,
+                            gamma,
+                            noise_variance,
+                            lambdas,
+                        });
+                    }
+                    "AbsoluteExponentialKernel" => {
+                        let description = attr(&e, "description");
+                        let gamma = attr(&e, "gamma")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let noise_variance = attr(&e, "noiseVariance")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let mut lambdas = Vec::new();
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Lambda" => {
+                                    let lam = parse_lambda_array(reader, &inner_e)?;
+                                    lambdas.push(lam);
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Lambda" => {
+                                    lambdas.push(RawLambda { array: vec![] });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "AbsoluteExponentialKernel" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        kernel = Some(RawGaussianKernel::AbsoluteExponential {
+                            description,
+                            gamma,
+                            noise_variance,
+                            lambdas,
+                        });
+                    }
+                    "GeneralizedExponentialKernel" => {
+                        let description = attr(&e, "description");
+                        let gamma = attr(&e, "gamma")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let noise_variance = attr(&e, "noiseVariance")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let degree = attr(&e, "degree")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0);
+                        let mut lambdas = Vec::new();
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Lambda" => {
+                                    let lam = parse_lambda_array(reader, &inner_e)?;
+                                    lambdas.push(lam);
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Lambda" => {
+                                    lambdas.push(RawLambda { array: vec![] });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "GeneralizedExponentialKernel" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        kernel = Some(RawGaussianKernel::GeneralizedExponential {
+                            description,
+                            gamma,
+                            noise_variance,
+                            lambdas,
+                            degree,
+                        });
+                    }
+                    "TrainingInstances" => {
+                        let ti = parse_training_instances(reader, &e)?;
+                        training_instances = Some(ti);
+                    }
+                    "Targets" => {
+                        let mut inner = Vec::new();
+                        // reuse parse_targets logic similar to other models - skip for now but parse single Target
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    // consume target
+                                    let mut depth = 1usize;
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::Start(_)) => depth += 1,
+                                            Ok(Event::End(end)) => {
+                                                depth -= 1;
+                                                if depth == 0
+                                                    && String::from_utf8_lossy(end.name().as_ref())
+                                                        == "Target"
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::Empty(_)) => {}
+                                            Ok(Event::Eof) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                    }
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Targets" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    _ => {
+                        if tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                            || tag == "ModelVerification"
+                        {
+                            let mut depth = 1usize;
+                            let mut inner = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(Event::Empty(_)) => {}
+                                    Ok(Event::Eof) => break,
+                                    _ => {}
+                                }
+                                inner.clear();
+                            }
+                        } else if tag == "Extension" {
+                            let mut depth = 1usize;
+                            let mut inner = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref())
+                                                == "Extension"
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(Event::Empty(_)) => {}
+                                    Ok(Event::Eof) => break,
+                                    _ => {}
+                                }
+                                inner.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                if tag == "RadialBasisKernel" {
+                    let description = attr(&e, "description");
+                    let gamma = attr(&e, "gamma")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(1.0);
+                    let noise_variance = attr(&e, "noiseVariance")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(1.0);
+                    let lambda = attr(&e, "lambda")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(1.0);
+                    kernel = Some(RawGaussianKernel::RadialBasis {
+                        description,
+                        gamma,
+                        noise_variance,
+                        lambda,
+                    });
+                }
+            }
+            Ok(Event::End(e))
+                if String::from_utf8_lossy(e.name().as_ref()) == "GaussianProcessModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let kernel = kernel.ok_or_else(|| PmmlError::ParseError {
+        context: "GaussianProcessModel".into(),
+        message: "missing kernel".into(),
+    })?;
+    let training_instances = training_instances.ok_or_else(|| PmmlError::ParseError {
+        context: "GaussianProcessModel".into(),
+        message: "missing TrainingInstances".into(),
+    })?;
+    Ok(RawGaussianProcessModel {
+        model_name,
+        function_name,
+        algorithm_name,
+        optimizer,
+        is_scorable,
+        mining_schema,
+        output,
+        targets,
+        local_derived_fields,
+        kernel,
+        training_instances,
+    })
+}
+
+fn parse_text_dictionary(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTextDictionary> {
+    let mut terms: Vec<String> = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "Array" => {
+                        let vals = collect_string_array_text(reader, &inner)?;
+                        terms.extend(vals);
+                    }
+                    "Taxonomy" | "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "TextDictionary" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawTextDictionary { terms })
+}
+
+fn parse_text_corpus(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<RawTextDocument>> {
+    let mut docs: Vec<RawTextDocument> = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "TextDocument" {
+                    let id = attr_required(&inner, "id", "TextDocument")?;
+                    let name = attr(&inner, "name");
+                    let length = attr(&inner, "length").and_then(|s| s.parse::<i32>().ok());
+                    let file = attr(&inner, "file");
+                    // consume to End
+                    let mut inner2 = Vec::new();
+                    loop {
+                        match reader.read_event_into(&mut inner2) {
+                            Ok(Event::End(end))
+                                if String::from_utf8_lossy(end.name().as_ref())
+                                    == "TextDocument" =>
+                            {
+                                break
+                            }
+                            Ok(Event::Eof) => break,
+                            Ok(Event::Start(e2)) if tag_name(&e2) == "Extension" => {
+                                let mut depth = 1usize;
+                                let mut tmp = Vec::new();
+                                loop {
+                                    match reader.read_event_into(&mut tmp) {
+                                        Ok(Event::Start(_)) => depth += 1,
+                                        Ok(Event::End(end2)) => {
+                                            depth -= 1;
+                                            if depth == 0
+                                                && String::from_utf8_lossy(end2.name().as_ref())
+                                                    == "Extension"
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    tmp.clear();
+                                }
+                            }
+                            _ => {}
+                        }
+                        inner2.clear();
+                    }
+                    docs.push(RawTextDocument {
+                        id,
+                        name,
+                        length,
+                        file,
+                    });
+                } else if tag == "Extension" {
+                    let mut depth = 1usize;
+                    let mut inner2 = Vec::new();
+                    loop {
+                        match reader.read_event_into(&mut inner2) {
+                            Ok(Event::Start(_)) => depth += 1,
+                            Ok(Event::End(end)) => {
+                                depth -= 1;
+                                if depth == 0
+                                    && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                                {
+                                    break;
+                                }
+                            }
+                            Ok(Event::Empty(_)) => {}
+                            Ok(Event::Eof) => break,
+                            _ => {}
+                        }
+                        inner2.clear();
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "TextDocument" => {
+                let id = attr_required(&inner, "id", "TextDocument")?;
+                let name = attr(&inner, "name");
+                let length = attr(&inner, "length").and_then(|s| s.parse::<i32>().ok());
+                let file = attr(&inner, "file");
+                docs.push(RawTextDocument {
+                    id,
+                    name,
+                    length,
+                    file,
+                });
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "TextCorpus" => {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(docs)
+}
+
+fn parse_document_term_matrix(
+    reader: &mut quick_xml::Reader<&[u8]>,
+) -> Result<RawDocumentTermMatrix> {
+    let mut matrix: Vec<Vec<f64>> = Vec::new();
+    let mut nb_rows: Option<i32> = None;
+    let mut nb_cols: Option<i32> = None;
+    let mut kind: Option<String> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "Matrix" => {
+                        nb_rows = attr(&inner, "nbRows").and_then(|s| s.parse::<i32>().ok());
+                        nb_cols = attr(&inner, "nbCols").and_then(|s| s.parse::<i32>().ok());
+                        kind = attr(&inner, "kind");
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(arr)) if tag_name(&arr) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &arr)?;
+                                    if !vals.is_empty() {
+                                        matrix.push(vals);
+                                    }
+                                }
+                                Ok(Event::Empty(arr)) if tag_name(&arr) == "Array" => {}
+                                Ok(Event::Start(mc)) if tag_name(&mc) == "MatCell" => {
+                                    // MatCell sparse handling: collect row/col attrs but we treat as dense fallback - parse text value
+                                    let row = attr(&mc, "row")
+                                        .and_then(|s| s.parse::<usize>().ok())
+                                        .unwrap_or(0);
+                                    let col = attr(&mc, "col")
+                                        .and_then(|s| s.parse::<usize>().ok())
+                                        .unwrap_or(0);
+                                    let mut txt = String::new();
+                                    let mut tmp = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut tmp) {
+                                            Ok(Event::Text(t)) => {
+                                                txt.push_str(&t.unescape().unwrap_or_default())
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MatCell" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        tmp.clear();
+                                    }
+                                    let val = txt.trim().parse::<f64>().unwrap_or(0.0);
+                                    // ensure matrix sized
+                                    let r = row.saturating_sub(1);
+                                    let c = col.saturating_sub(1);
+                                    if matrix.len() <= r {
+                                        matrix.resize(r + 1, vec![]);
+                                    }
+                                    if matrix[r].len() <= c {
+                                        matrix[r].resize(c + 1, 0.0);
+                                    }
+                                    matrix[r][c] = val;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Matrix" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "DocumentTermMatrix" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawDocumentTermMatrix {
+        matrix,
+        nb_rows,
+        nb_cols,
+        kind,
+    })
+}
+
+fn parse_text_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTextModel> {
+    let model_name = attr(start, "modelName");
+    let function_name = attr_required(start, "functionName", "TextModel")?;
+    let algorithm_name = attr(start, "algorithmName");
+    let number_of_terms = attr(start, "numberOfTerms")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let number_of_documents = attr(start, "numberOfDocuments")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let is_scorable = attr(start, "isScorable")
+        .map(|s| s != "false")
+        .unwrap_or(true);
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut targets: Vec<RawTarget> = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut text_dictionary: Option<RawTextDictionary> = None;
+    let mut text_corpus: Option<Vec<RawTextDocument>> = None;
+    let mut document_term_matrix: Option<RawDocumentTermMatrix> = None;
+    let mut normalization: Option<RawTextNormalization> = None;
+    let mut similarity: Option<RawTextSimilarity> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "TextDictionary" => {
+                        let dict = parse_text_dictionary(reader, &e)?;
+                        text_dictionary = Some(dict);
+                    }
+                    "TextCorpus" => {
+                        let corpus = parse_text_corpus(reader)?;
+                        text_corpus = Some(corpus);
+                    }
+                    "DocumentTermMatrix" => {
+                        let dtm = parse_document_term_matrix(reader)?;
+                        document_term_matrix = Some(dtm);
+                    }
+                    "TextModelNormalization" => {
+                        let local =
+                            attr(&e, "localTermWeights").unwrap_or_else(|| "termFrequency".into());
+                        let global = attr(&e, "globalTermWeights")
+                            .unwrap_or_else(|| "inverseDocumentFrequency".into());
+                        let doc_norm =
+                            attr(&e, "documentNormalization").unwrap_or_else(|| "none".into());
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TextModelNormalization" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        normalization = Some(RawTextNormalization {
+                            local_term_weights: local,
+                            global_term_weights: global,
+                            document_normalization: doc_norm,
+                        });
+                    }
+                    "TextModelSimiliarity" => {
+                        let sim = attr(&e, "similarityType");
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TextModelSimiliarity" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        similarity = Some(RawTextSimilarity {
+                            similarity_type: sim,
+                        });
+                    }
+                    "Targets" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let mut depth = 1usize;
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::Start(_)) => depth += 1,
+                                            Ok(Event::End(end)) => {
+                                                depth -= 1;
+                                                if depth == 0
+                                                    && String::from_utf8_lossy(end.name().as_ref())
+                                                        == "Target"
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                            Ok(Event::Empty(_)) => {}
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                    }
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Targets" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    _ => {
+                        if tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                            || tag == "ModelVerification"
+                        {
+                            let mut depth = 1usize;
+                            let mut inner = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(Event::Empty(_)) => {}
+                                    Ok(Event::Eof) => break,
+                                    _ => {}
+                                }
+                                inner.clear();
+                            }
+                        } else if tag == "Extension" {
+                            let mut depth = 1usize;
+                            let mut inner = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref())
+                                                == "Extension"
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(Event::Empty(_)) => {}
+                                    Ok(Event::Eof) => break,
+                                    _ => {}
+                                }
+                                inner.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(e)) if String::from_utf8_lossy(e.name().as_ref()) == "TextModel" => break,
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let text_dictionary = text_dictionary.unwrap_or(RawTextDictionary { terms: vec![] });
+    let text_corpus = text_corpus.unwrap_or_default();
+    let document_term_matrix = document_term_matrix.unwrap_or(RawDocumentTermMatrix {
+        matrix: vec![],
+        nb_rows: None,
+        nb_cols: None,
+        kind: None,
+    });
+    Ok(RawTextModel {
+        model_name,
+        function_name,
+        algorithm_name,
+        number_of_terms,
+        number_of_documents,
+        is_scorable,
+        mining_schema,
+        output,
+        targets,
+        local_derived_fields,
+        text_dictionary,
+        text_corpus,
+        document_term_matrix,
+        normalization,
+        similarity,
+    })
+}
+
+fn parse_array_real(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<f64>> {
+    let mut arr: Vec<f64> = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) if tag_name(&e) == "Array" => {
+                let mut inner = Vec::new();
+                let mut txt = String::new();
+                loop {
+                    match reader.read_event_into(&mut inner) {
+                        Ok(Event::Text(t)) => {
+                            txt.push_str(&t.unescape().unwrap_or_default());
+                        }
+                        Ok(Event::End(end))
+                            if String::from_utf8_lossy(end.name().as_ref()) == "Array" =>
+                        {
+                            break
+                        }
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                    inner.clear();
+                }
+                for part in txt.split_whitespace() {
+                    if let Ok(v) = part.parse::<f64>() {
+                        arr.push(v);
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) if tag_name(&e) == "Array" => {}
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Array" => break,
+            // Generic end for caller's parent will be handled outside; we return on seeing parent end in caller
+            _ => {
+                // If we are called as helper expecting to consume one Array, we break after finding it.
+                // But for loop scanning, we need to not hang. If no Array found, return empty.
+                // Caller will manage outer End detection; here we just continue.
+                // To avoid infinite loop, break if we see Eof or if buf contains End of parent that leaked?
+                // Instead, this helper is not used standalone; individual parsers handle Array themselves.
+                // Keep empty.
+                break;
+            }
+        }
+        buf.clear();
+    }
+    Ok(arr)
+}
+
+fn collect_real_array_text(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    array_start: &BytesStart,
+) -> Result<Vec<f64>> {
+    // Handles both <Array>...</Array> and <Array/> inside a parent; caller has already matched start.
+    // For Empty case, return empty vec.
+    // For Start, we already have start, need to collect until </Array>
+    let mut txt = String::new();
+    let mut buf = Vec::new();
+    // If start is Empty, nothing to do (but this function only called for Start)
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Text(t)) => txt.push_str(&t.unescape().unwrap_or_default()),
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Array" => break,
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let mut out = Vec::new();
+    for part in txt.split_whitespace() {
+        if let Ok(v) = part.parse::<f64>() {
+            out.push(v);
+        }
+    }
+    let _ = array_start; // suppress unused
+    Ok(out)
+}
+
+fn parse_time_value(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTimeValue> {
+    let index = attr(start, "index").and_then(|s| s.parse::<i32>().ok());
+    let time = attr(start, "time");
+    let value = attr(start, "value")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let standard_error = attr(start, "standardError").and_then(|s| s.parse::<f64>().ok());
+    // consume until End TimeValue (handle both Empty and Start)
+    let mut is_empty = false;
+    // quick-xml doesn't give is_empty directly via tag, we already know start was Start vs Empty via caller.
+    // Here caller passed Start, so we need to consume to End. If passed Empty, this function won't be called for Empty.
+    // But we still handle generic.
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "TimeValue" => {
+                break
+            }
+            Ok(Event::Empty(_)) => {}
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                // skip Timestamp
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag {
+                                break;
+                            }
+                        }
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+        // For Empty case, break immediately after one iteration without End
+        if is_empty {
+            break;
+        }
+    }
+    let _ = is_empty;
+    Ok(RawTimeValue {
+        index,
+        time,
+        value,
+        standard_error,
+    })
+}
+
+fn parse_time_cycle(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTimeCycle> {
+    let length = attr(start, "length").and_then(|s| s.parse::<i32>().ok());
+    let type_ = attr(start, "type");
+    let display_name = attr(start, "displayName");
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                for v in vals {
+                    array.push(v as i32);
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "TimeCycle" => {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTimeCycle {
+        length,
+        type_,
+        display_name,
+        array,
+    })
+}
+
+fn parse_time_exception(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTimeException> {
+    let type_ = attr(start, "type").unwrap_or_else(|| "exclude".into());
+    let count = attr(start, "count").and_then(|s| s.parse::<i32>().ok());
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                for v in vals {
+                    array.push(v as i32);
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "TimeException" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTimeException {
+        type_,
+        count,
+        array,
+    })
+}
+
+fn parse_time_anchor(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTimeAnchor> {
+    let type_ = attr(start, "type");
+    let offset = attr(start, "offset").and_then(|s| s.parse::<i32>().ok());
+    let stepsize = attr(start, "stepsize").and_then(|s| s.parse::<i32>().ok());
+    let display_name = attr(start, "displayName");
+    let mut time_cycles = Vec::new();
+    let mut time_exceptions = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "TimeCycle" => {
+                        let tc = parse_time_cycle(reader, &inner)?;
+                        time_cycles.push(tc);
+                    }
+                    "TimeException" => {
+                        let te = parse_time_exception(reader, &inner)?;
+                        time_exceptions.push(te);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "TimeCycle" {
+                    let tc = RawTimeCycle {
+                        length: attr(&inner, "length").and_then(|s| s.parse().ok()),
+                        type_: attr(&inner, "type"),
+                        display_name: attr(&inner, "displayName"),
+                        array: vec![],
+                    };
+                    time_cycles.push(tc);
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "TimeAnchor" => {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTimeAnchor {
+        type_,
+        offset,
+        stepsize,
+        display_name,
+        time_cycles,
+        time_exceptions,
+    })
+}
+
+fn parse_time_series_inner(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTimeSeries> {
+    let usage = attr(start, "usage");
+    let start_time = attr(start, "startTime").and_then(|s| s.parse::<f64>().ok());
+    let end_time = attr(start, "endTime").and_then(|s| s.parse::<f64>().ok());
+    let interpolation_method = attr(start, "interpolationMethod");
+    let field = attr(start, "field");
+    let mut time_anchor: Option<RawTimeAnchor> = None;
+    let mut time_values = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "TimeAnchor" => {
+                        let ta = parse_time_anchor(reader, &inner)?;
+                        time_anchor = Some(ta);
+                    }
+                    "TimeValue" => {
+                        let idx = attr(&inner, "index").and_then(|s| s.parse::<i32>().ok());
+                        let time = attr(&inner, "time");
+                        let value = attr(&inner, "value")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let se = attr(&inner, "standardError").and_then(|s| s.parse::<f64>().ok());
+                        // consume to End TimeValue (handle Timestamp)
+                        let mut inner2 = Vec::new();
+                        let mut depth = 1usize;
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "TimeValue"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        time_values.push(RawTimeValue {
+                            index: idx,
+                            time,
+                            value,
+                            standard_error: se,
+                        });
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "TimeValue" {
+                    let idx = attr(&inner, "index").and_then(|s| s.parse::<i32>().ok());
+                    let time = attr(&inner, "time");
+                    let value = attr(&inner, "value")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let se = attr(&inner, "standardError").and_then(|s| s.parse::<f64>().ok());
+                    time_values.push(RawTimeValue {
+                        index: idx,
+                        time,
+                        value,
+                        standard_error: se,
+                    });
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "TimeSeries" => {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTimeSeries {
+        usage,
+        start_time,
+        end_time,
+        interpolation_method,
+        field,
+        time_anchor,
+        time_values,
+    })
+}
+
+fn parse_level(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawLevel> {
+    let alpha = attr(start, "alpha").and_then(|s| s.parse::<f64>().ok());
+    let smoothed_value = attr(start, "smoothedValue")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    // Level is usually Empty, but handle Start case
+    if tag_name(start) == "Level" {
+        // check if reader is at Empty vs Start: caller decides. For Empty, no inner.
+        let mut buf = Vec::new();
+        let mut is_start = true;
+        // We don't know if start was Empty; we try to see if next event is End Level
+        // But easier: if alpha parsed and we are called from parse_exponential_smoothing where we handled Empty, this won't be called for Empty.
+        // For Start, consume to End.
+        // Detect: peek next? Instead just try to consume until End Level if it exists.
+        // Use a short loop that breaks quickly.
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Level" => {
+                    break
+                }
+                Ok(Event::Eof) => break,
+                Ok(Event::Start(inner)) => {
+                    let tag = tag_name(&inner);
+                    let mut depth = 1usize;
+                    let mut inner2 = Vec::new();
+                    loop {
+                        match reader.read_event_into(&mut inner2) {
+                            Ok(Event::Start(_)) => depth += 1,
+                            Ok(Event::End(end)) => {
+                                depth -= 1;
+                                if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        inner2.clear();
+                    }
+                }
+                _ => {
+                    if is_start {
+                        is_start = false;
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            buf.clear();
+            break;
+        }
+    }
+    Ok(RawLevel {
+        alpha,
+        smoothed_value,
+    })
+}
+
+fn parse_trend_exposmooth(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTrendExpoSmooth> {
+    let trend = attr(start, "trend");
+    let gamma = attr(start, "gamma").and_then(|s| s.parse::<f64>().ok());
+    let phi = attr(start, "phi").and_then(|s| s.parse::<f64>().ok());
+    let smoothed_value = attr(start, "smoothedValue").and_then(|s| s.parse::<f64>().ok());
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                array = vals;
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "Trend_ExpoSmooth" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTrendExpoSmooth {
+        trend,
+        gamma,
+        phi,
+        smoothed_value,
+        array,
+    })
+}
+
+fn parse_seasonality_exposmooth(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSeasonalityExpoSmooth> {
+    let type_ = attr(start, "type").unwrap_or_else(|| "additive".into());
+    let period = attr(start, "period")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(1);
+    let unit = attr(start, "unit");
+    let phase = attr(start, "phase").and_then(|s| s.parse::<i32>().ok());
+    let delta = attr(start, "delta").and_then(|s| s.parse::<f64>().ok());
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                array = vals;
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "Seasonality_ExpoSmooth" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSeasonalityExpoSmooth {
+        type_,
+        period,
+        unit,
+        phase,
+        delta,
+        array,
+    })
+}
+
+fn parse_exponential_smoothing(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawExponentialSmoothing> {
+    let rmse = attr(start, "RMSE").and_then(|s| s.parse::<f64>().ok());
+    let transformation = attr(start, "transformation");
+    let mut level: Option<RawLevel> = None;
+    let mut trend: Option<RawTrendExpoSmooth> = None;
+    let mut seasonality: Option<RawSeasonalityExpoSmooth> = None;
+    let mut time_values = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "Level" => {
+                        let alpha = attr(&inner, "alpha").and_then(|s| s.parse::<f64>().ok());
+                        let sv = attr(&inner, "smoothedValue")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Level" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                            if inner2.is_empty() {
+                                break;
+                            }
+                        }
+                        level = Some(RawLevel {
+                            alpha,
+                            smoothed_value: sv,
+                        });
+                    }
+                    "Trend_ExpoSmooth" => {
+                        let t = parse_trend_exposmooth(reader, &inner)?;
+                        trend = Some(t);
+                    }
+                    "Seasonality_ExpoSmooth" => {
+                        let s = parse_seasonality_exposmooth(reader, &inner)?;
+                        seasonality = Some(s);
+                    }
+                    "TimeValue" => {
+                        let idx = attr(&inner, "index").and_then(|s| s.parse::<i32>().ok());
+                        let time = attr(&inner, "time");
+                        let value = attr(&inner, "value")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let se = attr(&inner, "standardError").and_then(|s| s.parse::<f64>().ok());
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TimeValue" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                            if inner2.is_empty() {
+                                break;
+                            }
+                        }
+                        time_values.push(RawTimeValue {
+                            index: idx,
+                            time,
+                            value,
+                            standard_error: se,
+                        });
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "Level" {
+                    let alpha = attr(&inner, "alpha").and_then(|s| s.parse::<f64>().ok());
+                    let sv = attr(&inner, "smoothedValue")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    level = Some(RawLevel {
+                        alpha,
+                        smoothed_value: sv,
+                    });
+                } else if tag == "TimeValue" {
+                    let idx = attr(&inner, "index").and_then(|s| s.parse::<i32>().ok());
+                    let time = attr(&inner, "time");
+                    let value = attr(&inner, "value")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let se = attr(&inner, "standardError").and_then(|s| s.parse::<f64>().ok());
+                    time_values.push(RawTimeValue {
+                        index: idx,
+                        time,
+                        value,
+                        standard_error: se,
+                    });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "ExponentialSmoothing" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    let level = level.ok_or_else(|| PmmlError::ParseError {
+        context: "ExponentialSmoothing".into(),
+        message: "missing Level".into(),
+    })?;
+    Ok(RawExponentialSmoothing {
+        rmse,
+        transformation,
+        level,
+        trend,
+        seasonality,
+        time_values,
+    })
+}
+
+fn parse_ar_inner(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawAR> {
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                array = vals;
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Extension" => {
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0
+                                && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                            {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "AR" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawAR { array })
+}
+fn parse_ma_inner(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawMA> {
+    let mut ma_coefficients: Option<RawMACoefficients> = None;
+    let mut residuals: Option<RawResiduals> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "MACoefficients" => {
+                        let mut arr = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &a)?;
+                                    arr = vals;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MACoefficients" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        ma_coefficients = Some(RawMACoefficients { array: arr });
+                    }
+                    "Residuals" => {
+                        let mut arr = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &a)?;
+                                    arr = vals;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Residuals" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        residuals = Some(RawResiduals { array: arr });
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "MA" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawMA {
+        ma_coefficients,
+        residuals,
+    })
+}
+fn parse_nonseasonal_component(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawNonseasonalComponent> {
+    let p = attr(start, "p")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let d = attr(start, "d")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let q = attr(start, "q")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut ar: Option<RawAR> = None;
+    let mut ma: Option<RawMA> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "AR" => {
+                        ar = Some(parse_ar_inner(reader, &inner)?);
+                    }
+                    "MA" => {
+                        ma = Some(parse_ma_inner(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "NonseasonalComponent" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawNonseasonalComponent { p, d, q, ar, ma })
+}
+fn parse_seasonal_component(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSeasonalComponent> {
+    let p = attr(start, "P")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let d = attr(start, "D")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let q = attr(start, "Q")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let period = attr(start, "period")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1);
+    let mut ar: Option<RawAR> = None;
+    let mut ma: Option<RawMA> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "AR" => {
+                        ar = Some(parse_ar_inner(reader, &inner)?);
+                    }
+                    "MA" => {
+                        ma = Some(parse_ma_inner(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "SeasonalComponent" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSeasonalComponent {
+        p,
+        d,
+        q,
+        period,
+        ar,
+        ma,
+    })
+}
+fn parse_nonseasonal_factor(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawNonseasonalFactor> {
+    let difference = attr(start, "difference").and_then(|s| s.parse::<i32>().ok());
+    let maximum_order = attr(start, "maximumOrder").and_then(|s| s.parse::<i32>().ok());
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                array = vals;
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "NonseasonalFactor" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawNonseasonalFactor {
+        difference,
+        maximum_order,
+        array,
+    })
+}
+fn parse_seasonal_factor(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSeasonalFactor> {
+    let difference = attr(start, "difference").and_then(|s| s.parse::<i32>().ok());
+    let maximum_order = attr(start, "maximumOrder").and_then(|s| s.parse::<i32>().ok());
+    let mut array = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let vals = collect_real_array_text(reader, &inner)?;
+                array = vals;
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "SeasonalFactor" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSeasonalFactor {
+        difference,
+        maximum_order,
+        array,
+    })
+}
+fn parse_numerator(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawNumerator> {
+    let mut nonseasonal_factor: Option<RawNonseasonalFactor> = None;
+    let mut seasonal_factor: Option<RawSeasonalFactor> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "NonseasonalFactor" => {
+                        nonseasonal_factor = Some(parse_nonseasonal_factor(reader, &inner)?);
+                    }
+                    "SeasonalFactor" => {
+                        seasonal_factor = Some(parse_seasonal_factor(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Numerator" => {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawNumerator {
+        nonseasonal_factor,
+        seasonal_factor,
+    })
+}
+fn parse_denominator(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawDenominator> {
+    let mut nonseasonal_factor: Option<RawNonseasonalFactor> = None;
+    let mut seasonal_factor: Option<RawSeasonalFactor> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "NonseasonalFactor" => {
+                        nonseasonal_factor = Some(parse_nonseasonal_factor(reader, &inner)?);
+                    }
+                    "SeasonalFactor" => {
+                        seasonal_factor = Some(parse_seasonal_factor(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "Denominator" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawDenominator {
+        nonseasonal_factor,
+        seasonal_factor,
+    })
+}
+fn parse_regressor_values(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawRegressorValues> {
+    let mut time_series: Option<Box<RawTimeSeries>> = None;
+    let mut trend_coefficients: Option<RawTrendCoefficients> = None;
+    let mut transfer_function_values: Option<RawTransferFunctionValues> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "TimeSeries" => {
+                        let ts = parse_time_series_inner(reader, &inner)?;
+                        time_series = Some(Box::new(ts));
+                    }
+                    "TrendCoefficients" => {
+                        let mut arr = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &a)?;
+                                    arr = vals;
+                                }
+                                Ok(Event::Start(a)) if tag_name(&a) == "REAL-SparseArray" => {
+                                    // parse sparse as dense stub: collect Entries
+                                    let mut sparse_vals = Vec::new();
+                                    let mut inner3 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner3) {
+                                            Ok(Event::Start(e))
+                                                if tag_name(&e) == "REAL-Entries" =>
+                                            {
+                                                let mut txt = String::new();
+                                                let mut inner4 = Vec::new();
+                                                loop {
+                                                    match reader.read_event_into(&mut inner4) {
+                                                        Ok(Event::Text(t)) => txt.push_str(
+                                                            &t.unescape().unwrap_or_default(),
+                                                        ),
+                                                        Ok(Event::End(end))
+                                                            if String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "REAL-Entries" =>
+                                                        {
+                                                            break
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    inner4.clear();
+                                                }
+                                                for part in txt.split_whitespace() {
+                                                    if let Ok(v) = part.parse::<f64>() {
+                                                        sparse_vals.push(v);
+                                                    }
+                                                }
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "REAL-SparseArray" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner3.clear();
+                                    }
+                                    arr = sparse_vals;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TrendCoefficients" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        trend_coefficients = Some(RawTrendCoefficients { array: arr });
+                    }
+                    "TransferFunctionValues" => {
+                        let mut arr = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &a)?;
+                                    arr = vals;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TransferFunctionValues" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        transfer_function_values = Some(RawTransferFunctionValues { array: arr });
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "RegressorValues" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawRegressorValues {
+        time_series,
+        trend_coefficients,
+        transfer_function_values,
+    })
+}
+fn parse_dynamic_regressor(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawDynamicRegressor> {
+    let field = attr_required(start, "field", "DynamicRegressor")?;
+    let transformation = attr(start, "transformation");
+    let delay = attr(start, "delay").and_then(|s| s.parse::<i32>().ok());
+    let future_values_method = attr(start, "futureValuesMethod");
+    let target_field = attr(start, "targetField");
+    let mut numerator: Option<RawNumerator> = None;
+    let mut denominator: Option<RawDenominator> = None;
+    let mut regressor_values: Option<RawRegressorValues> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "Numerator" => {
+                        numerator = Some(parse_numerator(reader, &inner)?);
+                    }
+                    "Denominator" => {
+                        denominator = Some(parse_denominator(reader, &inner)?);
+                    }
+                    "RegressorValues" => {
+                        regressor_values = Some(parse_regressor_values(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "DynamicRegressor" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawDynamicRegressor {
+        field,
+        transformation,
+        delay,
+        future_values_method,
+        target_field,
+        numerator,
+        denominator,
+        regressor_values,
+    })
+}
+fn parse_maximum_likelihood_stat(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawMaximumLikelihoodStat> {
+    let method = attr(start, "method").unwrap_or_else(|| "kalman".into());
+    let period_deficit = attr(start, "periodDeficit").and_then(|s| s.parse::<i32>().ok());
+    let mut kalman_state: Option<RawKalmanState> = None;
+    let mut theta_recursion_state: Option<RawThetaRecursionState> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "KalmanState" => {
+                        let mut final_omega: Option<RawFinalOmega> = None;
+                        let mut final_state_vector: Option<RawFinalStateVector> = None;
+                        let mut h_vector: Option<RawHVector> = None;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) => {
+                                    let t = tag_name(&a);
+                                    match t.as_str() {
+                                        "FinalOmega" => {
+                                            let mut mat = Vec::new();
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(m))
+                                                        if tag_name(&m) == "Matrix" =>
+                                                    {
+                                                        let mut matrix: Vec<Vec<f64>> = Vec::new();
+                                                        let mut inner4 = Vec::new();
+                                                        loop {
+                                                            match reader
+                                                                .read_event_into(&mut inner4)
+                                                            {
+                                                                Ok(Event::Start(arr))
+                                                                    if tag_name(&arr)
+                                                                        == "Array" =>
+                                                                {
+                                                                    let vals =
+                                                                        collect_real_array_text(
+                                                                            reader, &arr,
+                                                                        )?;
+                                                                    matrix.push(vals);
+                                                                }
+                                                                Ok(Event::Start(cell))
+                                                                    if tag_name(&cell)
+                                                                        == "MatCell" =>
+                                                                {
+                                                                    // stub: read text and push
+                                                                    let mut txt = String::new();
+                                                                    let mut inner5 = Vec::new();
+                                                                    loop {
+                                                                        match reader.read_event_into(&mut inner5){ Ok(Event::Text(t))=>txt.push_str(&t.unescape().unwrap_or_default()), Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref())=="MatCell"=>break, _=>{}}
+                                                                        inner5.clear();
+                                                                    }
+                                                                    // we ignore matrix cell parsing for stub
+                                                                }
+                                                                Ok(Event::End(end))
+                                                                    if String::from_utf8_lossy(
+                                                                        end.name().as_ref(),
+                                                                    ) == "Matrix" =>
+                                                                {
+                                                                    break
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                            inner4.clear();
+                                                        }
+                                                        mat = matrix;
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FinalOmega" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            final_omega = Some(RawFinalOmega { matrix: mat });
+                                        }
+                                        "FinalStateVector" => {
+                                            let mut arr = Vec::new();
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(a))
+                                                        if tag_name(&a) == "Array" =>
+                                                    {
+                                                        let vals =
+                                                            collect_real_array_text(reader, &a)?;
+                                                        arr = vals;
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FinalStateVector" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            final_state_vector =
+                                                Some(RawFinalStateVector { array: arr });
+                                        }
+                                        "HVector" => {
+                                            let mut arr = Vec::new();
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(a))
+                                                        if tag_name(&a) == "Array" =>
+                                                    {
+                                                        let vals =
+                                                            collect_real_array_text(reader, &a)?;
+                                                        arr = vals;
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "HVector" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            h_vector = Some(RawHVector { array: arr });
+                                        }
+                                        _ => {
+                                            let mut depth = 1usize;
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(_)) => depth += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        depth -= 1;
+                                                        if depth == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == t
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "KalmanState" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        kalman_state = Some(RawKalmanState {
+                            final_omega,
+                            final_state_vector,
+                            h_vector,
+                        });
+                    }
+                    "ThetaRecursionState" => {
+                        let mut final_noise: Option<RawFinalNoise> = None;
+                        let mut final_predicted_noise: Option<RawFinalPredictedNoise> = None;
+                        let mut final_theta: Option<RawFinalTheta> = None;
+                        let mut final_nu: Option<RawFinalNu> = None;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) => {
+                                    let t = tag_name(&a);
+                                    match t.as_str() {
+                                        "FinalNoise" => {
+                                            let mut arr = Vec::new();
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(arr_e))
+                                                        if tag_name(&arr_e) == "Array" =>
+                                                    {
+                                                        let vals = collect_real_array_text(
+                                                            reader, &arr_e,
+                                                        )?;
+                                                        arr = vals;
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FinalNoise" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            final_noise = Some(RawFinalNoise { array: arr });
+                                        }
+                                        "FinalPredictedNoise" => {
+                                            let mut arr = Vec::new();
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(arr_e))
+                                                        if tag_name(&arr_e) == "Array" =>
+                                                    {
+                                                        let vals = collect_real_array_text(
+                                                            reader, &arr_e,
+                                                        )?;
+                                                        arr = vals;
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FinalPredictedNoise" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            final_predicted_noise =
+                                                Some(RawFinalPredictedNoise { array: arr });
+                                        }
+                                        "FinalTheta" => {
+                                            let mut thetas = Vec::new();
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(th))
+                                                        if tag_name(&th) == "Theta" =>
+                                                    {
+                                                        let i = attr(&th, "i")
+                                                            .and_then(|s| s.parse::<i32>().ok());
+                                                        let j = attr(&th, "j")
+                                                            .and_then(|s| s.parse::<i32>().ok());
+                                                        let thv = attr(&th, "theta")
+                                                            .and_then(|s| s.parse::<f64>().ok())
+                                                            .unwrap_or(0.0);
+                                                        thetas.push(RawTheta { i, j, theta: thv });
+                                                        let mut inner4 = Vec::new();
+                                                        loop {
+                                                            match reader
+                                                                .read_event_into(&mut inner4)
+                                                            {
+                                                                Ok(Event::End(end))
+                                                                    if String::from_utf8_lossy(
+                                                                        end.name().as_ref(),
+                                                                    ) == "Theta" =>
+                                                                {
+                                                                    break
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                            inner4.clear();
+                                                            if inner4.is_empty() {
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    Ok(Event::Empty(th))
+                                                        if tag_name(&th) == "Theta" =>
+                                                    {
+                                                        let i = attr(&th, "i")
+                                                            .and_then(|s| s.parse::<i32>().ok());
+                                                        let j = attr(&th, "j")
+                                                            .and_then(|s| s.parse::<i32>().ok());
+                                                        let thv = attr(&th, "theta")
+                                                            .and_then(|s| s.parse::<f64>().ok())
+                                                            .unwrap_or(0.0);
+                                                        thetas.push(RawTheta { i, j, theta: thv });
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FinalTheta" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            final_theta = Some(RawFinalTheta { thetas });
+                                        }
+                                        "FinalNu" => {
+                                            let mut arr = Vec::new();
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(arr_e))
+                                                        if tag_name(&arr_e) == "Array" =>
+                                                    {
+                                                        let vals = collect_real_array_text(
+                                                            reader, &arr_e,
+                                                        )?;
+                                                        arr = vals;
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FinalNu" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            final_nu = Some(RawFinalNu { array: arr });
+                                        }
+                                        _ => {
+                                            let mut depth = 1usize;
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(_)) => depth += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        depth -= 1;
+                                                        if depth == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == t
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ThetaRecursionState" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        theta_recursion_state = Some(RawThetaRecursionState {
+                            final_noise,
+                            final_predicted_noise,
+                            final_theta,
+                            final_nu,
+                        });
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "MaximumLikelihoodStat" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawMaximumLikelihoodStat {
+        method,
+        period_deficit,
+        kalman_state,
+        theta_recursion_state,
+    })
+}
+fn parse_outlier_effect(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawOutlierEffect> {
+    let type_ = attr_required(start, "type", "OutlierEffect")?;
+    let start_time = attr(start, "startTime")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let magnitude = attr(start, "magnitude")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let damping_coefficient = attr(start, "dampingCoefficient").and_then(|s| s.parse::<f64>().ok());
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "OutlierEffect" =>
+            {
+                break
+            }
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawOutlierEffect {
+        type_,
+        start_time,
+        magnitude,
+        damping_coefficient,
+    })
+}
+fn parse_arima(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawARIMA> {
+    let rmse = attr(start, "RMSE").and_then(|s| s.parse::<f64>().ok());
+    let transformation = attr(start, "transformation");
+    let constant_term = attr(start, "constantTerm")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let prediction_method = attr(start, "predictionMethod");
+    let mut nonseasonal_component: Option<RawNonseasonalComponent> = None;
+    let mut seasonal_component: Option<RawSeasonalComponent> = None;
+    let mut dynamic_regressors = Vec::new();
+    let mut maximum_likelihood_stat: Option<RawMaximumLikelihoodStat> = None;
+    let mut outlier_effects = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "NonseasonalComponent" => {
+                        nonseasonal_component = Some(parse_nonseasonal_component(reader, &inner)?);
+                    }
+                    "SeasonalComponent" => {
+                        seasonal_component = Some(parse_seasonal_component(reader, &inner)?);
+                    }
+                    "DynamicRegressor" => {
+                        dynamic_regressors.push(parse_dynamic_regressor(reader, &inner)?);
+                    }
+                    "MaximumLikelihoodStat" => {
+                        maximum_likelihood_stat =
+                            Some(parse_maximum_likelihood_stat(reader, &inner)?);
+                    }
+                    "OutlierEffect" => {
+                        outlier_effects.push(parse_outlier_effect(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "ARIMA" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawARIMA {
+        rmse,
+        transformation,
+        constant_term,
+        prediction_method,
+        nonseasonal_component,
+        seasonal_component,
+        dynamic_regressors,
+        maximum_likelihood_stat,
+        outlier_effects,
+    })
+}
+fn parse_garch(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawGARCH> {
+    let mut arma_part: Option<RawARMAPart> = None;
+    let mut garch_part: Option<RawGARCHPart> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "ARMAPart" => {
+                        let constant = attr(&inner, "constant")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let p = attr(&inner, "p")
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(0);
+                        let q = attr(&inner, "q")
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(0);
+                        let mut ar: Option<RawAR> = None;
+                        let mut ma: Option<RawMA> = None;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) => {
+                                    let t = tag_name(&a);
+                                    match t.as_str() {
+                                        "AR" => {
+                                            ar = Some(parse_ar_inner(reader, &a)?);
+                                        }
+                                        "MA" => {
+                                            ma = Some(parse_ma_inner(reader, &a)?);
+                                        }
+                                        "Extension" => {
+                                            let mut d = 1usize;
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(_)) => d += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        d -= 1;
+                                                        if d == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Extension"
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                        }
+                                        _ => {
+                                            let mut d = 1usize;
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(_)) => d += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        d -= 1;
+                                                        if d == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == t
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ARMAPart" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        arma_part = Some(RawARMAPart {
+                            constant,
+                            p,
+                            q,
+                            ar,
+                            ma,
+                        });
+                    }
+                    "GARCHPart" => {
+                        let constant = attr(&inner, "constant")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        let gp = attr(&inner, "gp")
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(0);
+                        let gq = attr(&inner, "gq")
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(0);
+                        let mut residual_square_coefficients: Option<
+                            RawResidualSquareCoefficients,
+                        > = None;
+                        let mut variance_coefficients: Option<RawVarianceCoefficients> = None;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) => {
+                                    let t = tag_name(&a);
+                                    match t.as_str() {
+                                        "ResidualSquareCoefficients" => {
+                                            let mut residuals: Option<RawResiduals> = None;
+                                            let mut ma_coeff: Option<RawMACoefficients> = None;
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(b)) => {
+                                                        let tt = tag_name(&b);
+                                                        match tt.as_str() {
+                                                            "Residuals" => {
+                                                                let mut arr = Vec::new();
+                                                                let mut inner4 = Vec::new();
+                                                                loop {
+                                                                    match reader.read_event_into(&mut inner4){ Ok(Event::Start(arr_e)) if tag_name(&arr_e)=="Array"=>{let vals=collect_real_array_text(reader,&arr_e)?; arr=vals;} Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref())=="Residuals"=>break,_=>{}}
+                                                                    inner4.clear();
+                                                                }
+                                                                residuals = Some(RawResiduals {
+                                                                    array: arr,
+                                                                });
+                                                            }
+                                                            "MACoefficients" => {
+                                                                let mut arr = Vec::new();
+                                                                let mut inner4 = Vec::new();
+                                                                loop {
+                                                                    match reader.read_event_into(&mut inner4){ Ok(Event::Start(arr_e)) if tag_name(&arr_e)=="Array"=>{let vals=collect_real_array_text(reader,&arr_e)?; arr=vals;} Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref())=="MACoefficients"=>break,_=>{}}
+                                                                    inner4.clear();
+                                                                }
+                                                                ma_coeff =
+                                                                    Some(RawMACoefficients {
+                                                                        array: arr,
+                                                                    });
+                                                            }
+                                                            _ => {
+                                                                let mut d = 1usize;
+                                                                let mut inner4 = Vec::new();
+                                                                loop {
+                                                                    match reader.read_event_into(
+                                                                        &mut inner4,
+                                                                    ) {
+                                                                        Ok(Event::Start(_)) => {
+                                                                            d += 1
+                                                                        }
+                                                                        Ok(Event::End(end)) => {
+                                                                            d -= 1;
+                                                                            if d==0 && String::from_utf8_lossy(end.name().as_ref())==tt{break;}
+                                                                        }
+                                                                        _ => {}
+                                                                    }
+                                                                    inner4.clear();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "ResidualSquareCoefficients" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            residual_square_coefficients =
+                                                Some(RawResidualSquareCoefficients {
+                                                    residuals,
+                                                    ma_coefficients: ma_coeff,
+                                                });
+                                        }
+                                        "VarianceCoefficients" => {
+                                            let mut past_variances: Option<RawPastVariances> = None;
+                                            let mut ma_coeff: Option<RawMACoefficients> = None;
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(b)) => {
+                                                        let tt = tag_name(&b);
+                                                        match tt.as_str() {
+                                                            "PastVariances" => {
+                                                                let mut arr = Vec::new();
+                                                                let mut inner4 = Vec::new();
+                                                                loop {
+                                                                    match reader.read_event_into(&mut inner4){ Ok(Event::Start(arr_e)) if tag_name(&arr_e)=="Array"=>{let vals=collect_real_array_text(reader,&arr_e)?; arr=vals;} Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref())=="PastVariances"=>break,_=>{}}
+                                                                    inner4.clear();
+                                                                }
+                                                                past_variances =
+                                                                    Some(RawPastVariances {
+                                                                        array: arr,
+                                                                    });
+                                                            }
+                                                            "MACoefficients" => {
+                                                                let mut arr = Vec::new();
+                                                                let mut inner4 = Vec::new();
+                                                                loop {
+                                                                    match reader.read_event_into(&mut inner4){ Ok(Event::Start(arr_e)) if tag_name(&arr_e)=="Array"=>{let vals=collect_real_array_text(reader,&arr_e)?; arr=vals;} Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref())=="MACoefficients"=>break,_=>{}}
+                                                                    inner4.clear();
+                                                                }
+                                                                ma_coeff =
+                                                                    Some(RawMACoefficients {
+                                                                        array: arr,
+                                                                    });
+                                                            }
+                                                            _ => {
+                                                                let mut d = 1usize;
+                                                                let mut inner4 = Vec::new();
+                                                                loop {
+                                                                    match reader.read_event_into(
+                                                                        &mut inner4,
+                                                                    ) {
+                                                                        Ok(Event::Start(_)) => {
+                                                                            d += 1
+                                                                        }
+                                                                        Ok(Event::End(end)) => {
+                                                                            d -= 1;
+                                                                            if d==0 && String::from_utf8_lossy(end.name().as_ref())==tt{break;}
+                                                                        }
+                                                                        _ => {}
+                                                                    }
+                                                                    inner4.clear();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "VarianceCoefficients" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                            variance_coefficients = Some(RawVarianceCoefficients {
+                                                past_variances,
+                                                ma_coefficients: ma_coeff,
+                                            });
+                                        }
+                                        _ => {
+                                            let mut d = 1usize;
+                                            let mut inner3 = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut inner3) {
+                                                    Ok(Event::Start(_)) => d += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        d -= 1;
+                                                        if d == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == t
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                inner3.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "GARCHPart" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        garch_part = Some(RawGARCHPart {
+                            constant,
+                            gp,
+                            gq,
+                            residual_square_coefficients,
+                            variance_coefficients,
+                        });
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "GARCH" => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let _ = start;
+    Ok(RawGARCH {
+        arma_part,
+        garch_part,
+    })
+}
+fn parse_state_space_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawStateSpaceModel> {
+    let variance = attr(start, "variance").and_then(|s| s.parse::<f64>().ok());
+    let period = attr(start, "period");
+    let intercept = attr(start, "intercept")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let mut state_vector: Option<RawStateVector> = None;
+    let mut transition_matrix: Option<RawTransitionMatrix> = None;
+    let mut measurement_matrix: Option<RawMeasurementMatrix> = None;
+    let mut intercept_vector: Option<RawInterceptVector> = None;
+    let mut predicted_state_covariance_matrix: Option<RawPredictedStateCovarianceMatrix> = None;
+    let mut selected_state_covariance_matrix: Option<RawSelectedStateCovarianceMatrix> = None;
+    let mut observation_variance_matrix: Option<RawObservationVarianceMatrix> = None;
+    let mut psi_vector: Option<RawPsiVector> = None;
+    let mut dynamic_regressors = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "StateVector" => {
+                        let mut arr = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &a)?;
+                                    arr = vals;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "StateVector" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        state_vector = Some(RawStateVector { array: arr });
+                    }
+                    "TransitionMatrix" => {
+                        let mut mat = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(m)) if tag_name(&m) == "Matrix" => {
+                                    let mut matrix: Vec<Vec<f64>> = Vec::new();
+                                    let mut inner3 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner3) {
+                                            Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                                let vals = collect_real_array_text(reader, &a)?;
+                                                matrix.push(vals);
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Matrix" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner3.clear();
+                                    }
+                                    mat = matrix;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "TransitionMatrix" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        transition_matrix = Some(RawTransitionMatrix { matrix: mat });
+                    }
+                    "MeasurementMatrix" => {
+                        let mut mat = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(m)) if tag_name(&m) == "Matrix" => {
+                                    let mut matrix: Vec<Vec<f64>> = Vec::new();
+                                    let mut inner3 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner3) {
+                                            Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                                let vals = collect_real_array_text(reader, &a)?;
+                                                matrix.push(vals);
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Matrix" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner3.clear();
+                                    }
+                                    mat = matrix;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MeasurementMatrix" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        measurement_matrix = Some(RawMeasurementMatrix { matrix: mat });
+                    }
+                    "InterceptVector" => {
+                        let type_ = attr(&inner, "type");
+                        let mut arr = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &a)?;
+                                    arr = vals;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "InterceptVector" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        intercept_vector = Some(RawInterceptVector { type_, array: arr });
+                    }
+                    "PredictedStateCovarianceMatrix" => {
+                        let mut mat = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(m)) if tag_name(&m) == "Matrix" => {
+                                    let mut matrix: Vec<Vec<f64>> = Vec::new();
+                                    let mut inner3 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner3) {
+                                            Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                                let vals = collect_real_array_text(reader, &a)?;
+                                                matrix.push(vals);
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Matrix" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner3.clear();
+                                    }
+                                    mat = matrix;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "PredictedStateCovarianceMatrix" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        predicted_state_covariance_matrix =
+                            Some(RawPredictedStateCovarianceMatrix { matrix: mat });
+                    }
+                    "SelectedStateCovarianceMatrix" => {
+                        let mut mat = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(m)) if tag_name(&m) == "Matrix" => {
+                                    let mut matrix: Vec<Vec<f64>> = Vec::new();
+                                    let mut inner3 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner3) {
+                                            Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                                let vals = collect_real_array_text(reader, &a)?;
+                                                matrix.push(vals);
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Matrix" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner3.clear();
+                                    }
+                                    mat = matrix;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "SelectedStateCovarianceMatrix" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        selected_state_covariance_matrix =
+                            Some(RawSelectedStateCovarianceMatrix { matrix: mat });
+                    }
+                    "ObservationVarianceMatrix" => {
+                        let mut mat = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(m)) if tag_name(&m) == "Matrix" => {
+                                    let mut matrix: Vec<Vec<f64>> = Vec::new();
+                                    let mut inner3 = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut inner3) {
+                                            Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                                let vals = collect_real_array_text(reader, &a)?;
+                                                matrix.push(vals);
+                                            }
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Matrix" =>
+                                            {
+                                                break
+                                            }
+                                            _ => {}
+                                        }
+                                        inner3.clear();
+                                    }
+                                    mat = matrix;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ObservationVarianceMatrix" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        observation_variance_matrix =
+                            Some(RawObservationVarianceMatrix { matrix: mat });
+                    }
+                    "PsiVector" => {
+                        let target_field = attr(&inner, "targetField");
+                        let variance_attr = attr(&inner, "variance");
+                        let mut arr = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(a)) if tag_name(&a) == "Array" => {
+                                    let vals = collect_real_array_text(reader, &a)?;
+                                    arr = vals;
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "PsiVector" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        psi_vector = Some(RawPsiVector {
+                            target_field,
+                            variance: variance_attr,
+                            array: arr,
+                        });
+                    }
+                    "DynamicRegressor" => {
+                        dynamic_regressors.push(parse_dynamic_regressor(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "StateSpaceModel" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawStateSpaceModel {
+        variance,
+        period,
+        intercept,
+        state_vector,
+        transition_matrix,
+        measurement_matrix,
+        intercept_vector,
+        predicted_state_covariance_matrix,
+        selected_state_covariance_matrix,
+        observation_variance_matrix,
+        psi_vector,
+        dynamic_regressors,
+    })
+}
+fn parse_time_series_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTimeSeriesModel> {
+    let model_name = attr(start, "modelName");
+    let function_name = attr_required(start, "functionName", "TimeSeriesModel")?;
+    let algorithm_name = attr(start, "algorithmName");
+    let best_fit = attr(start, "bestFit").unwrap_or_else(|| "ARIMA".into());
+    let is_scorable = attr(start, "isScorable")
+        .map(|s| s == "true")
+        .unwrap_or(true);
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut targets = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut time_series = Vec::new();
+    let mut spectral_analysis: Option<RawSpectralAnalysis> = None;
+    let mut arima: Option<RawARIMA> = None;
+    let mut exponential_smoothing: Option<RawExponentialSmoothing> = None;
+    let mut seasonal_trend_decomposition: Option<RawSeasonalTrendDecomposition> = None;
+    let mut state_space_model: Option<RawStateSpaceModel> = None;
+    let mut garch: Option<RawGARCH> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "MiningField" => {
+                                    let mf = parse_mining_field(&f)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "MiningField" => {
+                                    let mf = parse_mining_field(&f)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "OutputField" => {
+                                    let of = parse_output_field(&f)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "OutputField" => {
+                                    let of = parse_output_field(&f)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Targets" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "Target" => {
+                                    let field = attr(&f, "field");
+                                    let op_type = attr(&f, "opType");
+                                    let ci = attr(&f, "castInteger");
+                                    let rc = attr(&f, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rf = attr(&f, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Target" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer: ci,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant: rc,
+                                        rescale_factor: rf,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "Target" => {
+                                    let field = attr(&f, "field");
+                                    let op_type = attr(&f, "opType");
+                                    let ci = attr(&f, "castInteger");
+                                    let rc = attr(&f, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rf = attr(&f, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer: ci,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant: rc,
+                                        rescale_factor: rf,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Targets" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "TimeSeries" => {
+                        let ts = parse_time_series_inner(reader, &inner)?;
+                        time_series.push(ts);
+                    }
+                    "SpectralAnalysis" => {
+                        let mut inner2 = Vec::new();
+                        let mut depth = 1usize;
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "SpectralAnalysis"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        spectral_analysis = Some(RawSpectralAnalysis {});
+                    }
+                    "ARIMA" => {
+                        arima = Some(parse_arima(reader, &inner)?);
+                    }
+                    "ExponentialSmoothing" => {
+                        exponential_smoothing = Some(parse_exponential_smoothing(reader, &inner)?);
+                    }
+                    "SeasonalTrendDecomposition" => {
+                        let mut inner2 = Vec::new();
+                        let mut depth = 1usize;
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "SeasonalTrendDecomposition"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        seasonal_trend_decomposition = Some(RawSeasonalTrendDecomposition {});
+                    }
+                    "StateSpaceModel" => {
+                        state_space_model = Some(parse_state_space_model(reader, &inner)?);
+                    }
+                    "GARCH" => {
+                        garch = Some(parse_garch(reader, &inner)?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        if tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                            || tag == "ModelVerification"
+                        {
+                            let mut depth = 1usize;
+                            let mut inner2 = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner2) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                inner2.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "TimeSeries" {
+                    // Empty TimeSeries not valid (needs TimeValue) but handle
+                    let usage = attr(&inner, "usage");
+                    let field = attr(&inner, "field");
+                    time_series.push(RawTimeSeries {
+                        usage,
+                        start_time: None,
+                        end_time: None,
+                        interpolation_method: None,
+                        field,
+                        time_anchor: None,
+                        time_values: vec![],
+                    });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "TimeSeriesModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawTimeSeriesModel {
+        model_name,
+        function_name,
+        algorithm_name,
+        best_fit,
+        is_scorable,
+        mining_schema,
+        output,
+        targets,
+        local_derived_fields,
+        time_series,
+        spectral_analysis,
+        arima,
+        exponential_smoothing,
+        seasonal_trend_decomposition,
+        state_space_model,
+        garch,
+    })
+}
+
+fn parse_constraints(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawConstraints> {
+    let minimum_number_of_items =
+        attr(start, "minimumNumberOfItems").and_then(|s| s.parse::<usize>().ok());
+    let maximum_number_of_items =
+        attr(start, "maximumNumberOfItems").and_then(|s| s.parse::<usize>().ok());
+    let minimum_number_of_antecedent_items =
+        attr(start, "minimumNumberOfAntecedentItems").and_then(|s| s.parse::<usize>().ok());
+    let maximum_number_of_antecedent_items =
+        attr(start, "maximumNumberOfAntecedentItems").and_then(|s| s.parse::<usize>().ok());
+    let minimum_number_of_consequent_items =
+        attr(start, "minimumNumberOfConsequentItems").and_then(|s| s.parse::<usize>().ok());
+    let maximum_number_of_consequent_items =
+        attr(start, "maximumNumberOfConsequentItems").and_then(|s| s.parse::<usize>().ok());
+    let minimum_support = attr(start, "minimumSupport").and_then(|s| s.parse::<f64>().ok());
+    let minimum_confidence = attr(start, "minimumConfidence").and_then(|s| s.parse::<f64>().ok());
+    let minimum_lift = attr(start, "minimumLift").and_then(|s| s.parse::<f64>().ok());
+    let minimum_total_sequence_time =
+        attr(start, "minimumTotalSequenceTime").and_then(|s| s.parse::<f64>().ok());
+    let maximum_total_sequence_time =
+        attr(start, "maximumTotalSequenceTime").and_then(|s| s.parse::<f64>().ok());
+    let minimum_itemset_separation_time =
+        attr(start, "minimumItemsetSeparationTime").and_then(|s| s.parse::<f64>().ok());
+    let maximum_itemset_separation_time =
+        attr(start, "maximumItemsetSeparationTime").and_then(|s| s.parse::<f64>().ok());
+    let minimum_ant_cons_separation_time =
+        attr(start, "minimumAntConsSeparationTime").and_then(|s| s.parse::<f64>().ok());
+    let maximum_ant_cons_separation_time =
+        attr(start, "maximumAntConsSeparationTime").and_then(|s| s.parse::<f64>().ok());
+    // consume until Constraints end
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "Constraints" =>
+            {
+                break
+            }
+            Ok(Event::Empty(_)) => {}
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Extension" => {
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0
+                                && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                            {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawConstraints {
+        minimum_number_of_items,
+        maximum_number_of_items,
+        minimum_number_of_antecedent_items,
+        maximum_number_of_antecedent_items,
+        minimum_number_of_consequent_items,
+        maximum_number_of_consequent_items,
+        minimum_support,
+        minimum_confidence,
+        minimum_lift,
+        minimum_total_sequence_time,
+        maximum_total_sequence_time,
+        minimum_itemset_separation_time,
+        maximum_itemset_separation_time,
+        minimum_ant_cons_separation_time,
+        maximum_ant_cons_separation_time,
+    })
+}
+
+fn parse_set_predicate(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSetPredicate> {
+    let id = attr_required(start, "id", "SetPredicate")?;
+    let field = attr_required(start, "field", "SetPredicate")?;
+    let mut array_content = String::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let mut inner_buf = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner_buf) {
+                        Ok(Event::Text(t)) => {
+                            array_content =
+                                t.unescape().map(|c| c.into_owned()).unwrap_or_default();
+                        }
+                        Ok(Event::End(end))
+                            if String::from_utf8_lossy(end.name().as_ref()) == "Array" =>
+                        {
+                            break
+                        }
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                    inner_buf.clear();
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "SetPredicate" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSetPredicate {
+        id,
+        field,
+        array: array_content,
+    })
+}
+
+fn parse_delimiter(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawDelimiter> {
+    let delimiter = attr_required(start, "delimiter", "Delimiter")?;
+    let gap = attr_required(start, "gap", "Delimiter")?;
+    // consume Extension inside if any, then expect End Delimiter
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Extension" => {
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0
+                                && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                            {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Delimiter" => {
+                break
+            }
+            Ok(Event::Empty(_)) => break,
+            _ => {}
+        }
+        buf.clear();
+        break;
+    }
+    Ok(RawDelimiter { delimiter, gap })
+}
+
+fn parse_time(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> Result<RawTime> {
+    let min = attr(start, "min").and_then(|s| s.parse::<f64>().ok());
+    let max = attr(start, "max").and_then(|s| s.parse::<f64>().ok());
+    let mean = attr(start, "mean").and_then(|s| s.parse::<f64>().ok());
+    let standard_deviation = attr(start, "standardDeviation").and_then(|s| s.parse::<f64>().ok());
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Extension" => {
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0
+                                && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                            {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Time" => break,
+            Ok(Event::Empty(_)) => break,
+            _ => {}
+        }
+        buf.clear();
+        break;
+    }
+    Ok(RawTime {
+        min,
+        max,
+        mean,
+        standard_deviation,
+    })
+}
+
+fn parse_set_reference(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSetReference> {
+    let set_id = attr_required(start, "setId", "SetReference")?;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Extension" => {
+                let mut depth = 1usize;
+                let mut inner2 = Vec::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Start(_)) => depth += 1,
+                        Ok(Event::End(end)) => {
+                            depth -= 1;
+                            if depth == 0
+                                && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                            {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "SetReference" =>
+            {
+                break
+            }
+            Ok(Event::Empty(_)) => break,
+            _ => {}
+        }
+        buf.clear();
+        break;
+    }
+    Ok(RawSetReference { set_id })
+}
+
+fn parse_sequence(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSequence> {
+    let id = attr_required(start, "id", "Sequence")?;
+    let number_of_sets = attr(start, "numberOfSets").and_then(|s| s.parse::<usize>().ok());
+    let occurrence = attr(start, "occurrence").and_then(|s| s.parse::<i64>().ok());
+    let support = attr(start, "support").and_then(|s| s.parse::<f64>().ok());
+    let mut sets = Vec::new();
+    let mut follow_sets = Vec::new();
+    let mut time: Option<RawTime> = None;
+    let mut buf = Vec::new();
+    // Expect first SetReference
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "SetReference" => {
+                        let sr = parse_set_reference(reader, &inner)?;
+                        if sets.is_empty() && follow_sets.is_empty() {
+                            sets.push(sr);
+                        } else {
+                            // This should not happen directly; SetReference inside FOLLOW-SET handled via follow_sets path
+                            sets.push(sr);
+                        }
+                    }
+                    "Delimiter" => {
+                        // This starts a FOLLOW-SET: Delimiter, optional Time, SetReference
+                        let delim = parse_delimiter(reader, &inner)?;
+                        // Next may be Time then SetReference
+                        let mut follow_time: Option<RawTime> = None;
+                        let mut follow_set_ref: Option<RawSetReference> = None;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(i2)) => {
+                                    let t2 = tag_name(&i2);
+                                    match t2.as_str() {
+                                        "Time" => {
+                                            follow_time = Some(parse_time(reader, &i2)?);
+                                        }
+                                        "SetReference" => {
+                                            follow_set_ref =
+                                                Some(parse_set_reference(reader, &i2)?);
+                                            break;
+                                        }
+                                        "Extension" => {
+                                            let mut depth = 1usize;
+                                            let mut skip = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut skip) {
+                                                    Ok(Event::Start(_)) => depth += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        depth -= 1;
+                                                        if depth == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == "Extension"
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                skip.clear();
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                Ok(Event::Empty(i2)) => {
+                                    let t2 = tag_name(&i2);
+                                    if t2 == "Time" {
+                                        follow_time = Some(parse_time(reader, &i2)?);
+                                    } else if t2 == "SetReference" {
+                                        follow_set_ref = Some(parse_set_reference(reader, &i2)?);
+                                        break;
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Sequence" =>
+                                {
+                                    // Should not break here; sequence ended without SetReference
+                                    break;
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        if let Some(sr) = follow_set_ref {
+                            follow_sets.push(RawFollowSet {
+                                delimiter: delim,
+                                time: follow_time,
+                                set_reference: sr,
+                            });
+                        }
+                    }
+                    "Time" => {
+                        time = Some(parse_time(reader, &inner)?);
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                _ => {}
+                            }
+                            skip.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "SetReference" {
+                    let sr = parse_set_reference(reader, &inner)?;
+                    if sets.is_empty() {
+                        sets.push(sr);
+                    } else {
+                        sets.push(sr);
+                    }
+                } else if tag == "Time" {
+                    time = Some(parse_time(reader, &inner)?);
+                } else if tag == "Delimiter" {
+                    // standalone delimiter without following set? ignore
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == "Sequence" => {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSequence {
+        id,
+        number_of_sets,
+        occurrence,
+        support,
+        sets,
+        follow_sets,
+        time,
+    })
+}
+
+fn parse_sequence_rule(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSequenceRule> {
+    let id = attr_required(start, "id", "SequenceRule")?;
+    let number_of_sets = attr(start, "numberOfSets")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    let occurrence = attr(start, "occurrence")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    let support = attr(start, "support")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let confidence = attr(start, "confidence")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let lift = attr(start, "lift").and_then(|s| s.parse::<f64>().ok());
+    let mut antecedent_seq_id: Option<String> = None;
+    let mut consequent_seq_id: Option<String> = None;
+    let mut delimiter: Option<RawDelimiter> = None;
+    let mut time_between: Option<RawTime> = None;
+    let mut time_total: Option<RawTime> = None;
+    let mut state = 0; // 0 before ante, 1 after ante before delim, 2 after delim etc.
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "AntecedentSequence" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(i2)) if tag_name(&i2) == "SequenceReference" => {
+                                    let seq_id = attr_required(&i2, "seqId", "SequenceReference")?;
+                                    antecedent_seq_id = Some(seq_id);
+                                    // consume rest of SequenceReference
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "SequenceReference" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(i2)) if tag_name(&i2) == "SequenceReference" => {
+                                    let seq_id = attr_required(&i2, "seqId", "SequenceReference")?;
+                                    antecedent_seq_id = Some(seq_id);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "AntecedentSequence" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        state = 1;
+                    }
+                    "Delimiter" => {
+                        delimiter = Some(parse_delimiter(reader, &inner)?);
+                        state = 2;
+                    }
+                    "Time" => {
+                        let t = parse_time(reader, &inner)?;
+                        if state == 2 && time_between.is_none() {
+                            time_between = Some(t);
+                            state = 3;
+                        } else if time_total.is_none() {
+                            time_total = Some(t);
+                        }
+                    }
+                    "ConsequentSequence" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(i2)) if tag_name(&i2) == "SequenceReference" => {
+                                    let seq_id = attr_required(&i2, "seqId", "SequenceReference")?;
+                                    consequent_seq_id = Some(seq_id);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "SequenceReference" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(i2)) if tag_name(&i2) == "SequenceReference" => {
+                                    let seq_id = attr_required(&i2, "seqId", "SequenceReference")?;
+                                    consequent_seq_id = Some(seq_id);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ConsequentSequence" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        state = 4;
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            skip.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "Delimiter" {
+                    delimiter = Some(RawDelimiter {
+                        delimiter: attr(&inner, "delimiter").unwrap_or_default(),
+                        gap: attr(&inner, "gap").unwrap_or_default(),
+                    });
+                } else if tag == "Time" {
+                    let t = parse_time(reader, &inner)?;
+                    if state == 2 && time_between.is_none() {
+                        time_between = Some(t);
+                    } else if time_total.is_none() {
+                        time_total = Some(t);
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "SequenceRule" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSequenceRule {
+        id,
+        number_of_sets,
+        occurrence,
+        support,
+        confidence,
+        lift,
+        antecedent_seq_id: antecedent_seq_id.unwrap_or_default(),
+        consequent_seq_id: consequent_seq_id.unwrap_or_default(),
+        delimiter: delimiter.unwrap_or(RawDelimiter {
+            delimiter: "acrossTimeWindows".into(),
+            gap: "unknown".into(),
+        }),
+        time_between,
+        time_total,
+    })
+}
+
+fn parse_sequence_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawSequenceModel> {
+    let model_name = attr(start, "modelName");
+    let function_name = attr_required(start, "functionName", "SequenceModel")?;
+    let algorithm_name = attr(start, "algorithmName");
+    let number_of_transactions =
+        attr(start, "numberOfTransactions").and_then(|s| s.parse::<usize>().ok());
+    let max_number_of_items_per_transaction =
+        attr(start, "maxNumberOfItemsPerTransaction").and_then(|s| s.parse::<usize>().ok());
+    let avg_number_of_items_per_transaction =
+        attr(start, "avgNumberOfItemsPerTransaction").and_then(|s| s.parse::<f64>().ok());
+    let number_of_transaction_groups =
+        attr(start, "numberOfTransactionGroups").and_then(|s| s.parse::<usize>().ok());
+    let max_number_of_ta_per_ta_group =
+        attr(start, "maxNumberOfTAsPerTAGroup").and_then(|s| s.parse::<usize>().ok());
+    let avg_number_of_ta_per_ta_group =
+        attr(start, "avgNumberOfTAsPerTAGroup").and_then(|s| s.parse::<f64>().ok());
+    let is_scorable = attr(start, "isScorable")
+        .map(|s| s == "true")
+        .unwrap_or(true);
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut targets = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut constraints: Option<RawConstraints> = None;
+    let mut items = Vec::new();
+    let mut itemsets = Vec::new();
+    let mut set_predicates = Vec::new();
+    let mut sequences = Vec::new();
+    let mut sequence_rules = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "MiningField" => {
+                                    let mf = parse_mining_field(&f)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "MiningField" => {
+                                    let mf = parse_mining_field(&f)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "OutputField" => {
+                                    let of = parse_output_field(&f)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "OutputField" => {
+                                    let of = parse_output_field(&f)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Targets" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "Target" => {
+                                    let field = attr(&f, "field");
+                                    let op_type = attr(&f, "opType");
+                                    let ci = attr(&f, "castInteger");
+                                    let rc = attr(&f, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rf = attr(&f, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Target" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer: ci,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant: rc,
+                                        rescale_factor: rf,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "Target" => {
+                                    let field = attr(&f, "field");
+                                    let op_type = attr(&f, "opType");
+                                    let ci = attr(&f, "castInteger");
+                                    let rc = attr(&f, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rf = attr(&f, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer: ci,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant: rc,
+                                        rescale_factor: rf,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Targets" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "Constraints" => {
+                        constraints = Some(parse_constraints(reader, &inner)?);
+                    }
+                    "Item" => {
+                        let id = attr_required(&inner, "id", "Item")?;
+                        let value = attr(&inner, "value").unwrap_or_default();
+                        // consume until Item end
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Item" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            skip.clear();
+                            break;
+                        }
+                        items.push(RawItem { id, value });
+                    }
+                    "Itemset" => {
+                        let id = attr_required(&inner, "id", "Itemset")?;
+                        let mut refs = Vec::new();
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(r)) if tag_name(&r) == "ItemRef" => {
+                                    if let Some(item_ref) = attr(&r, "itemRef") {
+                                        refs.push(item_ref);
+                                    }
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "ItemRef" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(r)) if tag_name(&r) == "ItemRef" => {
+                                    if let Some(item_ref) = attr(&r, "itemRef") {
+                                        refs.push(item_ref);
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Itemset" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        itemsets.push(RawItemset {
+                            id,
+                            item_refs: refs,
+                        });
+                    }
+                    "SetPredicate" => {
+                        let sp = parse_set_predicate(reader, &inner)?;
+                        set_predicates.push(sp);
+                    }
+                    "Sequence" => {
+                        let seq = parse_sequence(reader, &inner)?;
+                        sequences.push(seq);
+                    }
+                    "SequenceRule" => {
+                        let rule = parse_sequence_rule(reader, &inner)?;
+                        sequence_rules.push(rule);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        if tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                            || tag == "ModelVerification"
+                        {
+                            let mut depth = 1usize;
+                            let mut inner2 = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner2) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                inner2.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "Item" => {
+                        let id = attr_required(&inner, "id", "Item")?;
+                        let value = attr(&inner, "value").unwrap_or_default();
+                        items.push(RawItem { id, value });
+                    }
+                    "Itemset" => {
+                        let id = attr_required(&inner, "id", "Itemset")?;
+                        itemsets.push(RawItemset {
+                            id,
+                            item_refs: vec![],
+                        });
+                    }
+                    "SetPredicate" => {
+                        let sp = RawSetPredicate {
+                            id: attr_required(&inner, "id", "SetPredicate")?,
+                            field: attr_required(&inner, "field", "SetPredicate")?,
+                            array: String::new(),
+                        };
+                        set_predicates.push(sp);
+                    }
+                    "Constraints" => {
+                        constraints = Some(RawConstraints {
+                            minimum_number_of_items: None,
+                            maximum_number_of_items: None,
+                            minimum_number_of_antecedent_items: None,
+                            maximum_number_of_antecedent_items: None,
+                            minimum_number_of_consequent_items: None,
+                            maximum_number_of_consequent_items: None,
+                            minimum_support: None,
+                            minimum_confidence: None,
+                            minimum_lift: None,
+                            minimum_total_sequence_time: None,
+                            maximum_total_sequence_time: None,
+                            minimum_itemset_separation_time: None,
+                            maximum_itemset_separation_time: None,
+                            minimum_ant_cons_separation_time: None,
+                            maximum_ant_cons_separation_time: None,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "SequenceModel" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawSequenceModel {
+        model_name,
+        function_name,
+        algorithm_name,
+        number_of_transactions,
+        max_number_of_items_per_transaction,
+        avg_number_of_items_per_transaction,
+        number_of_transaction_groups,
+        max_number_of_ta_per_ta_group,
+        avg_number_of_ta_per_ta_group,
+        is_scorable,
+        mining_schema,
+        output,
+        targets,
+        local_derived_fields,
+        constraints,
+        items,
+        itemsets,
+        set_predicates,
+        sequences,
+        sequence_rules,
+    })
+}
+
+fn parse_expression_inside(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    parent_tag: &str,
+) -> Result<RawExpression> {
+    let mut expr: Option<RawExpression> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                if [
+                    "Constant",
+                    "FieldRef",
+                    "NormContinuous",
+                    "NormDiscrete",
+                    "Discretize",
+                    "MapValues",
+                    "Apply",
+                    "TextIndex",
+                    "Aggregate",
+                ]
+                .contains(&tag.as_str())
+                {
+                    expr = Some(parse_expression_from_start(reader, &inner, &tag)?);
+                } else if tag == "Extension" {
+                    let mut depth = 1usize;
+                    let mut inner2 = Vec::new();
+                    loop {
+                        match reader.read_event_into(&mut inner2) {
+                            Ok(Event::Start(_)) => depth += 1,
+                            Ok(Event::End(end)) => {
+                                depth -= 1;
+                                if depth == 0
+                                    && String::from_utf8_lossy(end.name().as_ref()) == "Extension"
+                                {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        inner2.clear();
+                    }
+                } else {
+                    // unknown, skip
+                    let mut depth = 1usize;
+                    let mut skip = Vec::new();
+                    loop {
+                        match reader.read_event_into(&mut skip) {
+                            Ok(Event::Start(_)) => depth += 1,
+                            Ok(Event::End(end)) => {
+                                depth -= 1;
+                                if depth == 0 && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        skip.clear();
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if ["Constant", "FieldRef", "NormDiscrete"].contains(&tag.as_str()) {
+                    expr = Some(parse_expression_empty(&inner, &tag)?);
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == parent_tag => {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(expr.unwrap_or(RawExpression::Constant {
+        data_type: None,
+        value: "0".into(),
+    }))
+}
+
+fn parse_bayesian_continuous_distribution(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawBayesianContinuousDistributionWrapper> {
+    let tag = tag_name(start);
+    // tag is TriangularDistributionForBN, NormalDistributionForBN, LognormalDistributionForBN, UniformDistributionForBN
+    // Need to parse its children Mean/Lower/Upper/Variance
+    let mut mean_expr: Option<RawExpression> = None;
+    let mut variance_expr: Option<RawExpression> = None;
+    let mut lower_expr: Option<RawExpression> = None;
+    let mut upper_expr: Option<RawExpression> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let inner_tag = tag_name(&inner);
+                match inner_tag.as_str() {
+                    "Mean" => {
+                        mean_expr = Some(parse_expression_inside(reader, "Mean")?);
+                    }
+                    "Variance" => {
+                        variance_expr = Some(parse_expression_inside(reader, "Variance")?);
+                    }
+                    "Lower" => {
+                        lower_expr = Some(parse_expression_inside(reader, "Lower")?);
+                    }
+                    "Upper" => {
+                        upper_expr = Some(parse_expression_inside(reader, "Upper")?);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == inner_tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            skip.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end)) if String::from_utf8_lossy(end.name().as_ref()) == tag => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let dist = match tag.as_str() {
+        "NormalDistributionForBN" => RawBayesianContinuousDistribution::Normal {
+            mean: mean_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "0".into(),
+            }),
+            variance: variance_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "1".into(),
+            }),
+        },
+        "LognormalDistributionForBN" => RawBayesianContinuousDistribution::Lognormal {
+            mean: mean_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "0".into(),
+            }),
+            variance: variance_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "1".into(),
+            }),
+        },
+        "UniformDistributionForBN" => RawBayesianContinuousDistribution::Uniform {
+            lower: lower_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "0".into(),
+            }),
+            upper: upper_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "1".into(),
+            }),
+        },
+        "TriangularDistributionForBN" => RawBayesianContinuousDistribution::Triangular {
+            mean: mean_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "0".into(),
+            }),
+            lower: lower_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "0".into(),
+            }),
+            upper: upper_expr.unwrap_or(RawExpression::Constant {
+                data_type: None,
+                value: "1".into(),
+            }),
+        },
+        _ => RawBayesianContinuousDistribution::Normal {
+            mean: RawExpression::Constant {
+                data_type: None,
+                value: "0".into(),
+            },
+            variance: RawExpression::Constant {
+                data_type: None,
+                value: "1".into(),
+            },
+        },
+    };
+    Ok(RawBayesianContinuousDistributionWrapper { distribution: dist })
+}
+
+fn parse_discrete_conditional_probability(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawDiscreteConditionalProbability> {
+    let count = attr(start, "count").and_then(|s| s.parse::<f64>().ok());
+    let mut parent_values = Vec::new();
+    let mut value_probs = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "ParentValue" => {
+                        let parent = attr_required(&inner, "parent", "ParentValue")?;
+                        let value = attr_required(&inner, "value", "ParentValue")?;
+                        parent_values.push(RawBayesianParentValue { parent, value });
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ParentValue" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            skip.clear();
+                            break;
+                        }
+                    }
+                    "ValueProbability" => {
+                        let value = attr_required(&inner, "value", "ValueProbability")?;
+                        let probability = attr(&inner, "probability")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        value_probs.push(RawBayesianValueProbability { value, probability });
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ValueProbability" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            skip.clear();
+                            break;
+                        }
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "ParentValue" {
+                    let parent = attr_required(&inner, "parent", "ParentValue")?;
+                    let value = attr_required(&inner, "value", "ParentValue")?;
+                    parent_values.push(RawBayesianParentValue { parent, value });
+                } else if tag == "ValueProbability" {
+                    let value = attr_required(&inner, "value", "ValueProbability")?;
+                    let probability = attr(&inner, "probability")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    value_probs.push(RawBayesianValueProbability { value, probability });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref())
+                    == "DiscreteConditionalProbability" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawDiscreteConditionalProbability {
+        parent_values,
+        value_probabilities: value_probs,
+        count,
+    })
+}
+
+fn parse_continuous_conditional_probability(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawBayesianContinuousConditionalProbability> {
+    let count = attr(start, "count").and_then(|s| s.parse::<f64>().ok());
+    let mut parent_values = Vec::new();
+    let mut distributions = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "ParentValue" => {
+                        let parent = attr_required(&inner, "parent", "ParentValue")?;
+                        let value = attr_required(&inner, "value", "ParentValue")?;
+                        parent_values.push(RawBayesianParentValue { parent, value });
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ParentValue" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            skip.clear();
+                            break;
+                        }
+                    }
+                    "ContinuousDistribution" => {
+                        // Inside ContinuousDistribution is one of the distribution types
+                        let mut inner2 = Vec::new();
+                        let mut dist_wrapper: Option<RawBayesianContinuousDistributionWrapper> =
+                            None;
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(dinner)) => {
+                                    let dtag = tag_name(&dinner);
+                                    if [
+                                        "NormalDistributionForBN",
+                                        "LognormalDistributionForBN",
+                                        "UniformDistributionForBN",
+                                        "TriangularDistributionForBN",
+                                    ]
+                                    .contains(&dtag.as_str())
+                                    {
+                                        dist_wrapper =
+                                            Some(parse_bayesian_continuous_distribution(
+                                                reader, &dinner,
+                                            )?);
+                                    } else if dtag == "Extension" {
+                                        let mut depth = 1usize;
+                                        let mut skip = Vec::new();
+                                        loop {
+                                            match reader.read_event_into(&mut skip) {
+                                                Ok(Event::Start(_)) => depth += 1,
+                                                Ok(Event::End(end)) => {
+                                                    depth -= 1;
+                                                    if depth == 0
+                                                        && String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "Extension"
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            skip.clear();
+                                        }
+                                    } else {
+                                        let mut depth = 1usize;
+                                        let mut skip = Vec::new();
+                                        loop {
+                                            match reader.read_event_into(&mut skip) {
+                                                Ok(Event::Start(_)) => depth += 1,
+                                                Ok(Event::End(end)) => {
+                                                    depth -= 1;
+                                                    if depth == 0
+                                                        && String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == dtag
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            skip.clear();
+                                        }
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ContinuousDistribution" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        if let Some(dw) = dist_wrapper {
+                            distributions.push(dw);
+                        }
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "ParentValue" {
+                    let parent = attr_required(&inner, "parent", "ParentValue")?;
+                    let value = attr_required(&inner, "value", "ParentValue")?;
+                    parent_values.push(RawBayesianParentValue { parent, value });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref())
+                    == "ContinuousConditionalProbability" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawBayesianContinuousConditionalProbability {
+        parent_values,
+        distributions,
+        count,
+    })
+}
+
+fn parse_discrete_node(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawDiscreteNode> {
+    let name = attr_required(start, "name", "DiscreteNode")?;
+    let count = attr(start, "count").and_then(|s| s.parse::<f64>().ok());
+    let mut derived_fields = Vec::new();
+    let mut value_probs = Vec::new();
+    let mut cond_probs = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "DerivedField" => {
+                        let df = parse_derived_field(reader, &inner)?;
+                        derived_fields.push(df);
+                    }
+                    "ValueProbability" => {
+                        let value = attr_required(&inner, "value", "ValueProbability")?;
+                        let probability = attr(&inner, "probability")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        value_probs.push(RawBayesianValueProbability { value, probability });
+                        let mut skip = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut skip) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ValueProbability" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            skip.clear();
+                            break;
+                        }
+                    }
+                    "DiscreteConditionalProbability" => {
+                        let cp = parse_discrete_conditional_probability(reader, &inner)?;
+                        cond_probs.push(cp);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "ValueProbability" {
+                    let value = attr_required(&inner, "value", "ValueProbability")?;
+                    let probability = attr(&inner, "probability")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    value_probs.push(RawBayesianValueProbability { value, probability });
+                } else if tag == "DerivedField" {
+                    // Empty derived not valid but handle
+                    let name = attr(&inner, "name").unwrap_or_default();
+                    derived_fields.push(RawDerivedField {
+                        name: name.clone(),
+                        display_name: None,
+                        data_type: "string".into(),
+                        op_type: "categorical".into(),
+                        expression: RawExpression::Unknown,
+                    });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "DiscreteNode" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawDiscreteNode {
+        name,
+        count,
+        derived_fields,
+        value_probabilities: value_probs,
+        conditional_probabilities: cond_probs,
+    })
+}
+
+fn parse_continuous_node(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawContinuousNode> {
+    let name = attr_required(start, "name", "ContinuousNode")?;
+    let count = attr(start, "count").and_then(|s| s.parse::<f64>().ok());
+    let mut derived_fields = Vec::new();
+    let mut distributions = Vec::new();
+    let mut cond_probs = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "DerivedField" => {
+                        let df = parse_derived_field(reader, &inner)?;
+                        derived_fields.push(df);
+                    }
+                    "ContinuousDistribution" => {
+                        let mut inner2 = Vec::new();
+                        let mut dist_wrapper: Option<RawBayesianContinuousDistributionWrapper> =
+                            None;
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(dinner)) => {
+                                    let dtag = tag_name(&dinner);
+                                    if [
+                                        "NormalDistributionForBN",
+                                        "LognormalDistributionForBN",
+                                        "UniformDistributionForBN",
+                                        "TriangularDistributionForBN",
+                                    ]
+                                    .contains(&dtag.as_str())
+                                    {
+                                        dist_wrapper =
+                                            Some(parse_bayesian_continuous_distribution(
+                                                reader, &dinner,
+                                            )?);
+                                    } else if dtag == "Extension" {
+                                        let mut depth = 1usize;
+                                        let mut skip = Vec::new();
+                                        loop {
+                                            match reader.read_event_into(&mut skip) {
+                                                Ok(Event::Start(_)) => depth += 1,
+                                                Ok(Event::End(end)) => {
+                                                    depth -= 1;
+                                                    if depth == 0
+                                                        && String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "Extension"
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            skip.clear();
+                                        }
+                                    } else {
+                                        let mut depth = 1usize;
+                                        let mut skip = Vec::new();
+                                        loop {
+                                            match reader.read_event_into(&mut skip) {
+                                                Ok(Event::Start(_)) => depth += 1,
+                                                Ok(Event::End(end)) => {
+                                                    depth -= 1;
+                                                    if depth == 0
+                                                        && String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == dtag
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            skip.clear();
+                                        }
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "ContinuousDistribution" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                        if let Some(dw) = dist_wrapper {
+                            distributions.push(dw);
+                        }
+                    }
+                    "ContinuousConditionalProbability" => {
+                        let cp = parse_continuous_conditional_probability(reader, &inner)?;
+                        cond_probs.push(cp);
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "DerivedField" {
+                    let name = attr(&inner, "name").unwrap_or_default();
+                    derived_fields.push(RawDerivedField {
+                        name: name.clone(),
+                        display_name: None,
+                        data_type: "string".into(),
+                        op_type: "categorical".into(),
+                        expression: RawExpression::Unknown,
+                    });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "ContinuousNode" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawContinuousNode {
+        name,
+        count,
+        derived_fields,
+        distributions,
+        conditional_probabilities: cond_probs,
+    })
+}
+
+fn parse_bayesian_network_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawBayesianNetworkModel> {
+    let model_name = attr(start, "modelName");
+    let function_name = attr_required(start, "functionName", "BayesianNetworkModel")?;
+    let algorithm_name = attr(start, "algorithmName");
+    let model_type = attr(start, "modelType");
+    let inference_method = attr(start, "inferenceMethod");
+    let is_scorable = attr(start, "isScorable")
+        .map(|s| s == "true")
+        .unwrap_or(true);
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut targets = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut nodes = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) => {
+                let tag = tag_name(&inner);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "MiningField" => {
+                                    let mf = parse_mining_field(&f)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "MiningField" => {
+                                    let mf = parse_mining_field(&f)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "OutputField" => {
+                                    let of = parse_output_field(&f)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "OutputField" => {
+                                    let of = parse_output_field(&f)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Targets" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(f)) if tag_name(&f) == "Target" => {
+                                    let field = attr(&f, "field");
+                                    let op_type = attr(&f, "opType");
+                                    let ci = attr(&f, "castInteger");
+                                    let rc = attr(&f, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rf = attr(&f, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Target" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer: ci,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant: rc,
+                                        rescale_factor: rf,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::Empty(f)) if tag_name(&f) == "Target" => {
+                                    let field = attr(&f, "field");
+                                    let op_type = attr(&f, "opType");
+                                    let ci = attr(&f, "castInteger");
+                                    let rc = attr(&f, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rf = attr(&f, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer: ci,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant: rc,
+                                        rescale_factor: rf,
+                                        target_values: vec![],
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Targets" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "BayesianNetworkNodes" => {
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(n)) => {
+                                    let ntag = tag_name(&n);
+                                    if ntag == "DiscreteNode" {
+                                        let node = parse_discrete_node(reader, &n)?;
+                                        nodes.push(RawBayesianNode::Discrete(node));
+                                    } else if ntag == "ContinuousNode" {
+                                        let node = parse_continuous_node(reader, &n)?;
+                                        nodes.push(RawBayesianNode::Continuous(node));
+                                    } else if ntag == "Extension" {
+                                        let mut depth = 1usize;
+                                        let mut skip = Vec::new();
+                                        loop {
+                                            match reader.read_event_into(&mut skip) {
+                                                Ok(Event::Start(_)) => depth += 1,
+                                                Ok(Event::End(end)) => {
+                                                    depth -= 1;
+                                                    if depth == 0
+                                                        && String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "Extension"
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            skip.clear();
+                                        }
+                                    } else {
+                                        let mut depth = 1usize;
+                                        let mut skip = Vec::new();
+                                        loop {
+                                            match reader.read_event_into(&mut skip) {
+                                                Ok(Event::Start(_)) => depth += 1,
+                                                Ok(Event::End(end)) => {
+                                                    depth -= 1;
+                                                    if depth == 0
+                                                        && String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == ntag
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            skip.clear();
+                                        }
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "BayesianNetworkNodes" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    "Extension" => {
+                        let mut depth = 1usize;
+                        let mut inner2 = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner2) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref())
+                                            == "Extension"
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner2.clear();
+                        }
+                    }
+                    _ => {
+                        if tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                            || tag == "ModelVerification"
+                        {
+                            let mut depth = 1usize;
+                            let mut inner2 = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner2) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                inner2.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) => {
+                let tag = tag_name(&inner);
+                if tag == "BayesianNetworkNodes" {
+                    // empty nodes not valid
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "BayesianNetworkModel" =>
+            {
+                break
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawBayesianNetworkModel {
+        model_name,
+        function_name,
+        algorithm_name,
+        model_type,
+        inference_method,
+        is_scorable,
+        mining_schema,
+        output,
+        targets,
+        local_derived_fields,
+        nodes,
+    })
+}
+
 // ---------- Top-level ----------
 
 /// Unmarshal `bytes` into a [`RawPmml`] with hardened `quick-xml` 0.37 parsing.
@@ -6495,6 +15049,13 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
     let mut general_regression_model: Option<RawGeneralRegressionModel> = None;
     let mut association_model: Option<RawAssociationModel> = None;
     let mut rule_set_model: Option<RawRuleSetModel> = None;
+    let mut anomaly_detection_model: Option<RawAnomalyDetectionModel> = None;
+    let mut baseline_model: Option<RawBaselineModel> = None;
+    let mut time_series_model: Option<RawTimeSeriesModel> = None;
+    let mut gaussian_process_model: Option<RawGaussianProcessModel> = None;
+    let mut text_model: Option<RawTextModel> = None;
+    let mut sequence_model: Option<RawSequenceModel> = None;
+    let mut bayesian_network_model: Option<RawBayesianNetworkModel> = None;
     let mut transformation_dictionary: Vec<RawDerivedField> = Vec::new();
     let mut define_functions: Vec<RawDefineFunction> = Vec::new();
     let mut buf = Vec::new();
@@ -6660,6 +15221,34 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         let fields = parse_local_transformations(&mut reader)?;
                         transformation_dictionary.extend(fields);
                     }
+                    "AnomalyDetectionModel" => {
+                        let adm = parse_anomaly_detection_model(&mut reader, &e)?;
+                        anomaly_detection_model = Some(adm);
+                    }
+                    "BaselineModel" => {
+                        let bm = parse_baseline_model(&mut reader, &e)?;
+                        baseline_model = Some(bm);
+                    }
+                    "TimeSeriesModel" => {
+                        let tsm = parse_time_series_model(&mut reader, &e)?;
+                        time_series_model = Some(tsm);
+                    }
+                    "GaussianProcessModel" => {
+                        let gp = parse_gaussian_process_model(&mut reader, &e)?;
+                        gaussian_process_model = Some(gp);
+                    }
+                    "TextModel" => {
+                        let tm = parse_text_model(&mut reader, &e)?;
+                        text_model = Some(tm);
+                    }
+                    "SequenceModel" => {
+                        let sm = parse_sequence_model(&mut reader, &e)?;
+                        sequence_model = Some(sm);
+                    }
+                    "BayesianNetworkModel" => {
+                        let bn = parse_bayesian_network_model(&mut reader, &e)?;
+                        bayesian_network_model = Some(bn);
+                    }
                     "Extension" => {
                         // Gracefully capture vendor extension, do not error
                         let mut ext = parse_extension(&e);
@@ -6688,16 +15277,7 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         extensions.push(ext);
                     }
                     // Unsupported PMML 4.4 models — captured gracefully for verification (plan D1)
-                    "AnomalyDetectionModel"
-                    | "BaselineModel"
-                    | "BaselineRegressionModel"
-                    | "BayesianNetworkModel"
-                    | "GaussianProcessModel"
-                    | "SequenceModel"
-                    | "TextModel"
-                    | "TimeSeriesModel"
-                    | "ModelComposition"
-                    | "CenterFields" => {
+                    "BaselineRegressionModel" | "ModelComposition" | "CenterFields" => {
                         if unsupported_model.is_none() {
                             unsupported_model = Some(tag.clone());
                         }
@@ -6749,7 +15329,7 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                             inner.clear();
                         }
                     }
-                    _ => {} // other top-level ignored for v1 (Header, MiningBuildTask, etc)
+                    _ => {} // other top-level ignored (Header, MiningBuildTask, etc)
                 }
             }
             Ok(Event::Empty(e)) => {
@@ -6779,7 +15359,27 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                     nearest_neighbor_model = Some(nn);
                 } else if tag == "Extension" {
                     extensions.push(parse_extension(&e));
+                } else if tag == "TimeSeriesModel" {
+                    let tsm = parse_time_series_model(&mut reader, &e)?;
+                    time_series_model = Some(tsm);
+                } else if tag == "GaussianProcessModel" {
+                    let gp = parse_gaussian_process_model(&mut reader, &e)?;
+                    gaussian_process_model = Some(gp);
+                } else if tag == "TextModel" {
+                    let tm = parse_text_model(&mut reader, &e)?;
+                    text_model = Some(tm);
+                } else if tag == "SequenceModel" {
+                    let sm = parse_sequence_model(&mut reader, &e)?;
+                    sequence_model = Some(sm);
+                } else if tag == "BayesianNetworkModel" {
+                    let bn = parse_bayesian_network_model(&mut reader, &e)?;
+                    bayesian_network_model = Some(bn);
                 } else if (tag.ends_with("Model") || tag == "ModelComposition")
+                    && tag != "AnomalyDetectionModel"
+                    && tag != "BaselineModel"
+                    && tag != "TimeSeriesModel"
+                    && tag != "GaussianProcessModel"
+                    && tag != "TextModel"
                     && unsupported_model.is_none()
                 {
                     unsupported_model = Some(tag);
@@ -6811,6 +15411,13 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
         general_regression_model,
         association_model,
         rule_set_model,
+        anomaly_detection_model,
+        baseline_model,
+        time_series_model,
+        gaussian_process_model,
+        text_model,
+        sequence_model,
+        bayesian_network_model,
         transformation_dictionary,
         define_functions,
         extensions,
@@ -6824,7 +15431,9 @@ mod tests {
 
     #[test]
     fn parse_iris() {
-        let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
+        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+            .unwrap();
         let raw = unmarshal(&xml).unwrap();
         assert_eq!(raw.data_dictionary.len(), 3);
         assert!(raw.tree_model.is_some());

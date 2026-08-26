@@ -1,18 +1,16 @@
-//! `pmmlruntime` — PMML 4.4 runtime in a single crate (inspired by JPMML + ONNX Runtime).
+//! `pmmlruntime` — PMML 4.4 runtime.
 //!
-//! Previously a 9-crate workspace (`pmml-core`, `pmml-xml`, `pmml-ir`, `pmml-evaluator`, `pmml-session`, …).
-//! Now a **single crate** with modules `base`, `xml`, `ir`, `engine`, `session`, `ffi`, `python` —
-//! one `cargo add pmmlruntime` and one `cargo doc -p pmmlruntime` page.
+//! Modules `base`, `xml`, `ir`, `engine`, `session`, `ffi`, `python` — see `docs/ARCHITECTURE.md`.
 //!
 //! # Modules
 //!
-//! - [`base`] — zero-cost types `Value`/`FieldId`/`DataType`/`PmmlError`, arena `BumpArena` (hot path foundation, no XML/IR).
-//! - [`xml`] — hardened `quick-xml` 0.37 → `RawPmml` (cold, `MAX_DEPTH 512`, `100 MB`, XXE blocked).
-//! - [`ir`] — optimized `Ir` (`Arc` immutable, `Vec<NodeIr>` flat, `DerivedFieldIr` DAG `Vec<Op>`), `Interner` (cold `Rodeo`).
-//! - [`engine`] — pure evaluation on `&[Value]` (12 models: `Tree`/`Regression`/`Mining`/`Scorecard`/…+ `vm` bytecode, `simd` `wide` `f64x4`).
-//! - [`session`] — ONNX-style `Session` API (`PmmlEnv` + `Session` + `Batch` + `ExecutionProvider` `CpuSerial`/`CpuBatched` `rayon`).
-//! - [`ffi`] — C ABI `PmmlEnv`/`PmmlSession` (`onnxruntime_c_api.h` parity, `Safety` contracts).
-//! - [`python`] — `pyo3 0.22` placeholder (`python` feature, future `PySession`).
+//! - [`base`] — zero-cost types `Value`/`FieldId`/`DataType`/`PmmlError`, arena `BumpArena` (hot-path, no XML/IR — see docs/ARCHITECTURE.md).
+//! - [`xml`] — hardened `quick-xml` 0.37 → `RawPmml` (cold path, `MAX_DEPTH 512`, `100 MB` cap, DTD/XXE blocked — see `crate::xml::reader`).
+//! - [`ir`] — optimized `Ir` for posterior plan optimization (`Arc` immutable, `Vec<NodeIr>` flat, `DerivedFieldIr` DAG with `Vec<Op>` bytecode, cold `Rodeo` interning).
+//! - [`engine`] — pure evaluation on `&[Value]` (19 models: `Tree`/`Regression`/`Mining`/`Scorecard`/`Clustering`/`NaiveBayes`/… + `vm` bytecode, `simd` `wide` `f64x4` when `simd` feature is active).
+//! - [`session`] — session API (`PmmlEnv` + `Session` + `Batch` + `ExecutionProvider` `CpuSerial`/`CpuBatched` via `rayon` — see docs/ARCHITECTURE.md §2).
+//! - [`ffi`] — C ABI with opaque `PmmlEnv`/`PmmlSession` handles and `Safety` contracts (see `crate::ffi`).
+//! - [`python`] — `pyo3 0.22` extension-module placeholder (feature `python`, see `crate::python`).
 //!
 //! # Primary API — `session`
 //!
@@ -45,7 +43,14 @@
 //! See `docs/ARCHITECTURE.md` for the `bytes→RawPmml→Ir→Session::run(Value[FieldId])` flow, ownership `Arc<Ir>`,
 //! concurrency `rayon`, and `BumpArena` vs `LoadingCache` tradeoffs.
 
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::if_same_then_else,
+    clippy::manual_map,
+    clippy::large_enum_variant
+)]
+#![allow(dead_code, unused_mut, unused_variables)]
 
 pub mod base;
 pub mod engine;

@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Thread-local reusable Value buffer — avoids per-run Vec allocation (E1 bump arena like ONNX BFCArena)
+// Thread-local reusable Value buffer — avoids per-run Vec allocation (E1 bump arena like session BFCArena)
 thread_local! {
     static THREAD_VALUES: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
 }
@@ -27,7 +27,7 @@ const STACK_VALUES_THRESHOLD: usize = 64;
 /// Execute `f` with a `&mut [Value]` of `needed` length.
 ///
 /// Uses a stack array for `needed <= 64` (90% of models) and a `thread_local!` heap
-/// buffer otherwise. Mirrors ONNX Runtime's small-model stack fallback + `BFCArena`
+/// buffer otherwise. Mirrors session runtime's small-model stack fallback + `BFCArena`
 /// for large models. The slice is always initialized to [`Value::Missing`] so unused
 /// slots are deterministic.
 ///
@@ -82,17 +82,17 @@ pub(crate) fn with_value_buffer<R>(needed: usize, f: impl FnOnce(&mut [Value]) -
     }
 }
 
-/// Immutable scoring session, analogous to ONNX Runtime `OrtSession`.
+/// Immutable scoring session, analogous to session runtime `Session`.
 ///
 /// Holds `Arc<Ir>` (immutable model) and a boxed [`ExecutionProvider`].
 /// Cheaply `Send` + `Sync`; `run` uses a stack `Value` buffer for `<=64` fields (L1-hot) and a
 /// `thread_local!` heap buffer otherwise, so `&self` scoring never allocates per row.
 ///
-/// Design mirrors ONNX Runtime `OrtSession`:
+/// Design mirrors session runtime `Session`:
 ///
-/// - `Ir` is `Arc` immutable (like `OrtModel`), `Session` is `Send+Sync`
+/// - `Ir` is `Arc` immutable (like `Ir`), `Session` is `Send+Sync`
 /// - `Value[FieldId]` is materialized per row via `with_value_buffer` helper (stack `64` + `thread_local`)
-/// - `Batch` trait abstracts `Vec<HashMap>` (row-major, JPMML compat) vs `RecordBatch` (columnar, Arrow zero-copy)
+/// - `Batch` trait abstracts `Vec<HashMap>` (row-major, PMML compat) vs `RecordBatch` (columnar, Arrow zero-copy)
 /// - `ExecutionProvider` owns batch sharding (`rayon` for `CpuBatched`), `Session` only does `Value` materialization + output mapping.
 ///
 /// See [`crate::session::batch`] for `Batch`/`BatchResult` and [`crate::session::providers`] for `eval_row`/`eval_batch`.
@@ -102,7 +102,7 @@ pub(crate) fn with_value_buffer<R>(needed: usize, f: impl FnOnce(&mut [Value]) -
 /// `Session` is `Send` + `Sync`. All interior state after construction is immutable
 /// except the `thread_local!` `Value` buffer used during scoring, which is per-thread.
 /// You can share a single `Session` across threads and call `run`/`run_batch` concurrently
-/// without external synchronization. `PmmlEnv` is `Arc` internally (like `OrtEnv`) and
+/// without external synchronization. `PmmlEnv` is `Arc` internally (like `PmmlEnv`) and
 /// also `Send` + `Sync`.
 ///
 /// # Examples
@@ -121,7 +121,7 @@ pub(crate) fn with_value_buffer<R>(needed: usize, f: impl FnOnce(&mut [Value]) -
 /// assert!(out.contains_key("predictedValue"));
 /// ```
 pub struct Session {
-    /// Global environment (cheap `Arc` clone, like `OrtEnv`).
+    /// Global environment (cheap `Arc` clone, like `PmmlEnv`).
     pub env: PmmlEnv,
     /// Options used to build this session (graph opt level, threads, provider).
     pub options: SessionOptions,
@@ -155,7 +155,7 @@ impl Session {
     ///
     /// # Parameters
     ///
-    /// - `env`: global environment (`Arc` inner, cheap to clone). Like `OrtEnv`, it owns the thread pool / logger in v2.
+    /// - `env`: global environment (`Arc` inner, cheap to clone). may own thread pool / logger handles.
     /// - `bytes`: raw PMML XML (UTF-8). File cap is 100 MB and depth cap is 512 inside `pmml_xml` (XXE-hardened).
     /// - `options`: builder for graph optimization level, intra-op threads, and provider kind.
     ///
@@ -313,6 +313,34 @@ impl Session {
                 .mining_schema
                 .target_field
                 .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::AnomalyDetection(a) => a
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::Baseline(b) => b
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::GaussianProcess(g) => g
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::Text(t) => t
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::TimeSeries(t) => t
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::Sequence(s) => s
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::BayesianNetwork(b) => b
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
         };
         // P7: cache output fields to avoid per-row match on ModelIr
         let output_fields = match &ir.model {
@@ -328,6 +356,13 @@ impl Session {
             crate::ir::ModelIr::Association(a) => a.output.clone(),
             crate::ir::ModelIr::RuleSet(r) => r.output.clone(),
             crate::ir::ModelIr::NeuralNetwork(n) => n.output.clone(),
+            crate::ir::ModelIr::AnomalyDetection(a) => a.output.clone(),
+            crate::ir::ModelIr::Baseline(b) => b.output.clone(),
+            crate::ir::ModelIr::GaussianProcess(g) => g.output.clone(),
+            crate::ir::ModelIr::Text(t) => t.output.clone(),
+            crate::ir::ModelIr::TimeSeries(t) => t.output.clone(),
+            crate::ir::ModelIr::Sequence(s) => s.output.clone(),
+            crate::ir::ModelIr::BayesianNetwork(b) => b.output.clone(),
         };
         // P1: forward symbol map for Arrow discrete zero-copy (String -> SymbolId)
         let symbol_str_to_id: HashMap<String, crate::base::SymbolId> = ir
@@ -518,7 +553,7 @@ impl Session {
                                     out.insert(of.name.clone(), predicted);
                                 }
                                 crate::base::field::ResultFeature::Probability => {
-                                    // v1 stub 0.0 if not calculated via derived probabilities
+                                    // stub 0.0 if not calculated via derived probabilities
                                     out.insert(of.name.clone(), Value::Continuous(0.0));
                                 }
                                 _ => {
@@ -779,7 +814,7 @@ impl Session {
         self.run_batch(owned)
     }
 
-    /// Generic batch via `&dyn Batch` — ONNX `Run` / `RunWithBinding` style.
+    /// Generic batch via `&dyn Batch` — session `Run` / `RunWithBinding` style.
     ///
     /// Accepts any `Batch` impl (`Vec<HashMap>` or `RecordBatch`) and returns a [`BatchResult`]
     /// that can be `Rows` or `Columnar`. This is the primary batched API; convenience wrappers
@@ -879,7 +914,7 @@ impl Session {
     }
     /// Convert a raw string value to [`Value`] using `FieldId`/`DataType`/`OpType` + interning.
     ///
-    /// Delegates to [`crate::session::input::string_to_value`] (ONNX `OrtValue` string handling).
+    /// Delegates to [`crate::session::input::string_to_value`] (session `Value` string handling).
     /// Empty or `"Missing"` (case-insensitive) becomes [`Value::Missing`]. For categorical
     /// fields with `DataType::String` or `OpType::Categorical`, the string is interned to
     /// `Discrete(SymbolId)` if known; otherwise numeric strings become `Continuous(f64)`.
@@ -1201,7 +1236,7 @@ impl Session {
     /// Number of active (input) fields for this model.
     ///
     /// Reads `mining_schema.active_fields.len()` for whichever `ModelIr` is held.
-    /// This matches JPMML `MiningSchema.getActiveFields().size()` and is used by
+    /// This matches PMML `MiningSchema.getActiveFields().size()` and is used by
     /// CLI `inspect` to report model arity and by benches to size batches.
     ///
     /// # Returns
@@ -1232,6 +1267,13 @@ impl Session {
             crate::ir::ModelIr::Association(a) => a.mining_schema.active_fields.len(),
             crate::ir::ModelIr::RuleSet(r) => r.mining_schema.active_fields.len(),
             crate::ir::ModelIr::NeuralNetwork(n) => n.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::AnomalyDetection(a) => a.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::Baseline(b) => b.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::GaussianProcess(g) => g.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::Text(t) => t.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::TimeSeries(t) => t.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::Sequence(s) => s.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::BayesianNetwork(b) => b.mining_schema.active_fields.len(),
         }
     }
 }
@@ -1244,7 +1286,9 @@ mod tests {
 
     #[test]
     fn session_iris_tree() {
-        let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
+        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+            .unwrap();
         let env = PmmlEnv::new();
         let opts = SessionOptions::default();
         let sess = Session::from_bytes(&env, &xml, opts).unwrap();
@@ -1265,7 +1309,9 @@ mod tests {
 
     #[test]
     fn session_iris_virginica() {
-        let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
+        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+            .unwrap();
         let env = PmmlEnv::new();
         let sess = Session::from_bytes(&env, &xml, SessionOptions::default()).unwrap();
         let mut input = HashMap::new();

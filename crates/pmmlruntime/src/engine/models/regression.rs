@@ -13,7 +13,7 @@
 //!
 //! # Invariants
 //!
-//! - Missing numeric fields contribute `0` (skipped, matching JPMML).
+//! - Missing numeric fields contribute `0` (skipped, matching PMML).
 //! - Categorical predictors contribute only when `Discrete(field) == value`.
 //! - `Softmax` for multi-table is simplified (single-table `sigmoid` path).
 
@@ -91,7 +91,7 @@ pub fn evaluate_regression(reg: &RegressionIr, values: &[Value]) -> Value {
                 let powered = v.powi(np.exponent);
                 sum += np.coefficient * powered;
             } else if actual.is_missing() {
-                // missing -> skip (treated as 0?) In JPMML, missing numeric -> 0? For v1, skip
+                // missing -> skip (treated as 0?) In PMML, missing numeric -> 0?  skip
                 continue;
             }
         }
@@ -115,7 +115,7 @@ pub fn evaluate_regression(reg: &RegressionIr, values: &[Value]) -> Value {
     }
 
     // Multiple tables (classification) — compute score per targetCategory, then normalize to probabilities
-    // For v1, we just return the category with max score
+    //  we just return the category with max score
     let mut best_score = f64::NEG_INFINITY;
     let mut best_category: Option<crate::base::SymbolId> = None;
     for tbl in &reg.regression_tables {

@@ -18,10 +18,12 @@ use std::time::{Duration, Instant};
 
 /// Load Iris `TreeModel` `Session` for the given provider.
 ///
-/// Reads `/upstream/jpmml-evaluator` `DecisionTreeIris.pmml` (hard-coded path for this binary).
-/// Panics if file missing (trial is for local hosts with `upstream` checkout).
+/// Reads `bench/pmml/DecisionTreeIris.pmml` (hard-coded path for this binary).
+/// Panics if file missing.
 fn load_iris_session(kind: ExecutionProviderKind) -> Session {
-    let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
+    let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+        .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+        .unwrap();
     let env = PmmlEnv::new();
     let opts = SessionOptions::default().execution_provider(kind);
     Session::from_bytes(&env, &xml, opts).unwrap()
@@ -31,11 +33,13 @@ fn load_iris_session(kind: ExecutionProviderKind) -> Session {
 ///
 /// Checks `LinearRegression.pmml` / `Regression.pmml` / `AutoRegressive.pmml` and returns first that loads.
 fn load_regression_session(kind: ExecutionProviderKind) -> Option<Session> {
-    // Try a few regression fixtures
+    // Try a few regression fixtures from bench
     let candidates = [
-        "/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/LinearRegression.pmml",
-        "/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/Regression.pmml",
-        "/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/AutoRegressive.pmml",
+        "bench/pmml/LinearRegression.pmml",
+        "bench/pmml/Regression.pmml",
+        "bench/pmml/AutoRegressive.pmml",
+        "../../bench/pmml/LinearRegression.pmml",
+        "../../bench/pmml/Regression.pmml",
     ];
     for path in candidates {
         if let Ok(xml) = std::fs::read(path) {
@@ -260,7 +264,7 @@ fn run_trial(size: usize) {
             println!("  Regression fixture found for SIMD check ({} rows)", size);
             // For regression, we need a batch with appropriate fields. Try to use same Iris arrow batch but it will have missing fields for regression model
             // So we generate a generic batch with fields that match regression's expected input? Instead we just test with Iris-like batch but it will mostly be Missing
-            // For proper SIMD we need a real regression fixture with Float64 fields. Let's just try a simple synthetic regression via pmml-evaluator simd direct test
+            // For proper SIMD we need a real regression fixture with Float64 fields. Let's just try a simple synthetic regression via simd direct test
             // For now, test the simd module directly with synthetic regression model
             {
                 use pmmlruntime::base::FieldId;
@@ -330,10 +334,8 @@ fn main() {
     println!("PMML Large Batch Trial — Tree Iris (2 Float64 fields)");
     println!("Host: {} threads rayon", rayon::current_num_threads());
     let simd_enabled = {
-        // Check if pmml-evaluator simd is available at runtime (wide always available, but feature gates the 4-wide path)
-        // For benchmark, we just report that binary was built with simd feature if pmml-evaluator was built with it;
-        // here we detect via cfg in pmml-evaluator crate by checking an env var is not reliable, so just print false/true based on whether the simd module's 4-wide path would be taken for regression batch >=4
-        // We approximate by checking if the `wide` crate is linked (always) - so report true if we are running a release build with avx2 available
+        // Report whether SIMD 4-wide path is available at runtime (wide + target feature).
+        // We approximate by checking if the `wide` crate is linked and `avx` is available.
         #[cfg(target_feature = "avx")]
         {
             true

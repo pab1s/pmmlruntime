@@ -1,9 +1,8 @@
-//! C ABI — stable like `onnxruntime_c_api.h`.
+//! C ABI — stable C API for PMML scoring.
 //!
-//! This crate exposes a stable C API for PMML scoring (`PmmlEnv`, `PmmlSession`, `PmmlCreate*` / `PmmlRelease*`).
-//! It mirrors ONNX Runtime's `c_api` design: opaque `PmmlEnv`/`PmmlSession` handles, status-code returns, and
-//! `Safety` contracts for FFI callers. In v1 the bindings are minimal (create/release env + session from file);
-//! scoring via `PmmlRun*` will be added in v2.
+//! This crate exposes a stable C API (`PmmlEnv`, `PmmlSession`, `PmmlCreate*` / `PmmlRelease*`).
+//! Design uses opaque handles, status-code returns, and `Safety` contracts for FFI callers.
+//! Current bindings cover environment and session create/release; scoring via `PmmlRun*` is planned.
 //!
 //! # Ownership and thread safety
 //!
@@ -66,8 +65,8 @@ pub struct PmmlEnv {
 /// Opaque handle for a scoring session (`Box<Session>` inside `crate::session::Session`).
 ///
 /// `PmmlSession` is `Send` + `Sync` for `&self` scoring. It holds `Arc<Ir>` and a boxed
-/// `ExecutionProvider`. In v1 it is created from a file path; in v2 it will also support
-/// bytes / `Ir` handles.
+/// `ExecutionProvider`. Currently created from a file path; future extensions may support
+/// construction from bytes or `Ir` handles.
 ///
 /// # Invariants
 ///
@@ -197,8 +196,8 @@ pub unsafe extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
 
 /// Create a `PmmlSession` from a file path.
 ///
-/// In v1 this is a stub that only validates `path` / `session_out` are non-null and returns a placeholder session.
-/// In v2 it will read the file, `crate::xml::unmarshal` → `verify` → `lower` → `Session::from_file` and return rich errors.
+/// Currently validates `path` / `session_out` are non-null and returns a placeholder session.
+/// Future implementation will read the file and build a full `Session` via `crate::xml::unmarshal` → `verify` → `lower`.
 ///
 /// # Parameters
 ///

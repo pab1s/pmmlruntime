@@ -112,7 +112,7 @@ fn eval_predicate(pred: &PredicateIr, values: &[Value]) -> bool {
             }
             crate::ir::CompoundOperator::Surrogate => {
                 // Surrogate: true if any predicate true or if missing values cause surrogate to be considered
-                // For v1, treat as Or but handle missing as false
+                //  treat as Or but handle missing as false
                 predicates.iter().any(|p| eval_predicate(&**p, values))
             }
         },
