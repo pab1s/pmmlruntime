@@ -12,7 +12,7 @@ rust-version.workspace = true
 description = "PMML 4.4 runtime — session-based execution, Arrow batch, hardened XML"
 keywords = ["pmml", "scoring", "machine-learning"]
 categories = ["science"]
-include = ["src/**/*", "examples/**/*", "tests/**/*", "Cargo.toml", "../../README.md", "../../LICENSE-MIT", "../../LICENSE-APACHE"]
+include = ["src/**/*", "examples/**/*", "tests/**/*", "Cargo.toml", "../../README.md", "../../LICENSE"]
 
 [dependencies]
 quick-xml = { workspace = true }

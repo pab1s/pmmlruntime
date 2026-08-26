@@ -14,7 +14,7 @@
   <a href="https://crates.io/crates/pmmlruntime"><img alt="crates.io" src="https://img.shields.io/crates/v/pmmlruntime.svg"/></a>
   <a href="https://docs.rs/pmmlruntime"><img alt="docs.rs" src="https://img.shields.io/docsrs/pmmlruntime"/></a>
   <img alt="MSRV" src="https://img.shields.io/badge/MSRV-1.78-blue"/>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue"/></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"/></a>
   <img alt="PMML 4.4" src="https://img.shields.io/badge/PMML-4.4-brightgreen"/>
   <img alt="Models" src="https://img.shields.io/badge/models-19%2F19-success"/>
 </p>
@@ -248,7 +248,7 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) and [`docs/ARCHITECTURE.md`](./docs/A
 
 ## License
 
-MIT or Apache-2.0. See [`LICENSE`](./LICENSE).
+Apache-2.0. See [`LICENSE`](./LICENSE).
 
 ---
 
