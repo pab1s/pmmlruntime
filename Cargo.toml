@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]
