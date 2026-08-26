@@ -123,7 +123,7 @@ pub fn evaluate_neural_network(nn: &NeuralNetworkIr, values: &[Value]) -> Value 
                     sum += val * weight;
                 } else {
                     // If from is not yet computed, it might be an input that wasn't in neural_inputs? Try to find by field?
-                    // For v1, we assume all cons from are previously computed ids
+                    //  we assume all cons from are previously computed ids
                     sum += 0.0;
                 }
             }
@@ -138,7 +138,7 @@ pub fn evaluate_neural_network(nn: &NeuralNetworkIr, values: &[Value]) -> Value 
     // For our simple fixture, last layer has 1 neuron with identity, so output is that neuron's value
     if let Some(&out) = last_layer_outputs.first() {
         // Check functionName: if regression, return continuous; if classification, need to map to discrete?
-        // For v1, we return Continuous
+        //  we return Continuous
         Value::Continuous(out)
     } else {
         Value::Missing

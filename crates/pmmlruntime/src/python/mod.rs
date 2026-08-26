@@ -1,8 +1,8 @@
 //! Python bindings — `PyO3` 0.22 `extension-module`, like `ort.py`.
 //!
 //! This crate is the Python extension for `pmmlruntime` (`import pmml_runtime`).
-//! In v1 it is a stub that reserves the crate name and exposes a trivial `hello()` for smoke tests.
-//! In v2 it will expose `#[pyclass] InferenceSession` wrapping `crate::session::Session` with
+//! Currently a stub that reserves the crate name and exposes a trivial `hello()` for smoke tests.
+//! May expose `#[pyclass] InferenceSession` wrapping `crate::session::Session` with
 //! `new(path)`, `run(dict)`, and `run_batch(list[dict])` plus `__repr__`.
 //!
 //! # Feature flags
@@ -13,7 +13,7 @@
 //! # What belongs here
 //!
 //! - `python_impl` module (`#[cfg(feature = "python")]`) with `#[pyfunction] hello` and `#[pymodule] pmml_runtime`.
-//! - Future `InferenceSession` pyclass (v2) that owns `Session` and `PmmlEnv`.
+//! - Future `InferenceSession` pyclass that owns `Session` and `PmmlEnv`.
 //!
 //! # Thread safety
 //!
@@ -25,7 +25,7 @@
 //! ```python
 //! # Python (not Rust):
 //! # import pmml_runtime
-//! # print(pmml_runtime.hello())  # -> "pmml-runtime v1"
+//! # print(pmml_runtime.hello())  # -> "pmml-runtime"
 //! ```
 //!
 //! # Rust example (placeholder)
@@ -35,7 +35,7 @@
 //! assert_eq!(pmmlruntime::python::placeholder(), ());
 //! ```
 
-// In v2 this will be:
+// Future:
 // use pyo3::prelude::*;
 // #[pyclass] struct InferenceSession { inner: crate::session::Session }
 // #[pymethods] impl InferenceSession { fn new(path: &str) -> ...; fn run(...) }
@@ -56,17 +56,17 @@ mod python_impl {
     ///
     /// # Returns
     ///
-    /// `"pmml-runtime v1"` string.
+    /// `"pmml-runtime"` string.
     ///
     /// # Examples
     ///
     /// ```python
     /// # import pmml_runtime
-    /// # assert pmml_runtime.hello() == "pmml-runtime v1"
+    /// # assert pmml_runtime.hello() == "pmml-runtime"
     /// ```
     #[pyfunction]
     fn hello() -> PyResult<String> {
-        Ok("pmml-runtime v1".into())
+        Ok("pmml-runtime".into())
     }
     /// Python module `pmml_runtime` (extension-module).
     ///

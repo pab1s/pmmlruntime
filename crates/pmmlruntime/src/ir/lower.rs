@@ -349,7 +349,7 @@ fn flatten_node(
         child_indices.push(child_idx);
     }
 
-    // resolve defaultChild id to child index (JPMML parity for DefaultChild strategy)
+    // resolve defaultChild id to child index (PMML parity for DefaultChild strategy)
     let default_child_idx = if let Some(dc_id) = &raw.default_child {
         let mut found = None;
         for (i, child_raw) in raw.children.iter().enumerate() {
@@ -478,7 +478,7 @@ fn lower_constant_to_symbol_or_continuous(
     if let Ok(f) = val.parse::<f64>() {
         // For numeric types we return Continuous directly; for non-numeric we also
         // try numeric parse first so "1.0" as string still coerces to Continuous
-        // (JPMML parity). Branch kept separate for future non-numeric fallback.
+        // (PMML parity). Branch kept separate for future non-numeric fallback.
         return SymbolIdOrContinuous::Continuous(f);
     }
     if val.is_empty() {
@@ -1020,7 +1020,7 @@ fn lower_mining_schema(
             .get(&fid)
             .cloned()
             .ok_or_else(|| PmmlError::MissingField(mf.name.clone()))?;
-        // Update meta with per-field MiningField treatments (JPMML parity)
+        // Update meta with per-field MiningField treatments (PMML parity)
         meta.invalid_value_treatment =
             parse_invalid_treatment(mf.invalid_value_treatment.as_deref());
         meta.invalid_value_replacement = mf.invalid_value_replacement.clone();
@@ -3669,7 +3669,7 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
     // Return clear UnsupportedMarkup instead of generic "no supported model found"
     if let Some(ref model) = raw.unsupported_model {
         return Err(PmmlError::UnsupportedMarkup(format!(
-            "unsupported model: {model} (see docs/PLAN.md section 1.5 — explicitly unsupported upstream: ModelComposition/CenterFields, use JPMML fallback)"
+            "unsupported model: {model} (see docs/PLAN.md section 1.5 — explicitly unsupported upstream: ModelComposition/CenterFields, use PMML fallback)"
         )));
     }
 
@@ -4245,7 +4245,7 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         let output = lower_output(&gr.output, &field_name_to_id, &mut interner);
-        // For v1, we handle the detailed GeneralRegression but keep it simple: just store mining_schema and output
+        //  we handle the detailed GeneralRegression but keep it simple: just store mining_schema and output
         // Full handling of ParameterList/FactorList/PPMatrix/ParamMatrix is done in evaluator via raw, but for IR we store stub
         let gr_ir = GeneralRegressionIr {
             function_name: gr.function_name.clone(),
@@ -4682,7 +4682,9 @@ mod tests {
 
     #[test]
     fn lower_iris() {
-        let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
+        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+            .unwrap();
         let raw = unmarshal(&xml).unwrap();
         let ir = lower(raw).unwrap();
         assert_eq!(ir.data_dictionary.len(), 3);

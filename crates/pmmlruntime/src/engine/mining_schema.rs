@@ -1,6 +1,6 @@
 //! Mining schema pre-processing — [`MiningSchemaIr`] interpretation on the hot path.
 //!
-//! This module implements the JPMML `InputFieldUtil` / `MiningFieldUtil` semantics
+//! This module implements the PMML `InputFieldUtil` / `MiningFieldUtil` semantics
 //! for the evaluator: per-[`FieldMeta`] handling of
 //! `invalidValueTreatment`, `missingValueTreatment`/`missingValueReplacement`,
 //! `outlierTreatment` with `lowValue`/`highValue`, and `DataType`/`OpType` coercion
@@ -27,7 +27,7 @@
 //! - `values.len()` must be at least `max(FieldId.0) + 1` for every active field;
 //!   out-of-bounds writes are silently ignored (bounds-checked).
 //! - `is_valid_value` considers `Missing` never valid; an empty `FieldMeta.values`
-//!   means “any discrete value is valid” per JPMML.
+//!   means “any discrete value is valid” per PMML.
 
 use crate::base::error::{PmmlError, Result};
 use crate::base::field::{DataType, OpType};
@@ -71,7 +71,7 @@ fn is_valid_value(value: Value, meta: &FieldMeta) -> bool {
         }
         Value::Discrete(sid) => {
             if meta.values.is_empty() {
-                // No explicit valid values => any discrete is valid (per JPMML: "Any value is valid by default")
+                // No explicit valid values => any discrete is valid (per PMML: "Any value is valid by default")
                 true
             } else {
                 // Check if sid is in allowed values
@@ -190,7 +190,7 @@ fn parse_replacement(
 /// Apply a [`MiningSchemaIr`] to a dense `values` array in place.
 ///
 /// Copies each active field from the sparse `input_map` (`FieldId → Value`) into
-/// `values[field.as_usize()]` while applying, in JPMML order:
+/// `values[field.as_usize()]` while applying, in PMML order:
 ///
 /// 1. **Missing handling** — when the raw value is [`Value::Missing`], apply
 ///    [`MissingValueTreatment`] and `missingValueReplacement` (numeric parse as `f64`).
@@ -322,7 +322,7 @@ pub fn apply_mining_schema(
                                     // Fallback: if repl_str matches a value string, we need to find its SymbolId
                                     // Since we don't have symbol map, we can't resolve. For now, return Missing and let caller handle?
                                     // Instead, we can try to see if repl_str is in meta.values' string representation? But we don't have strings.
-                                    // For minimal JPMML parity, we can just return Continuous if parse fails, else Missing
+                                    // For minimal PMML parity, we can just return Continuous if parse fails, else Missing
                                     // For categorical, we can return Discrete with dummy
                                     Value::Missing
                                 }
@@ -378,7 +378,7 @@ pub fn apply_mining_schema(
                     )));
                 }
                 InvalidValueTreatment::AsIs => {
-                    // Keep invalid as is, but mark as valid? In JPMML, AsIs keeps invalid as is and may still be used (but marked invalid)
+                    // Keep invalid as is, but mark as valid? In PMML, AsIs keeps invalid as is and may still be used (but marked invalid)
                     // For our evaluator, we will keep value as is (so downstream may handle)
                 }
                 InvalidValueTreatment::AsMissing => {
@@ -406,7 +406,7 @@ pub fn apply_mining_schema(
                             value = Value::Missing;
                         }
                     } else if let Some(repl_str) = &meta.missing_value_replacement {
-                        // Fallback to missing replacement? In JPMML, AsValue with invalidValueReplacement uses that, else missing?
+                        // Fallback to missing replacement? In PMML, AsValue with invalidValueReplacement uses that, else missing?
                         if let Ok(f) = repl_str.parse::<f64>() {
                             value = Value::Continuous(f);
                         } else {

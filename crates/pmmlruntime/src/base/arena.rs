@@ -1,6 +1,6 @@
 //! Arena allocator — per-`run()` bump allocation, reset after each scoring.
 //!
-//! Mirrors ONNX Runtime `BFCArena` pattern: a fast thread-local arena for serial
+//! Mirrors session runtime `BFCArena` pattern: a fast thread-local arena for serial
 //! `Session::run` and an owned [`BumpArena`] for batched [`rayon`] `par_iter` shards.
 //! The hot path for `<=64` fields avoids the arena entirely via a stack buffer
 //! in `pmml-session`; this module is the overflow and string-interning path.
@@ -46,7 +46,7 @@ pub fn with_arena<R>(f: impl FnOnce(&mut Bump) -> R) -> R {
 
 /// Scratch `Vec` that conceptually reuses arena allocation for `Value` buffers.
 ///
-/// For v1 this is a plain heap `Vec` — it documents intent for a future
+///  this is a plain heap `Vec` — it documents intent for a future
 /// `bumpalo::collections::Vec` switch without changing call sites.
 ///
 /// # Examples

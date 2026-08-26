@@ -2,7 +2,7 @@
 //!
 //! This module is the **cold path**: `bytes: &[u8]` → [`unmarshal`] → [`RawPmml`] → `crate::ir::lower` → `Ir`.
 //! It is a ~5.8 kLOC `quick-xml` pull parser that mirrors `pmml.xsd:4490` and
-//! `org.jpmml.model` — 304 elements, mixed attribute/element ordering, and
+//! `org.pmml.model` — 304 elements, mixed attribute/element ordering, and
 //! vendor `Extension` payloads — without `serde`.
 //!
 //! # What belongs here
@@ -240,7 +240,7 @@ pub struct RawOutputField {
 ///
 /// - `function_name`: `functionName` (`"classification"`, `"regression"`, …) — determines result handling.
 /// - `missing_value_strategy` / `no_true_child_strategy`: `missingValueStrategy` / `noTrueChildStrategy`
-///   (`"lastPrediction"`, `"defaultChild"`, …). `None` means JPMML default.
+///   (`"lastPrediction"`, `"defaultChild"`, …). `None` means PMML default.
 /// - `mining_schema`: `MiningSchema` — ordered `MiningField` list, first `predicted` is the target.
 /// - `output`: `Output` — `OutputField` list; may be empty (evaluator synthesizes `predictedValue`).
 /// - `targets`: `Targets` — post-processing; currently always empty (see `RawTarget`).
@@ -1040,7 +1040,7 @@ pub struct RawVectorInstance {
 /// - `predicate`: node guard [`RawPredicate`] — `True` (root), `SimplePredicate`, `CompoundPredicate`, `SimpleSetPredicate`.
 /// - `score_distributions`: `ScoreDistribution` list — per-class `recordCount`.
 /// - `children`: child `Node`s, in document order.
-/// - `default_child`: `defaultChild` — id of the default child for JPMML's `DefaultChild` handling.
+/// - `default_child`: `defaultChild` — id of the default child for PMML's `DefaultChild` handling.
 ///
 /// Missing `predicate` defaults to `True` (defensive). `default_child` is `None` when absent.
 /// See [`RawTreeModel::root`] and [`RawPredicate`].
@@ -3683,7 +3683,7 @@ fn parse_tree_model(
                         local_derived_fields.extend(fields);
                     }
                     _ => {
-                        // skip ModelStats, Targets, Extension, etc for v1
+                        // skip ModelStats, Targets, Extension, etc
                         // Need to consume subtree if it's Start
                         if tag == "Targets" || tag == "ModelStats" || tag == "ModelExplanation" {
                             let mut depth = 1usize;
@@ -15329,7 +15329,7 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                             inner.clear();
                         }
                     }
-                    _ => {} // other top-level ignored for v1 (Header, MiningBuildTask, etc)
+                    _ => {} // other top-level ignored (Header, MiningBuildTask, etc)
                 }
             }
             Ok(Event::Empty(e)) => {
@@ -15431,7 +15431,9 @@ mod tests {
 
     #[test]
     fn parse_iris() {
-        let xml = std::fs::read("/home/pab1s/Projects/jpmml-migration/upstream/jpmml-evaluator/pmml-evaluator-testing/src/test/resources/pmml/DecisionTreeIris.pmml").unwrap();
+        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+            .unwrap();
         let raw = unmarshal(&xml).unwrap();
         assert_eq!(raw.data_dictionary.len(), 3);
         assert!(raw.tree_model.is_some());

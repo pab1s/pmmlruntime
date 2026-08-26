@@ -39,7 +39,7 @@ fn all_fixtures_load() {
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    // JPMML-unsupported markup (weightedConfidence/aggregateNodes/distributionBased etc.)
+                    // PMML-unsupported markup (weightedConfidence/aggregateNodes/distributionBased etc.)
                     // is expected to fail fast — treat as SKIP not FAIL (parity with UnsupportedMarkupInspector)
                     if msg.contains("unsupported markup") {
                         println!("SKIP (unsupported) {}: {}", path.display(), e);

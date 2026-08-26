@@ -1,4 +1,4 @@
-//! Hardened XML reader — mirrors `org.jpmml.model.SAXUtil` security.
+//! Hardened XML reader — mirrors `org.pmml.model.SAXUtil` security.
 //!
 //! This module is the **only** place that enforces PMML XML hardening. It
 //! wraps `quick-xml` 0.37's pull parser and adds the limits that `SAXUtil`

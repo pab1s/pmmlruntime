@@ -3,7 +3,7 @@
 > **For: new agent starting from `development`**
 > **Date:** 2026-08-26 (updated from 2026-08-24)
 > **Repo:** `pab1s/pmmlruntime` (private, gitflow `main ← development ← feat/*`)
-> **Current:** `feat/pmml44-full-coverage@44e95a5` — ~26k LOC Rust, single crate `pmmlruntime`, **52/52 bench fixtures load+run pass (51 OK + 1 SKIP weightedConfidence)**, `402 ns` single Tree, `16.5M rows/s` Arrow batched
+> **Current:** `feat/pmml44-full-coverage@44e95a5` — ~26k LOC Rust, **52/52 bench fixtures load+run pass (51 OK + 1 SKIP weightedConfidence)**, `402 ns` single Tree, `16.5M rows/s` Arrow batched
 > **Vault:** `~/Projects/jpmml-migration/` (spec, upstream, bench)
 > **Prior plans:** `docs/PLAN.md` (Bun strategy), `.agents/plans/2026-08-23-pmml-runtime-v1-tree-plan.md` (v1 Tree shard), `feat/pmml44-full-coverage` (this branch)
 
@@ -45,7 +45,7 @@ cargo bench -p pmml-bench --bench scoring    # => 402 ns single, 61 ns/row batch
 | **Core** | `crates/pmmlruntime/src/base/{field.rs, value.rs, arena.rs:125, error.rs}` — `Value` enum, `FieldId`, `SymbolId`, `BumpArena` | — |
 | **CLI / FFI / Python** | `pmml-cli` inspect/run/verify, `pmml-ffi` PmmlEnv/Session (stub, P0 deferred), `pmml-python` pyo3 hello (stub, P0 deferred) | `cargo run -p pmml-cli -- inspect` + `cargo check` |
 
-Loc total: `~39121` Rust raw (`26k` non-blank, single crate) + `15475` xml + `~15k` models.
+Loc total: `~39121` Rust raw (`26k` non-blank) + `15475` xml + `~15k` models.
 
 **Update 2026-08-26:** `feat/pmml44-full-coverage` closes L4 (JPMML full verification) — now 19/19 models, 304 elements, 52 fixtures. L1 (Batched+Arrow) + L5 (VM) + L6 (Perf Level2) already green per `BENCHMARK.md` 402ns/61ns. Remaining for 1.0: L2/L3 (Python/FFI real) deferred to 0.2.0, L7/L8/L9 packaging/spec audit.
 

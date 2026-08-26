@@ -1,16 +1,15 @@
-//! `PmmlEnv` — global environment, like `OrtEnv` (thread pool, logger).
+//! `PmmlEnv` — global environment for runtime coordination (thread pool, logger).
 //!
 //! `PmmlEnv` owns the `Arc<EnvInner>` so it is cheap to `Clone` and `Send+Sync`.
-//! In v1 it only carries a name for diagnostics; in v2 it will hold the `rayon::ThreadPool`
-//! and logger/telemetry handles. `Session` keeps an `Arc` clone of the env so dropping
-//! the caller's `PmmlEnv` does not invalidate existing sessions.
+//! Currently it carries a name for diagnostics; the same handle is cloned into each `Session`
+//! so dropping the caller's `PmmlEnv` does not invalidate existing sessions.
 
 use std::sync::Arc;
 
 /// Global environment. Cheap to clone (`Arc` inner).
 ///
-/// Mirrors `OrtEnv` / `OrtApi::CreateEnv`. It is `Send` + `Sync` and `Clone` is a single
-/// atomic increment. `Session::from_bytes` takes `&PmmlEnv` and clones it into the session.
+/// It is `Send` + `Sync` and `Clone` is a single atomic increment.
+/// `Session::from_bytes` takes `&PmmlEnv` and clones it into the session.
 ///
 /// # Examples
 ///
@@ -27,8 +26,8 @@ pub struct PmmlEnv {
 
 #[derive(Debug)]
 struct EnvInner {
-    // In v2 this will hold rayon::ThreadPool, logger, telemetry.
-    // For v1, just a name (kept for OrtEnv parity; read via `name()` to avoid dead_code warnings).
+    // Reserved for thread pool, logger, telemetry handles.
+    // Currently just a name (kept live via `name()` to avoid dead_code warnings).
     name: String,
 }
 

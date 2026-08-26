@@ -1,6 +1,6 @@
-//! L7 hardening — verification + fuzz + safety gates.
+//! Hardening — verification + fuzz + safety gates.
 //!
-//! Covers the remaining L7 backlog from `docs/IMPLEMENTATION_PLAN.md`:
+//! Covers:
 //! - XML hardening: depth 512, file 100 MB, XXE (via `PmmlReader` *and* `unmarshal`)
 //! - Tree depth 5k (flat `Vec<NodeIr>` branchless, no recursion)
 //! - `DerivedField` cycle tolerance
@@ -116,7 +116,7 @@ fn xxe_via_reader_not_expanded() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// 2. Tree depth 5k — flat Vec, no recursion, no stack overflow (L7 gate)
+// 2. Tree depth 5k — flat Vec, no recursion, no stack overflow
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn chain_tree_ir(depth: usize) -> TreeIr {
@@ -223,7 +223,7 @@ fn derived_cycle_tolerant_via_lower() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// 4. Session leak & thread-safety (L7 miri gate)
+// 4. Session leak & thread-safety
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[test]

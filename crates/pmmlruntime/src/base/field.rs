@@ -11,7 +11,7 @@ use std::str::FromStr;
 /// PMML `DATATYPE` (16 values per `pmml.xsd`).
 ///
 /// See `DataDictionary/DataField/@dataType`. The two `*Since\[0\]` variants are
-/// unsupported per JPMML and rejected early in `pmml-ir::lower`.
+/// unsupported per PMML and rejected early in `pmml-ir::lower`.
 ///
 /// # Examples
 ///
@@ -100,7 +100,7 @@ impl DataType {
         }
     }
 
-    /// Whether this type is unsupported per JPMML.
+    /// Whether this type is unsupported per PMML.
     ///
     /// Only `dateDaysSince[0]` and `dateTimeSecondsSince[0]` are unsupported
     /// (epoch `0` has no defined calendar). All other variants return `false`.
@@ -198,7 +198,7 @@ impl FromStr for MiningFunction {
 
 /// PMML `RESULT-FEATURE` (26 values per spec 4.4, `OutputField/@feature`).
 ///
-/// Four values are unsupported per JPMML and `is_unsupported` returns `true`:
+/// Four values are unsupported per PMML and `is_unsupported` returns `true`:
 /// `confidenceIntervalLower`, `confidenceIntervalUpper`, `standardError`, `standardDeviation`.
 ///
 /// # Examples
@@ -274,7 +274,7 @@ impl FromStr for ResultFeature {
 }
 
 impl ResultFeature {
-    /// Whether this feature is unsupported per JPMML (4 of 26).
+    /// Whether this feature is unsupported per PMML (4 of 26).
     #[must_use]
     pub fn is_unsupported(self) -> bool {
         matches!(

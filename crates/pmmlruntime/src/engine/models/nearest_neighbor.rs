@@ -366,11 +366,11 @@ pub fn evaluate_nearest_neighbor(
         let first_idx = nearest[0];
         if first_idx < nn.instance_ids.len() {
             // instance_ids is string id, need to return as Discrete? But we don't have SymbolId for it.
-            // For v1, we can return the id as string via Value::Discrete with SymbolId derived from id hash
+            //  we can return the id as string via Value::Discrete with SymbolId derived from id hash
             // But we don't have interner. For now, return the first instance's id as string via Value::Continuous? Not.
             // For clustering, the output is entityId, which is categorical. We could return the id string as Discrete with a synthetic SymbolId.
             // For now, return the first instance's id's hash as SymbolId.
-            // We need to map instance id string to SymbolId, but we don't have mapping. For v1, just return Discrete with idx.
+            // We need to map instance id string to SymbolId, but we don't have mapping.  just return Discrete with idx.
             return Value::Discrete(crate::base::SymbolId(first_idx as u32));
         }
     }

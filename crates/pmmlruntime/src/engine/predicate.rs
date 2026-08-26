@@ -100,7 +100,7 @@ fn eval_simple(
 /// - `Or` → any true
 /// - `Xor` → exactly one true
 /// - `Surrogate` → iterate in order, skip children whose field is missing, then evaluate the first
-///   non-skipped predicate as `true`/`false` (missing children are ignored per JPMML).
+///   non-skipped predicate as `true`/`false` (missing children are ignored per PMML).
 ///
 /// # Panics
 ///
