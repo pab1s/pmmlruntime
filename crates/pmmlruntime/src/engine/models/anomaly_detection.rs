@@ -172,6 +172,13 @@ fn evaluate_embedded(model: &ModelIr, values: &[Value]) -> Value {
         ModelIr::RuleSet(r) => crate::engine::models::evaluate_rule_set(r, values),
         ModelIr::AnomalyDetection(inner) => evaluate_anomaly_detection(inner, values),
         ModelIr::Baseline(b) => crate::engine::models::evaluate_baseline(b, values),
+        ModelIr::GaussianProcess(gp) => {
+            crate::engine::models::evaluate_gaussian_process(gp, values)
+        }
+        ModelIr::Text(t) => crate::engine::models::evaluate_text(t, values, None),
+        ModelIr::TimeSeries(_) => Value::Missing,
+        ModelIr::Sequence(_) => Value::Missing,
+        ModelIr::BayesianNetwork(_) => Value::Missing,
     }
 }
 

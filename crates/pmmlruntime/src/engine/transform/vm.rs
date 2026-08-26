@@ -1385,6 +1385,13 @@ fn eval_bytecode(bytecode: &[Op], values: &[Value]) -> Result<Value, String> {
     Ok(stack.pop().unwrap_or(Value::Missing))
 }
 
+/// Evaluate a bytecode slice against `values` — public helper for Bayesian distribution params.
+///
+/// Thin wrapper around [`eval_bytecode`] that returns `Value::Missing` on error.
+pub fn eval_ops(ops: &[Op], values: &[Value]) -> Value {
+    eval_bytecode(ops, values).unwrap_or(Value::Missing)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

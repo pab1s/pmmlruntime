@@ -367,6 +367,17 @@ impl ExecutionProvider for CpuBatchedProvider {
                 crate::engine::models::evaluate_anomaly_detection(ad, values)
             }
             ModelIr::Baseline(b) => crate::engine::models::evaluate_baseline(b, values),
+            ModelIr::GaussianProcess(gp) => {
+                crate::engine::models::evaluate_gaussian_process(gp, values)
+            }
+            ModelIr::Text(t) => {
+                crate::engine::models::evaluate_text(t, values, Some(&ir.symbol_names))
+            }
+            ModelIr::TimeSeries(ts) => crate::engine::models::evaluate_time_series(ts, values),
+            ModelIr::Sequence(s) => crate::engine::models::evaluate_sequence(s, values),
+            ModelIr::BayesianNetwork(bn) => {
+                crate::engine::models::evaluate_bayesian_network(bn, values)
+            }
         };
         Ok(predicted)
     }

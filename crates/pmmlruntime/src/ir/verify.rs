@@ -62,6 +62,11 @@ pub fn verify_raw(raw: &RawPmml) -> Result<()> {
         && raw.rule_set_model.is_none()
         && raw.anomaly_detection_model.is_none()
         && raw.baseline_model.is_none()
+        && raw.time_series_model.is_none()
+        && raw.gaussian_process_model.is_none()
+        && raw.text_model.is_none()
+        && raw.sequence_model.is_none()
+        && raw.bayesian_network_model.is_none()
         && raw.unsupported_model.is_none()
         && raw.data_dictionary.is_empty()
     {

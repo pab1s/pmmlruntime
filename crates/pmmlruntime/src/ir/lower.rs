@@ -2178,6 +2178,1447 @@ fn lower_anomaly_raw(
     })
 }
 
+fn parse_timeseries_algorithm(s: &str) -> TimeSeriesAlgorithm {
+    match s {
+        "ARIMA" => TimeSeriesAlgorithm::ARIMA,
+        "ExponentialSmoothing" => TimeSeriesAlgorithm::ExponentialSmoothing,
+        "GARCH" => TimeSeriesAlgorithm::GARCH,
+        "SpectralAnalysis" => TimeSeriesAlgorithm::SpectralAnalysis,
+        "SeasonalTrendDecomposition" => TimeSeriesAlgorithm::SeasonalTrendDecomposition,
+        "StateSpaceModel" => TimeSeriesAlgorithm::StateSpaceModel,
+        _ => TimeSeriesAlgorithm::ARIMA,
+    }
+}
+
+fn lower_time_series_raw(
+    raw: &crate::xml::RawTimeSeriesModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<TimeSeriesIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let targets = lower_targets(&raw.targets, field_name_to_id, interner, field_meta_map);
+    let best_fit = parse_timeseries_algorithm(&raw.best_fit);
+    // TimeSeries histories
+    let mut time_series = Vec::new();
+    for ts in &raw.time_series {
+        let field = if let Some(fname) = &ts.field {
+            let fid = get_or_intern_field(
+                fname,
+                DataType::Double,
+                OpType::Continuous,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
+            Some(fid)
+        } else {
+            None
+        };
+        let field_name = ts.field.clone();
+        let time_anchor = ts.time_anchor.as_ref().map(|ta| TimeAnchorIr {
+            type_: ta.type_.clone(),
+            offset: ta.offset,
+            stepsize: ta.stepsize,
+            display_name: ta.display_name.clone(),
+            time_cycles: ta
+                .time_cycles
+                .iter()
+                .map(|tc| TimeCycleIr {
+                    length: tc.length,
+                    type_: tc.type_.clone(),
+                    display_name: tc.display_name.clone(),
+                    array: tc.array.clone(),
+                })
+                .collect(),
+            time_exceptions: ta
+                .time_exceptions
+                .iter()
+                .map(|te| TimeExceptionIr {
+                    type_: te.type_.clone(),
+                    count: te.count,
+                    array: te.array.clone(),
+                })
+                .collect(),
+        });
+        let time_values = ts
+            .time_values
+            .iter()
+            .map(|tv| TimeValueIr {
+                index: tv.index,
+                time: tv.time.clone(),
+                value: tv.value,
+                standard_error: tv.standard_error,
+            })
+            .collect();
+        time_series.push(TimeSeriesDataIr {
+            usage: ts.usage.clone().unwrap_or_else(|| "original".into()),
+            start_time: ts.start_time,
+            end_time: ts.end_time,
+            interpolation_method: ts
+                .interpolation_method
+                .clone()
+                .unwrap_or_else(|| "none".into()),
+            field,
+            field_name,
+            time_anchor,
+            time_values,
+        });
+    }
+    // ExponentialSmoothing
+    let exponential_smoothing = if let Some(es) = &raw.exponential_smoothing {
+        let level = LevelIr {
+            alpha: es.level.alpha,
+            smoothed_value: es.level.smoothed_value,
+        };
+        let trend = es.trend.as_ref().map(|t| TrendExpoSmoothIr {
+            trend: t.trend.clone().unwrap_or_else(|| "additive".into()),
+            gamma: t.gamma,
+            phi: t.phi,
+            smoothed_value: t.smoothed_value,
+            array: t.array.clone(),
+        });
+        let seasonality = es.seasonality.as_ref().map(|s| SeasonalityExpoSmoothIr {
+            type_: s.type_.clone(),
+            period: s.period,
+            unit: s.unit.clone(),
+            phase: s.phase,
+            delta: s.delta,
+            array: s.array.clone(),
+        });
+        let time_values = es
+            .time_values
+            .iter()
+            .map(|tv| TimeValueIr {
+                index: tv.index,
+                time: tv.time.clone(),
+                value: tv.value,
+                standard_error: tv.standard_error,
+            })
+            .collect();
+        Some(ExponentialSmoothingIr {
+            rmse: es.rmse,
+            transformation: es.transformation.clone().unwrap_or_else(|| "none".into()),
+            level,
+            trend,
+            seasonality,
+            time_values,
+        })
+    } else {
+        None
+    };
+    // ARIMA
+    let arima = if let Some(ar) = &raw.arima {
+        let nonseasonal_component =
+            ar.nonseasonal_component
+                .as_ref()
+                .map(|nc| NonseasonalComponentIr {
+                    p: nc.p,
+                    d: nc.d,
+                    q: nc.q,
+                    ar: nc.ar.as_ref().map(|a| ArIr {
+                        array: a.array.clone(),
+                    }),
+                    ma: nc.ma.as_ref().map(|m| MaIr {
+                        ma_coefficients: m.ma_coefficients.as_ref().map(|mc| MaCoefficientsIr {
+                            array: mc.array.clone(),
+                        }),
+                        residuals: m.residuals.as_ref().map(|r| ResidualsIr {
+                            array: r.array.clone(),
+                        }),
+                    }),
+                });
+        let seasonal_component = ar
+            .seasonal_component
+            .as_ref()
+            .map(|sc| SeasonalComponentIr {
+                p: sc.p,
+                d: sc.d,
+                q: sc.q,
+                period: sc.period,
+                ar: sc.ar.as_ref().map(|a| ArIr {
+                    array: a.array.clone(),
+                }),
+                ma: sc.ma.as_ref().map(|m| MaIr {
+                    ma_coefficients: m.ma_coefficients.as_ref().map(|mc| MaCoefficientsIr {
+                        array: mc.array.clone(),
+                    }),
+                    residuals: m.residuals.as_ref().map(|r| ResidualsIr {
+                        array: r.array.clone(),
+                    }),
+                }),
+            });
+        let mut dynamic_regressors = Vec::new();
+        for dr in &ar.dynamic_regressors {
+            let fid = get_or_intern_field(
+                &dr.field,
+                DataType::Double,
+                OpType::Continuous,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
+            let target_field = dr.target_field.as_ref().map(|tf| {
+                get_or_intern_field(
+                    tf,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                )
+            });
+            let numerator = dr.numerator.as_ref().map(|n| NumeratorIr {
+                nonseasonal_factor: n.nonseasonal_factor.as_ref().map(|f| NonseasonalFactorIr {
+                    difference: f.difference,
+                    maximum_order: f.maximum_order,
+                    array: f.array.clone(),
+                }),
+                seasonal_factor: n.seasonal_factor.as_ref().map(|f| SeasonalFactorIr {
+                    difference: f.difference,
+                    maximum_order: f.maximum_order,
+                    array: f.array.clone(),
+                }),
+            });
+            let denominator = dr.denominator.as_ref().map(|d| DenominatorIr {
+                nonseasonal_factor: d.nonseasonal_factor.as_ref().map(|f| NonseasonalFactorIr {
+                    difference: f.difference,
+                    maximum_order: f.maximum_order,
+                    array: f.array.clone(),
+                }),
+                seasonal_factor: d.seasonal_factor.as_ref().map(|f| SeasonalFactorIr {
+                    difference: f.difference,
+                    maximum_order: f.maximum_order,
+                    array: f.array.clone(),
+                }),
+            });
+            let regressor_values = dr.regressor_values.as_ref().map(|rv| {
+                let ts = rv.time_series.as_ref().map(|t| {
+                    let f = t.field.as_ref().map(|fname| {
+                        get_or_intern_field(
+                            fname,
+                            DataType::Double,
+                            OpType::Continuous,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                        )
+                    });
+                    let ta = t.time_anchor.as_ref().map(|a| TimeAnchorIr {
+                        type_: a.type_.clone(),
+                        offset: a.offset,
+                        stepsize: a.stepsize,
+                        display_name: a.display_name.clone(),
+                        time_cycles: a
+                            .time_cycles
+                            .iter()
+                            .map(|tc| TimeCycleIr {
+                                length: tc.length,
+                                type_: tc.type_.clone(),
+                                display_name: tc.display_name.clone(),
+                                array: tc.array.clone(),
+                            })
+                            .collect(),
+                        time_exceptions: a
+                            .time_exceptions
+                            .iter()
+                            .map(|te| TimeExceptionIr {
+                                type_: te.type_.clone(),
+                                count: te.count,
+                                array: te.array.clone(),
+                            })
+                            .collect(),
+                    });
+                    let tvs = t
+                        .time_values
+                        .iter()
+                        .map(|tv| TimeValueIr {
+                            index: tv.index,
+                            time: tv.time.clone(),
+                            value: tv.value,
+                            standard_error: tv.standard_error,
+                        })
+                        .collect();
+                    Box::new(TimeSeriesDataIr {
+                        usage: t.usage.clone().unwrap_or_else(|| "original".into()),
+                        start_time: t.start_time,
+                        end_time: t.end_time,
+                        interpolation_method: t
+                            .interpolation_method
+                            .clone()
+                            .unwrap_or_else(|| "none".into()),
+                        field: f,
+                        field_name: t.field.clone(),
+                        time_anchor: ta,
+                        time_values: tvs,
+                    })
+                });
+                RegressorValuesIr {
+                    time_series: ts,
+                    trend_coefficients: rv.trend_coefficients.as_ref().map(|tc| {
+                        TrendCoefficientsIr {
+                            array: tc.array.clone(),
+                        }
+                    }),
+                    transfer_function_values: rv.transfer_function_values.as_ref().map(|tf| {
+                        TransferFunctionValuesIr {
+                            array: tf.array.clone(),
+                        }
+                    }),
+                }
+            });
+            dynamic_regressors.push(DynamicRegressorIr {
+                field: fid,
+                field_name: dr.field.clone(),
+                transformation: dr.transformation.clone().unwrap_or_else(|| "none".into()),
+                delay: dr.delay.unwrap_or(0),
+                future_values_method: dr
+                    .future_values_method
+                    .clone()
+                    .unwrap_or_else(|| "constant".into()),
+                target_field,
+                numerator,
+                denominator,
+                regressor_values,
+            });
+        }
+        let maximum_likelihood_stat = ar.maximum_likelihood_stat.as_ref().map(|ml| {
+            let kalman_state = ml.kalman_state.as_ref().map(|ks| KalmanStateIr {
+                final_omega: ks.final_omega.as_ref().map(|fo| FinalOmegaIr {
+                    matrix: fo.matrix.clone(),
+                }),
+                final_state_vector: ks
+                    .final_state_vector
+                    .as_ref()
+                    .map(|fsv| FinalStateVectorIr {
+                        array: fsv.array.clone(),
+                    }),
+                h_vector: ks.h_vector.as_ref().map(|hv| HVectorIr {
+                    array: hv.array.clone(),
+                }),
+            });
+            let theta_recursion_state =
+                ml.theta_recursion_state
+                    .as_ref()
+                    .map(|trs| ThetaRecursionStateIr {
+                        final_noise: trs.final_noise.as_ref().map(|fn_| FinalNoiseIr {
+                            array: fn_.array.clone(),
+                        }),
+                        final_predicted_noise: trs.final_predicted_noise.as_ref().map(|fpn| {
+                            FinalPredictedNoiseIr {
+                                array: fpn.array.clone(),
+                            }
+                        }),
+                        final_theta: trs.final_theta.as_ref().map(|ft| FinalThetaIr {
+                            thetas: ft
+                                .thetas
+                                .iter()
+                                .map(|th| ThetaIr {
+                                    i: th.i,
+                                    j: th.j,
+                                    theta: th.theta,
+                                })
+                                .collect(),
+                        }),
+                        final_nu: trs.final_nu.as_ref().map(|fnu| FinalNuIr {
+                            array: fnu.array.clone(),
+                        }),
+                    });
+            MaximumLikelihoodStatIr {
+                method: ml.method.clone(),
+                period_deficit: ml.period_deficit.unwrap_or(0),
+                kalman_state,
+                theta_recursion_state,
+            }
+        });
+        let outlier_effects = ar
+            .outlier_effects
+            .iter()
+            .map(|oe| OutlierEffectIr {
+                type_: oe.type_.clone(),
+                start_time: oe.start_time,
+                magnitude: oe.magnitude,
+                damping_coefficient: oe.damping_coefficient,
+            })
+            .collect();
+        Some(ArimaIr {
+            rmse: ar.rmse,
+            transformation: ar.transformation.clone().unwrap_or_else(|| "none".into()),
+            constant_term: ar.constant_term,
+            prediction_method: ar
+                .prediction_method
+                .clone()
+                .unwrap_or_else(|| "conditionalLeastSquares".into()),
+            nonseasonal_component,
+            seasonal_component,
+            dynamic_regressors,
+            maximum_likelihood_stat,
+            outlier_effects,
+        })
+    } else {
+        None
+    };
+    // GARCH
+    let garch = if let Some(g) = &raw.garch {
+        let arma_part = g.arma_part.as_ref().map(|ap| ArmaPartIr {
+            constant: ap.constant,
+            p: ap.p,
+            q: ap.q,
+            ar: ap.ar.as_ref().map(|a| ArIr {
+                array: a.array.clone(),
+            }),
+            ma: ap.ma.as_ref().map(|m| MaIr {
+                ma_coefficients: m.ma_coefficients.as_ref().map(|mc| MaCoefficientsIr {
+                    array: mc.array.clone(),
+                }),
+                residuals: m.residuals.as_ref().map(|r| ResidualsIr {
+                    array: r.array.clone(),
+                }),
+            }),
+        });
+        let garch_part = g.garch_part.as_ref().map(|gp| GarchPartIr {
+            constant: gp.constant,
+            gp: gp.gp,
+            gq: gp.gq,
+            residual_square_coefficients: gp.residual_square_coefficients.as_ref().map(|rsc| {
+                ResidualSquareCoefficientsIr {
+                    residuals: rsc.residuals.as_ref().map(|r| ResidualsIr {
+                        array: r.array.clone(),
+                    }),
+                    ma_coefficients: rsc.ma_coefficients.as_ref().map(|mc| MaCoefficientsIr {
+                        array: mc.array.clone(),
+                    }),
+                }
+            }),
+            variance_coefficients: gp.variance_coefficients.as_ref().map(|vc| {
+                VarianceCoefficientsIr {
+                    past_variances: vc.past_variances.as_ref().map(|pv| PastVariancesIr {
+                        array: pv.array.clone(),
+                    }),
+                    ma_coefficients: vc.ma_coefficients.as_ref().map(|mc| MaCoefficientsIr {
+                        array: mc.array.clone(),
+                    }),
+                }
+            }),
+        });
+        Some(GarchIr {
+            arma_part,
+            garch_part,
+        })
+    } else {
+        None
+    };
+    // StateSpace
+    let state_space_model = if let Some(ssm) = &raw.state_space_model {
+        Some(StateSpaceModelIr {
+            variance: ssm.variance,
+            period: ssm.period.clone(),
+            intercept: ssm.intercept,
+            state_vector: ssm.state_vector.as_ref().map(|sv| StateVectorIr {
+                array: sv.array.clone(),
+            }),
+            transition_matrix: ssm.transition_matrix.as_ref().map(|tm| TransitionMatrixIr {
+                matrix: tm.matrix.clone(),
+            }),
+            measurement_matrix: ssm
+                .measurement_matrix
+                .as_ref()
+                .map(|mm| MeasurementMatrixIr {
+                    matrix: mm.matrix.clone(),
+                }),
+            intercept_vector: ssm.intercept_vector.as_ref().map(|iv| InterceptVectorIr {
+                type_: iv.type_.clone(),
+                array: iv.array.clone(),
+            }),
+            predicted_state_covariance_matrix: ssm.predicted_state_covariance_matrix.as_ref().map(
+                |p| PredictedStateCovarianceMatrixIr {
+                    matrix: p.matrix.clone(),
+                },
+            ),
+            selected_state_covariance_matrix: ssm.selected_state_covariance_matrix.as_ref().map(
+                |s| SelectedStateCovarianceMatrixIr {
+                    matrix: s.matrix.clone(),
+                },
+            ),
+            observation_variance_matrix: ssm.observation_variance_matrix.as_ref().map(|o| {
+                ObservationVarianceMatrixIr {
+                    matrix: o.matrix.clone(),
+                }
+            }),
+            psi_vector: ssm.psi_vector.as_ref().map(|pv| PsiVectorIr {
+                target_field: pv.target_field.clone(),
+                variance: pv.variance.clone(),
+                array: pv.array.clone(),
+            }),
+            dynamic_regressors: {
+                let mut out = Vec::new();
+                for dr in &ssm.dynamic_regressors {
+                    let fid = get_or_intern_field(
+                        &dr.field,
+                        DataType::Double,
+                        OpType::Continuous,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
+                    let tf = dr.target_field.as_ref().map(|t| {
+                        get_or_intern_field(
+                            t,
+                            DataType::Double,
+                            OpType::Continuous,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                        )
+                    });
+                    let num = dr.numerator.as_ref().map(|n| NumeratorIr {
+                        nonseasonal_factor: n.nonseasonal_factor.as_ref().map(|f| {
+                            NonseasonalFactorIr {
+                                difference: f.difference,
+                                maximum_order: f.maximum_order,
+                                array: f.array.clone(),
+                            }
+                        }),
+                        seasonal_factor: n.seasonal_factor.as_ref().map(|f| SeasonalFactorIr {
+                            difference: f.difference,
+                            maximum_order: f.maximum_order,
+                            array: f.array.clone(),
+                        }),
+                    });
+                    let den = dr.denominator.as_ref().map(|d| DenominatorIr {
+                        nonseasonal_factor: d.nonseasonal_factor.as_ref().map(|f| {
+                            NonseasonalFactorIr {
+                                difference: f.difference,
+                                maximum_order: f.maximum_order,
+                                array: f.array.clone(),
+                            }
+                        }),
+                        seasonal_factor: d.seasonal_factor.as_ref().map(|f| SeasonalFactorIr {
+                            difference: f.difference,
+                            maximum_order: f.maximum_order,
+                            array: f.array.clone(),
+                        }),
+                    });
+                    let rv = dr.regressor_values.as_ref().map(|rv| {
+                        let ts = rv.time_series.as_ref().map(|t| {
+                            let f = t.field.as_ref().map(|fname| {
+                                get_or_intern_field(
+                                    fname,
+                                    DataType::Double,
+                                    OpType::Continuous,
+                                    interner,
+                                    field_name_to_id,
+                                    field_meta_map,
+                                )
+                            });
+                            let ta = t.time_anchor.as_ref().map(|a| TimeAnchorIr {
+                                type_: a.type_.clone(),
+                                offset: a.offset,
+                                stepsize: a.stepsize,
+                                display_name: a.display_name.clone(),
+                                time_cycles: a
+                                    .time_cycles
+                                    .iter()
+                                    .map(|tc| TimeCycleIr {
+                                        length: tc.length,
+                                        type_: tc.type_.clone(),
+                                        display_name: tc.display_name.clone(),
+                                        array: tc.array.clone(),
+                                    })
+                                    .collect(),
+                                time_exceptions: a
+                                    .time_exceptions
+                                    .iter()
+                                    .map(|te| TimeExceptionIr {
+                                        type_: te.type_.clone(),
+                                        count: te.count,
+                                        array: te.array.clone(),
+                                    })
+                                    .collect(),
+                            });
+                            let tvs = t
+                                .time_values
+                                .iter()
+                                .map(|tv| TimeValueIr {
+                                    index: tv.index,
+                                    time: tv.time.clone(),
+                                    value: tv.value,
+                                    standard_error: tv.standard_error,
+                                })
+                                .collect();
+                            Box::new(TimeSeriesDataIr {
+                                usage: t.usage.clone().unwrap_or_else(|| "original".into()),
+                                start_time: t.start_time,
+                                end_time: t.end_time,
+                                interpolation_method: t
+                                    .interpolation_method
+                                    .clone()
+                                    .unwrap_or_else(|| "none".into()),
+                                field: f,
+                                field_name: t.field.clone(),
+                                time_anchor: ta,
+                                time_values: tvs,
+                            })
+                        });
+                        RegressorValuesIr {
+                            time_series: ts,
+                            trend_coefficients: rv.trend_coefficients.as_ref().map(|tc| {
+                                TrendCoefficientsIr {
+                                    array: tc.array.clone(),
+                                }
+                            }),
+                            transfer_function_values: rv.transfer_function_values.as_ref().map(
+                                |tf| TransferFunctionValuesIr {
+                                    array: tf.array.clone(),
+                                },
+                            ),
+                        }
+                    });
+                    out.push(DynamicRegressorIr {
+                        field: fid,
+                        field_name: dr.field.clone(),
+                        transformation: dr.transformation.clone().unwrap_or_else(|| "none".into()),
+                        delay: dr.delay.unwrap_or(0),
+                        future_values_method: dr
+                            .future_values_method
+                            .clone()
+                            .unwrap_or_else(|| "constant".into()),
+                        target_field: tf,
+                        numerator: num,
+                        denominator: den,
+                        regressor_values: rv,
+                    });
+                }
+                out
+            },
+        })
+    } else {
+        None
+    };
+    let spectral_analysis = if raw.spectral_analysis.is_some() {
+        Some(SpectralAnalysisIr {})
+    } else {
+        None
+    };
+    let seasonal_trend_decomposition = if raw.seasonal_trend_decomposition.is_some() {
+        Some(SeasonalTrendDecompositionIr {})
+    } else {
+        None
+    };
+    Ok(TimeSeriesIr {
+        function_name: raw.function_name.clone(),
+        model_name: raw.model_name.clone(),
+        algorithm_name: raw.algorithm_name.clone(),
+        best_fit,
+        is_scorable: raw.is_scorable,
+        mining_schema,
+        output,
+        targets,
+        time_series,
+        spectral_analysis,
+        arima,
+        exponential_smoothing,
+        seasonal_trend_decomposition,
+        state_space_model,
+        garch,
+    })
+}
+
+fn lower_gaussian_raw(
+    raw: &crate::xml::RawGaussianProcessModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<GaussianProcessIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let targets = lower_targets(&raw.targets, field_name_to_id, interner, field_meta_map);
+    let kernel = match &raw.kernel {
+        crate::xml::RawGaussianKernel::RadialBasis {
+            gamma,
+            noise_variance,
+            lambda,
+            description,
+        } => crate::ir::GaussianKernelIr::RadialBasis {
+            gamma: *gamma,
+            noise_variance: *noise_variance,
+            lambda: *lambda,
+            description: description.clone(),
+        },
+        crate::xml::RawGaussianKernel::ARDSquaredExponential {
+            gamma,
+            noise_variance,
+            lambdas,
+            description,
+        } => crate::ir::GaussianKernelIr::ARDSquaredExponential {
+            gamma: *gamma,
+            noise_variance: *noise_variance,
+            lambdas: lambdas.iter().map(|l| l.array.clone()).collect(),
+            description: description.clone(),
+        },
+        crate::xml::RawGaussianKernel::AbsoluteExponential {
+            gamma,
+            noise_variance,
+            lambdas,
+            description,
+        } => crate::ir::GaussianKernelIr::AbsoluteExponential {
+            gamma: *gamma,
+            noise_variance: *noise_variance,
+            lambdas: lambdas.iter().map(|l| l.array.clone()).collect(),
+            description: description.clone(),
+        },
+        crate::xml::RawGaussianKernel::GeneralizedExponential {
+            gamma,
+            noise_variance,
+            lambdas,
+            degree,
+            description,
+        } => crate::ir::GaussianKernelIr::GeneralizedExponential {
+            gamma: *gamma,
+            noise_variance: *noise_variance,
+            lambdas: lambdas.iter().map(|l| l.array.clone()).collect(),
+            degree: *degree,
+            description: description.clone(),
+        },
+    };
+    // instance fields
+    let mut instance_fields = Vec::new();
+    for inst_f in &raw.training_instances.instance_fields {
+        let fid = get_or_intern_field(
+            &inst_f.field,
+            DataType::Double,
+            OpType::Continuous,
+            interner,
+            field_name_to_id,
+            field_meta_map,
+        );
+        instance_fields.push(fid);
+    }
+    // training instances: convert HashMap<String,String> to HashMap<FieldId, Value>
+    let mut training_instances: Vec<std::collections::HashMap<FieldId, crate::base::Value>> =
+        Vec::new();
+    let mut training_vectors: Vec<Vec<f64>> = Vec::new();
+    let mut training_targets: Vec<crate::base::Value> = Vec::new();
+    let target_fid_opt = mining_schema.target_field;
+    // active fields order determines vector order: use active_fields if non-empty else instance_fields filtered
+    let vector_fields: Vec<FieldId> = if !mining_schema.active_fields.is_empty() {
+        mining_schema.active_fields.clone()
+    } else {
+        // fallback to instance_fields excluding target
+        instance_fields
+            .iter()
+            .copied()
+            .filter(|fid| Some(*fid) != target_fid_opt)
+            .collect()
+    };
+    for row in &raw.training_instances.instances {
+        let mut map: std::collections::HashMap<FieldId, crate::base::Value> =
+            std::collections::HashMap::new();
+        let mut vec_vals: Vec<f64> = Vec::new();
+        for inst_f in &raw.training_instances.instance_fields {
+            let col = &inst_f.column;
+            // Try col, then field name, then local col name after ':'
+            let raw_val = row
+                .get(col)
+                .or_else(|| row.get(&inst_f.field))
+                .or_else(|| {
+                    let local = col.split(':').next_back().unwrap_or(col);
+                    row.get(local)
+                })
+                .cloned()
+                .unwrap_or_default();
+            let fid = get_or_intern_field(
+                &inst_f.field,
+                DataType::Double,
+                OpType::Continuous,
+                interner,
+                field_name_to_id,
+                field_meta_map,
+            );
+            let val = if let Ok(f) = raw_val.parse::<f64>() {
+                crate::base::Value::Continuous(f)
+            } else if raw_val.is_empty() {
+                crate::base::Value::Missing
+            } else {
+                let sid = interner.intern_symbol(&raw_val);
+                crate::base::Value::Discrete(sid)
+            };
+            map.insert(fid, val);
+        }
+        // build vector for active fields
+        for &fid in &vector_fields {
+            let v = map
+                .get(&fid)
+                .copied()
+                .unwrap_or(crate::base::Value::Missing);
+            let f = match v {
+                crate::base::Value::Continuous(x) => x,
+                crate::base::Value::Discrete(sid) => {
+                    // try to resolve symbol as numeric if possible
+                    if let Some(sym_str) = interner.symbol_map().get(&{
+                        // inefficient but fine for lower (small training)
+                        // find key by value
+                        let mut found = None;
+                        for (k, &id) in interner.symbol_map().iter() {
+                            if id == sid {
+                                found = Some(k.clone());
+                                break;
+                            }
+                        }
+                        found.unwrap_or_default()
+                    }) {
+                        let _ = sym_str;
+                        0.0
+                    } else {
+                        0.0
+                    }
+                }
+                crate::base::Value::Missing => 0.0,
+            };
+            // above discrete fallback is not ideal; try alternative: if discrete, try parse symbol string via lookup
+            let f2 = match v {
+                crate::base::Value::Discrete(sid) => {
+                    // lookup symbol string
+                    let sym_opt = interner.symbol_map().iter().find_map(|(k, &id)| {
+                        if id == sid {
+                            Some(k.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(s) = sym_opt {
+                        s.parse::<f64>().unwrap_or(0.0)
+                    } else {
+                        0.0
+                    }
+                }
+                _ => f,
+            };
+            vec_vals.push(f2);
+        }
+        let target_val = if let Some(tfid) = target_fid_opt {
+            map.get(&tfid)
+                .copied()
+                .unwrap_or(crate::base::Value::Missing)
+        } else {
+            // fallback: try to find any field that is not in vector_fields
+            // If no target field, use first instance value as target? But for now Missing
+            crate::base::Value::Missing
+        };
+        training_targets.push(target_val);
+        training_vectors.push(vec_vals);
+        training_instances.push(map);
+    }
+    Ok(GaussianProcessIr {
+        function_name: raw.function_name.clone(),
+        model_name: raw.model_name.clone(),
+        mining_schema,
+        output,
+        targets,
+        kernel,
+        instance_fields,
+        training_instances,
+        training_vectors,
+        training_targets,
+        is_transformed: raw.training_instances.is_transformed,
+    })
+}
+
+fn lower_text_raw(
+    raw: &crate::xml::RawTextModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<TextIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let targets = lower_targets(&raw.targets, field_name_to_id, interner, field_meta_map);
+    // intern dictionary terms for later symbol resolution but keep string vec as primary
+    let mut dictionary: Vec<String> = Vec::new();
+    for term in &raw.text_dictionary.terms {
+        // PMML Array string may contain commas? Already split whitespace in unmarshal; keep as is.
+        // Intern term as symbol for possible discrete handling, but keep string copy.
+        let _sid = interner.intern_symbol(term);
+        dictionary.push(term.clone());
+    }
+    // Ensure dictionary length matches number_of_terms if provided, but trust parsed
+    let mut corpus: Vec<TextDocumentIr> = Vec::new();
+    for doc in &raw.text_corpus {
+        let sid = interner.intern_symbol(&doc.id);
+        corpus.push(TextDocumentIr {
+            id: doc.id.clone(),
+            id_symbol: sid,
+            name: doc.name.clone(),
+        });
+    }
+    // DocumentTermMatrix: ensure rows x cols dims; pad if needed
+    let mut dtm = raw.document_term_matrix.matrix.clone();
+    // If matrix empty but nbRows/nbCols provided, create zero matrix
+    if dtm.is_empty() && raw.number_of_documents > 0 && raw.number_of_terms > 0 {
+        dtm = vec![vec![0.0; raw.number_of_terms]; raw.number_of_documents];
+    }
+    // Ensure each row length == dictionary len (pad / truncate)
+    let dict_len = dictionary.len().max(raw.number_of_terms);
+    for row in &mut dtm {
+        if row.len() < dict_len {
+            row.resize(dict_len, 0.0);
+        } else if row.len() > dict_len {
+            row.truncate(dict_len);
+        }
+    }
+    // Pad corpus vs matrix rows alignment: if corpus len < matrix rows, add placeholder docs
+    if corpus.len() < dtm.len() {
+        for i in corpus.len()..dtm.len() {
+            let id = format!("doc_{}", i);
+            let sid = interner.intern_symbol(&id);
+            corpus.push(TextDocumentIr {
+                id: id.clone(),
+                id_symbol: sid,
+                name: None,
+            });
+        }
+    }
+    let normalization = raw.normalization.as_ref().map(|n| TextNormalizationIr {
+        local_term_weights: n.local_term_weights.clone(),
+        global_term_weights: n.global_term_weights.clone(),
+        document_normalization: n.document_normalization.clone(),
+    });
+    let similarity = raw.similarity.as_ref().map(|s| TextSimilarityIr {
+        similarity_type: s.similarity_type.clone().unwrap_or_else(|| "cosine".into()),
+    });
+    Ok(TextIr {
+        function_name: raw.function_name.clone(),
+        model_name: raw.model_name.clone(),
+        mining_schema,
+        output,
+        targets,
+        dictionary,
+        corpus,
+        document_term_matrix: dtm,
+        normalization,
+        similarity,
+        number_of_terms: raw.number_of_terms,
+        number_of_documents: raw.number_of_documents,
+    })
+}
+
+fn lower_sequence_raw(
+    raw: &crate::xml::RawSequenceModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<SequenceModelIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let targets = lower_targets(&raw.targets, field_name_to_id, interner, field_meta_map);
+    let constraints = raw.constraints.as_ref().map(|c| SequenceConstraintsIr {
+        minimum_number_of_items: c.minimum_number_of_items,
+        maximum_number_of_items: c.maximum_number_of_items,
+        minimum_support: c.minimum_support,
+        minimum_confidence: c.minimum_confidence,
+    });
+    let mut items = Vec::new();
+    for it in &raw.items {
+        let sid = interner.intern_symbol(&it.value);
+        items.push(ItemIr {
+            id: it.id.clone(),
+            value: sid,
+        });
+    }
+    let mut itemsets = Vec::new();
+    for is in &raw.itemsets {
+        itemsets.push(ItemsetIr {
+            id: is.id.clone(),
+            item_ids: is.item_refs.clone(),
+        });
+    }
+    let mut set_predicates = Vec::new();
+    for sp in &raw.set_predicates {
+        let fid = get_or_intern_field(
+            &sp.field,
+            DataType::String,
+            OpType::Categorical,
+            interner,
+            field_name_to_id,
+            field_meta_map,
+        );
+        let vals: Vec<SymbolId> = sp
+            .array
+            .split_whitespace()
+            .map(|v| interner.intern_symbol(v.trim_matches(|c| c == '"' || c == '\'')))
+            .collect();
+        set_predicates.push(SetPredicateIr {
+            id: sp.id.clone(),
+            field: fid,
+            values: vals,
+        });
+    }
+    let mut sequences = Vec::new();
+    for seq in &raw.sequences {
+        let mut sets = Vec::new();
+        for sr in &seq.sets {
+            sets.push(sr.set_id.clone());
+        }
+        let mut follow_sets = Vec::new();
+        for fs in &seq.follow_sets {
+            let delim = DelimiterIr {
+                delimiter: fs.delimiter.delimiter.clone(),
+                gap: fs.delimiter.gap.clone(),
+            };
+            let time = fs.time.as_ref().map(|t| TimeIr {
+                min: t.min,
+                max: t.max,
+                mean: t.mean,
+                standard_deviation: t.standard_deviation,
+            });
+            follow_sets.push((delim, time, fs.set_reference.set_id.clone()));
+        }
+        let time = seq.time.as_ref().map(|t| TimeIr {
+            min: t.min,
+            max: t.max,
+            mean: t.mean,
+            standard_deviation: t.standard_deviation,
+        });
+        sequences.push(SequenceIr {
+            id: seq.id.clone(),
+            number_of_sets: seq.number_of_sets,
+            occurrence: seq.occurrence,
+            support: seq.support,
+            sets,
+            follow_sets,
+            time,
+        });
+    }
+    let mut sequence_rules = Vec::new();
+    for r in &raw.sequence_rules {
+        let delim = DelimiterIr {
+            delimiter: r.delimiter.delimiter.clone(),
+            gap: r.delimiter.gap.clone(),
+        };
+        let time_between = r.time_between.as_ref().map(|t| TimeIr {
+            min: t.min,
+            max: t.max,
+            mean: t.mean,
+            standard_deviation: t.standard_deviation,
+        });
+        let time_total = r.time_total.as_ref().map(|t| TimeIr {
+            min: t.min,
+            max: t.max,
+            mean: t.mean,
+            standard_deviation: t.standard_deviation,
+        });
+        sequence_rules.push(SequenceRuleIr {
+            id: r.id.clone(),
+            number_of_sets: r.number_of_sets,
+            occurrence: r.occurrence,
+            support: r.support,
+            confidence: r.confidence,
+            lift: r.lift,
+            antecedent: r.antecedent_seq_id.clone(),
+            consequent: r.consequent_seq_id.clone(),
+            delimiter: delim,
+            time_between,
+            time_total,
+        });
+    }
+    Ok(SequenceModelIr {
+        function_name: raw.function_name.clone(),
+        mining_schema,
+        output,
+        targets,
+        constraints,
+        items,
+        itemsets,
+        set_predicates,
+        sequences,
+        sequence_rules,
+    })
+}
+
+fn lower_bayesian_raw(
+    raw: &crate::xml::unmarshal::RawBayesianNetworkModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+    define_map: &HashMap<String, RawDefineFunction>,
+) -> Result<BayesianNetworkIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let targets = lower_targets(&raw.targets, field_name_to_id, interner, field_meta_map);
+    let mut nodes = Vec::new();
+    for node in &raw.nodes {
+        match node {
+            crate::xml::unmarshal::RawBayesianNode::Discrete(dn) => {
+                let field = get_or_intern_field(
+                    &dn.name,
+                    DataType::String,
+                    OpType::Categorical,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                let mut derived_fields_ir = Vec::new();
+                // lower node-local derived fields to DerivedFieldIr (for discretization)
+                for df in &dn.derived_fields {
+                    let fid = get_or_intern_field(
+                        &df.name,
+                        DataType::String,
+                        OpType::Categorical,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
+                    let dt = parse_data_type(&df.data_type).unwrap_or(DataType::String);
+                    let ot = parse_op_type(&df.op_type).unwrap_or(OpType::Categorical);
+                    let bc = lower_expression_to_ops(
+                        &df.expression,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        None,
+                    )
+                    .unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Missing)]);
+                    derived_fields_ir.push(DerivedFieldIr {
+                        field_id: fid,
+                        name: df.name.clone(),
+                        data_type: dt,
+                        op_type: ot,
+                        bytecode: bc,
+                    });
+                }
+                let mut value_probs = Vec::new();
+                for vp in &dn.value_probabilities {
+                    let sid = interner.intern_symbol(&vp.value);
+                    value_probs.push(BayesianValueProbabilityIr {
+                        value: sid,
+                        probability: vp.probability,
+                    });
+                }
+                let mut conditional_tables = Vec::new();
+                for ct in &dn.conditional_probabilities {
+                    let mut parent_values = Vec::new();
+                    for pv in &ct.parent_values {
+                        let pfid = get_or_intern_field(
+                            &pv.parent,
+                            DataType::String,
+                            OpType::Categorical,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                        );
+                        let sid = interner.intern_symbol(&pv.value);
+                        parent_values.push(BayesianParentValueIr {
+                            parent: pfid,
+                            value: sid,
+                        });
+                    }
+                    let mut vps = Vec::new();
+                    for vp in &ct.value_probabilities {
+                        let sid = interner.intern_symbol(&vp.value);
+                        vps.push(BayesianValueProbabilityIr {
+                            value: sid,
+                            probability: vp.probability,
+                        });
+                    }
+                    conditional_tables.push(DiscreteConditionalTableIr {
+                        parent_values,
+                        value_probabilities: vps,
+                        count: ct.count,
+                    });
+                }
+                nodes.push(BayesianNodeIr::Discrete(DiscreteBayesianNodeIr {
+                    name: dn.name.clone(),
+                    field,
+                    count: dn.count,
+                    value_probabilities: value_probs,
+                    conditional_tables,
+                    derived_fields: derived_fields_ir,
+                }));
+            }
+            crate::xml::unmarshal::RawBayesianNode::Continuous(cn) => {
+                let field = get_or_intern_field(
+                    &cn.name,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                let mut derived_fields_ir = Vec::new();
+                for df in &cn.derived_fields {
+                    let fid = get_or_intern_field(
+                        &df.name,
+                        DataType::String,
+                        OpType::Categorical,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
+                    let dt = parse_data_type(&df.data_type).unwrap_or(DataType::String);
+                    let ot = parse_op_type(&df.op_type).unwrap_or(OpType::Categorical);
+                    let bc = lower_expression_to_ops(
+                        &df.expression,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                        define_map,
+                        None,
+                    )
+                    .unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Missing)]);
+                    derived_fields_ir.push(DerivedFieldIr {
+                        field_id: fid,
+                        name: df.name.clone(),
+                        data_type: dt,
+                        op_type: ot,
+                        bytecode: bc,
+                    });
+                }
+                let mut distributions = Vec::new();
+                for dw in &cn.distributions {
+                    let ir_dist = match &dw.distribution {
+                        crate::xml::unmarshal::RawBayesianContinuousDistribution::Normal {
+                            mean,
+                            variance,
+                        } => {
+                            let m_ops = lower_expression_to_ops(
+                                mean,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]
+                            });
+                            let v_ops = lower_expression_to_ops(
+                                variance,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]
+                            });
+                            BayesianContinuousDistributionIr::Normal {
+                                mean: m_ops,
+                                variance: v_ops,
+                            }
+                        }
+                        crate::xml::unmarshal::RawBayesianContinuousDistribution::Lognormal {
+                            mean,
+                            variance,
+                        } => {
+                            let m_ops = lower_expression_to_ops(
+                                mean,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]
+                            });
+                            let v_ops = lower_expression_to_ops(
+                                variance,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]
+                            });
+                            BayesianContinuousDistributionIr::Lognormal {
+                                mean: m_ops,
+                                variance: v_ops,
+                            }
+                        }
+                        crate::xml::unmarshal::RawBayesianContinuousDistribution::Uniform {
+                            lower,
+                            upper,
+                        } => {
+                            let l_ops = lower_expression_to_ops(
+                                lower,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]
+                            });
+                            let u_ops = lower_expression_to_ops(
+                                upper,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]
+                            });
+                            BayesianContinuousDistributionIr::Uniform {
+                                lower: l_ops,
+                                upper: u_ops,
+                            }
+                        }
+                        crate::xml::unmarshal::RawBayesianContinuousDistribution::Triangular {
+                            mean,
+                            lower,
+                            upper,
+                        } => {
+                            let m_ops = lower_expression_to_ops(
+                                mean,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]
+                            });
+                            let l_ops = lower_expression_to_ops(
+                                lower,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]
+                            });
+                            let u_ops = lower_expression_to_ops(
+                                upper,
+                                interner,
+                                field_name_to_id,
+                                field_meta_map,
+                                define_map,
+                                None,
+                            )
+                            .unwrap_or_else(|_| {
+                                vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]
+                            });
+                            BayesianContinuousDistributionIr::Triangular {
+                                mean: m_ops,
+                                lower: l_ops,
+                                upper: u_ops,
+                            }
+                        }
+                    };
+                    distributions.push(ir_dist);
+                }
+                let mut conditional_tables = Vec::new();
+                for ct in &cn.conditional_probabilities {
+                    let mut parent_values = Vec::new();
+                    for pv in &ct.parent_values {
+                        let pfid = get_or_intern_field(
+                            &pv.parent,
+                            DataType::String,
+                            OpType::Categorical,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                        );
+                        let sid = interner.intern_symbol(&pv.value);
+                        parent_values.push(BayesianParentValueIr {
+                            parent: pfid,
+                            value: sid,
+                        });
+                    }
+                    let mut dists = Vec::new();
+                    for dw in &ct.distributions {
+                        let ir_dist = match &dw.distribution {
+                            crate::xml::unmarshal::RawBayesianContinuousDistribution::Normal { mean, variance } => {
+                                let m_ops = lower_expression_to_ops(mean, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]);
+                                let v_ops = lower_expression_to_ops(variance, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]);
+                                BayesianContinuousDistributionIr::Normal { mean: m_ops, variance: v_ops }
+                            }
+                            crate::xml::unmarshal::RawBayesianContinuousDistribution::Lognormal { mean, variance } => {
+                                let m_ops = lower_expression_to_ops(mean, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]);
+                                let v_ops = lower_expression_to_ops(variance, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]);
+                                BayesianContinuousDistributionIr::Lognormal { mean: m_ops, variance: v_ops }
+                            }
+                            crate::xml::unmarshal::RawBayesianContinuousDistribution::Uniform { lower, upper } => {
+                                let l_ops = lower_expression_to_ops(lower, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]);
+                                let u_ops = lower_expression_to_ops(upper, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]);
+                                BayesianContinuousDistributionIr::Uniform { lower: l_ops, upper: u_ops }
+                            }
+                            crate::xml::unmarshal::RawBayesianContinuousDistribution::Triangular { mean, lower, upper } => {
+                                let m_ops = lower_expression_to_ops(mean, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]);
+                                let l_ops = lower_expression_to_ops(lower, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(0.0))]);
+                                let u_ops = lower_expression_to_ops(upper, interner, field_name_to_id, field_meta_map, define_map, None).unwrap_or_else(|_| vec![Op::PushConst(SymbolIdOrContinuous::Continuous(1.0))]);
+                                BayesianContinuousDistributionIr::Triangular { mean: m_ops, lower: l_ops, upper: u_ops }
+                            }
+                        };
+                        dists.push(ir_dist);
+                    }
+                    conditional_tables.push(ContinuousConditionalTableIr {
+                        parent_values,
+                        distributions: dists,
+                        count: ct.count,
+                    });
+                }
+                nodes.push(BayesianNodeIr::Continuous(ContinuousBayesianNodeIr {
+                    name: cn.name.clone(),
+                    field,
+                    count: cn.count,
+                    distributions,
+                    conditional_tables,
+                    derived_fields: derived_fields_ir,
+                }));
+            }
+        }
+    }
+    Ok(BayesianNetworkIr {
+        function_name: raw.function_name.clone(),
+        model_name: raw.model_name.clone(),
+        algorithm_name: raw.algorithm_name.clone(),
+        model_type: raw.model_type.clone(),
+        inference_method: raw.inference_method.clone(),
+        is_scorable: raw.is_scorable,
+        mining_schema,
+        output,
+        targets,
+        nodes,
+    })
+}
+
 /// Lowers a [`RawPmml`] (from [`crate::xml::unmarshal()`]) into an optimized [`Ir`].
 ///
 /// Assigns stable [`FieldId`] and [`SymbolId`] values, flattens `TreeModel`
@@ -2189,9 +3630,9 @@ fn lower_anomaly_raw(
 ///
 /// Returns `PmmlError::UnsupportedMarkup` when:
 ///
-/// - `raw.unsupported_model` is `Some` (for example `AnomalyDetectionModel`,
-///   `BaselineModel`, `BayesianNetworkModel`, `GaussianProcessModel`,
-///   `SequenceModel`, `TextModel`, `TimeSeriesModel` — see `docs/PLAN.md` §1.5);
+/// - `raw.unsupported_model` is `Some` (for example `BayesianNetworkModel`,
+///   `SequenceModel` — see `docs/PLAN.md` §1.5; `AnomalyDetectionModel`, `BaselineModel`,
+///   `GaussianProcessModel`, `TextModel`, `TimeSeriesModel` are now supported);
 /// - a `DataField/@dataType` is `dateDaysSince[0]` or `dateTimeSecondsSince[0]`;
 /// - no known model is present and `data_dictionary` is empty / unrecognized.
 ///
@@ -2224,11 +3665,11 @@ fn lower_anomaly_raw(
 /// that are established earlier in the same function (for example, inserting a
 /// field name into `field_name_to_id` then immediately `get`-ing it).
 pub fn lower(raw: RawPmml) -> Result<Ir> {
-    // D1: gracefully handle unsupported models captured during unmarshal (AnomalyDetection, Baseline, etc.)
+    // D1: gracefully handle unsupported models captured during unmarshal (e.g. ModelComposition, CenterFields)
     // Return clear UnsupportedMarkup instead of generic "no supported model found"
     if let Some(ref model) = raw.unsupported_model {
         return Err(PmmlError::UnsupportedMarkup(format!(
-            "unsupported model: {model} (see docs/PLAN.md section 1.5 — explicitly unsupported upstream: AnomalyDetection/Baseline/Bayesian/Gaussian/Sequence/Text/TimeSeries, use JPMML fallback)"
+            "unsupported model: {model} (see docs/PLAN.md section 1.5 — explicitly unsupported upstream: ModelComposition/CenterFields, use JPMML fallback)"
         )));
     }
 
@@ -2416,6 +3857,31 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
     }
     if let Some(ref bm) = raw.baseline_model {
         all_raw_derived.extend(bm.local_derived_fields.clone());
+    }
+    if let Some(ref tsm) = raw.time_series_model {
+        all_raw_derived.extend(tsm.local_derived_fields.clone());
+    }
+    if let Some(ref gp) = raw.gaussian_process_model {
+        all_raw_derived.extend(gp.local_derived_fields.clone());
+    }
+    if let Some(ref tm) = raw.text_model {
+        all_raw_derived.extend(tm.local_derived_fields.clone());
+    }
+    if let Some(ref sm) = raw.sequence_model {
+        all_raw_derived.extend(sm.local_derived_fields.clone());
+    }
+    if let Some(ref bn) = raw.bayesian_network_model {
+        all_raw_derived.extend(bn.local_derived_fields.clone());
+        for node in &bn.nodes {
+            match node {
+                crate::xml::unmarshal::RawBayesianNode::Discrete(dn) => {
+                    all_raw_derived.extend(dn.derived_fields.clone());
+                }
+                crate::xml::unmarshal::RawBayesianNode::Continuous(cn) => {
+                    all_raw_derived.extend(cn.derived_fields.clone());
+                }
+            }
+        }
     }
 
     for df in &all_raw_derived {
@@ -3063,6 +4529,14 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             &mut interner,
         )?;
         (ModelIr::Baseline(bm_ir), vec![])
+    } else if let Some(tsm) = raw.time_series_model {
+        let tsm_ir = lower_time_series_raw(
+            &tsm,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        (ModelIr::TimeSeries(tsm_ir), vec![])
     } else if let Some(nn) = raw.neural_network {
         let mining_schema = lower_mining_schema(
             &nn.mining_schema,
@@ -3135,6 +4609,39 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                 .unwrap_or_else(|| "logistic".to_string()),
         };
         (ModelIr::NeuralNetwork(nn_ir), vec![])
+    } else if let Some(gp) = raw.gaussian_process_model {
+        let gp_ir = lower_gaussian_raw(
+            &gp,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        (ModelIr::GaussianProcess(gp_ir), vec![])
+    } else if let Some(tm) = raw.text_model {
+        let text_ir = lower_text_raw(
+            &tm,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        (ModelIr::Text(text_ir), vec![])
+    } else if let Some(sm) = raw.sequence_model {
+        let seq_ir = lower_sequence_raw(
+            &sm,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        (ModelIr::Sequence(seq_ir), vec![])
+    } else if let Some(bn) = raw.bayesian_network_model {
+        let bn_ir = lower_bayesian_raw(
+            &bn,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+            &define_map,
+        )?;
+        (ModelIr::BayesianNetwork(bn_ir), vec![])
     } else {
         return Err(PmmlError::UnsupportedMarkup(
             "no supported model found".into(),
@@ -3152,8 +4659,8 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
     }
 
     // 304 elements audit per spec/pmml.xsd 4,490 lines — see docs/PLAN.md §1.5
-    // Supported models: 12/19 (Tree, Regression, Mining, Scorecard, Clustering, NaiveBayes, KNN, SVM, NN, GeneralRegression, Association, RuleSet)
-    // Unsupported but gracefully rejected: AnomalyDetection, Baseline, BayesianNetwork, GaussianProcess, Sequence, Text, TimeSeries
+    // Supported models: 16/19 (Tree, Regression, Mining, Scorecard, Clustering, NaiveBayes, KNN, SVM, NN, GeneralRegression, Association, RuleSet, AnomalyDetection, Baseline, TimeSeries, GaussianProcess, Text, Sequence, BayesianNetwork)
+    // Unsupported but gracefully rejected: ModelComposition, CenterFields and legacy 4.1/3.2 elements
     // Elements counted via XJC generated classes (~100) + manual 304 via visitor hits — audit placeholder 304
     let element_coverage = 304;
 

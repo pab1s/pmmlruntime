@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<PMML xmlns="http://www.dmg.org/PMML-4_4" version="4.4">
+    <Header copyright="2019 dmg.org"/>
+    <DataDictionary numberOfFields="2">
+        <DataField name="text" optype="categorical" dataType="string"/>
+        <DataField name="class" optype="categorical" dataType="string">
+            <Value value="sports"/>
+            <Value value="politics"/>
+        </DataField>
+    </DataDictionary>
+    <TextModel modelName="TextTest" functionName="classification" numberOfTerms="3" numberOfDocuments="2">
+        <MiningSchema>
+            <MiningField name="text" usageType="active"/>
+            <MiningField name="class" usageType="target"/>
+        </MiningSchema>
+        <Output>
+            <OutputField name="predicted_class" optype="categorical" dataType="string" feature="predictedValue"/>
+        </Output>
+        <TextDictionary>
+            <Array n="3" type="string">hello world sports</Array>
+        </TextDictionary>
+        <TextCorpus>
+            <TextDocument id="doc1" name="doc1" length="2" file="doc1.txt"/>
+            <TextDocument id="doc2" name="doc2" length="2" file="doc2.txt"/>
+        </TextCorpus>
+        <DocumentTermMatrix>
+            <Matrix kind="any" nbRows="2" nbCols="3">
+                <Array n="6" type="real">1 0 1 0 1 1</Array>
+            </Matrix>
+        </DocumentTermMatrix>
+        <TextModelNormalization localTermWeights="termFrequency" globalTermWeights="inverseDocumentFrequency" documentNormalization="cosine"/>
+        <TextModelSimiliarity similarityType="cosine"/>
+    </TextModel>
+</PMML>

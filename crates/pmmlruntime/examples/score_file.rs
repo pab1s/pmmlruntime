@@ -130,6 +130,11 @@ fn main() -> anyhow::Result<()> {
         pmmlruntime::ir::ModelIr::RuleSet(_) => println!("  Model: RuleSetModel"),
         pmmlruntime::ir::ModelIr::AnomalyDetection(_) => println!("  Model: AnomalyDetectionModel"),
         pmmlruntime::ir::ModelIr::Baseline(_) => println!("  Model: BaselineModel"),
+        pmmlruntime::ir::ModelIr::GaussianProcess(_) => println!("  Model: GaussianProcessModel"),
+        pmmlruntime::ir::ModelIr::Text(_) => println!("  Model: TextModel"),
+        pmmlruntime::ir::ModelIr::TimeSeries(_) => println!("  Model: TimeSeriesModel"),
+        pmmlruntime::ir::ModelIr::Sequence(_) => println!("  Model: SequenceModel"),
+        pmmlruntime::ir::ModelIr::BayesianNetwork(_) => println!("  Model: BayesianNetworkModel"),
     }
 
     // 2a. Batch path — input data file (CSV). This is the "advanced" JPMML equivalent:

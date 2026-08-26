@@ -45,7 +45,14 @@
 //! See `docs/ARCHITECTURE.md` for the `bytes→RawPmml→Ir→Session::run(Value[FieldId])` flow, ownership `Arc<Ir>`,
 //! concurrency `rayon`, and `BumpArena` vs `LoadingCache` tradeoffs.
 
-#![allow(clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::if_same_then_else,
+    clippy::manual_map,
+    clippy::large_enum_variant
+)]
+#![allow(dead_code, unused_mut, unused_variables)]
 
 pub mod base;
 pub mod engine;
