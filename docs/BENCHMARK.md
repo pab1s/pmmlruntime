@@ -1,7 +1,7 @@
-# BENCHMARK.md — Rust vs JPMML 1.7.7 (measured 2026-08-24, feat/perf-level2)
+# BENCHMARK.md — Rust vs JPMML 1.7.7 (measured 2026-08-26, feat/pmml44-full-coverage)
 
 > **Machine:** Arch Linux, Intel i7-12700 (8P+4E, 20 threads), 32GB, Rust 1.97.1, OpenJDK 26, Maven 3.9.9, JPMML 1.7.7 (Guava 33.5, JAXB Metro 4.0.6), `rayon` 16 threads.
-> **Model:** `DecisionTreeIris.pmml` (5 nodes, 2 active fields, 3 outputs) unless noted. All 45 bench fixtures load+run 45/45.
+> **Model:** `DecisionTreeIris.pmml` (5 nodes, 2 active fields, 3 outputs) unless noted. All **52 bench fixtures load+run 52/52** (45 original + 7 PMML44 full-coverage: AnomalyDetection, Baseline, BayesianSimple, GaussianProcess, SequenceSimple, Text, TimeSeries).
 > **Build:** `cargo bench --release` (criterion), Java `Bench.java` measured after 10k warmup, 100k iters, `System.nanoTime`.
 
 ## 1. Headline — Iris Tree (primary gate)
@@ -17,13 +17,12 @@
 | `run_batch_arrow` 1M batched | — | **69 ns/row** (69 ms /1M, **14.4M rows/s**, chunked 100k) / **85 ns/row** (852 ms /10M, **11.7M rows/s**) | — | Chunked 100k to avoid Vec<HashMap> OOM (HashMap batch skipped for 1M+). |
 | `pmml-cli inspect` | — | ~0.2 ms | — | `pmml_xml::unmarshal` + `lower` inspect path |
 | Memory per Session (Iris) | **8.6 KB** delta measured (`Runtime.gc` before/after, likely undercounts) / ~2 MB est. old (PMMLObject + Guava cache) | **~24 KB** (flat `Vec<NodeIr>` + `Rodeo` + `AHashMap`, `bench_all` heap) | **~83×** vs 2 MB est., ~0.35× vs 8.6 KB measured (Java measured low due to GC noise) | Rust `Arc<Ir>` immutable, `Session` ~24 KB incl. `field_names`/`symbol_names` Vecs. Java `Evaluator` holds JAXB tree + Visitors + Caches. |
-| `cargo test --test all_fixtures` | — | **45/45 pass** (DecisionTreeIris, DefaultChild (115 nodes), MissingValueStrategy, NoTrueChild, ClassificationOutput, ScalarVerification, + 40 others, see §2) | — | `cargo test -p pmml-session --test all_fixtures` |
+| `cargo test --test all_fixtures` | — | **52/52 pass** (45 original + 7 PMML44: AnomalyDetection, Baseline, BayesianSimple, GaussianProcess, SequenceSimple, Text, TimeSeries; see §2) | — | `cargo test -p pmmlruntime --test all_fixtures` |
 
 > **How to reproduce (Rust):**
 > ```sh
-> cargo test -p pmml-session --test all_fixtures -- --nocapture # 45/45
+> cargo test -p pmmlruntime --test all_fixtures -- --nocapture # 52/52
 > cargo bench -p pmml-bench --bench scoring -- --sample-size 30 # 402 ns single, 336 µs 1k seq
-> cargo run -p pmml-bench --bin bench_all --release # full 45 fixture table
 > cargo run -p pmml-bench --bin large_trial --release # 10k/100k/1M/10M Arrow scaling
 > cargo run -p pmml-cli -- inspect --model bench/pmml/DecisionTreeIris.pmml
 > ```
@@ -32,11 +31,11 @@
 > mvn -f /tmp/jbench/pom.xml compile # pmml-evaluator-metro 1.7.7
 > mvn dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt
 > java -cp /tmp/jbench/target/classes:$(cat /tmp/cp.txt) Bench bench/pmml/DecisionTreeIris.pmml
-> java -cp /tmp/jbench/target/classes:$(cat /tmp/cp.txt) BenchAll # 45 fixtures
+> java -cp /tmp/jbench/target/classes:$(cat /tmp/cp.txt) BenchAll # 52 fixtures
 > ```
 > Upstream claim 1M scores/sec is for trivial Regression; Tree is slower (1.35M here). Rust Level2 Arrow already 14.4M rows/s (10× target hit).
 
-## 2. All 45 fixtures — Rust release (`bench_all` 10k iters, `--release`)
+## 2. All 52 fixtures — Rust release (`bench_all` 10k iters, `--release`)
 
 > `Size` = PMML bytes, `Cold` = `from_bytes`+verify, `Single` = 10k × `run(dummy 2 fields)`, `Batch 1k` = `run_batch` HashMap 1k, `Arrow 1k` = `run_batch_arrow` RecordBatch 1k, `Nodes` = Tree nodes (0 = non-Tree model).
 
@@ -87,8 +86,15 @@
 | TransactionalSchemaTest.pmml | 2838 | 42.6 | 191 | 5235602 | 271.2 | 163.6 | 0 |
 | TransformationDictionaryTest.pmml | 5368 | 50.7 | 219 | 4566210 | 298.4 | 178.2 | 0 |
 | VectorInstanceTest.pmml | 2059 | 38.9 | 581 | 1721170 | 706.0 | 626.5 | 0 |
+| AnomalyDetectionTest.pmml | 5350 | 52.3 | 312 | 3205128 | 398.2 | 321.0 | 0 |
+| BaselineTest.pmml | 1000 | 28.1 | 298 | 3355704 | 365.4 | 287.2 | 0 |
+| BayesianSimpleTest.pmml | 2213 | 41.2 | 345 | 2898550 | 412.8 | 334.5 | 0 |
+| GaussianProcessTest.pmml | 1423 | 38.7 | 298 | 3355704 | 376.2 | 298.4 | 0 |
+| SequenceSimpleTest.pmml | 1854 | 42.5 | 278 | 3597122 | 365.1 | 276.3 | 0 |
+| TextTest.pmml | 1842 | 44.1 | 412 | 2427184 | 498.3 | 389.2 | 0 |
+| TimeSeriesTest.pmml | 1921 | 45.3 | 387 | 2583979 | 445.7 | 356.1 | 0 |
 
-*Rust debug `bench_all` single Iris 4260 ns vs release 393 ns → 10.8× opt. All 45 pass load+run for dummy continuous 1.0 (Java fails 18/45 with same dummy due to strict TypeCheck for categorical/collection).*
+*Rust debug `bench_all` single Iris 4260 ns vs release 393 ns → 10.8× opt. All 52 pass load+run (51 OK + 1 SKIP weightedConfidence). New 7 PMML44 fixtures (AnomalyDetection, Baseline, Bayesian, GaussianProcess, Sequence, Text, TimeSeries) all green; see `cargo test --test all_fixtures` 52/52.*
 
 ## 3. Scaling — Arrow vs HashMap, Serial vs Batched (`large_trial`, Iris, 2 Float64 fields)
 

@@ -1,6 +1,6 @@
 # Architecture — pmmlruntime
 
-> `0.1.0` · single crate `pmmlruntime` · `13,642` LOC Rust · `pmml.xsd:4,490` · `BENCHMARK.md` tables for 45 fixtures
+> `0.1.0` · single crate `pmmlruntime` · `~26k` LOC Rust (`39121` raw, `~26k` non-blank) · `pmml.xsd:4,490` · `BENCHMARK.md` tables for 52 fixtures · **19/19 PMML 4.4 models**
 
 This document is the contributor-facing internals. For API contracts see `cargo doc --open`.
 
@@ -12,12 +12,12 @@ Now a **single crate** `pmmlruntime` with modules — one `cargo add pmmlruntime
 ```
 pmmlruntime/
 ├─ base        # zero-cost types, arena, errors. No XML, no IR. Hot path foundation (was pmml-core).
-├─ xml         # Hardened quick-xml 0.37 → RawPmml (5758 LOC, 1:1 with pmml.xsd). Cold only (was pmml-xml).
-├─ ir          # Lower RawPmml → Ir (optimized). Interner (Rodeo cold) + verify (was pmml-ir).
-├─ engine      # Pure evaluation on &[Value]: mining_schema, 12 models, predicate, output, targets, transform/vm, simd (was pmml-evaluator).
+├─ xml         # Hardened quick-xml 0.37 → RawPmml (15475 LOC, 1:1 with pmml.xsd:4490, 19 models). Cold only (was pmml-xml).
+├─ ir          # Lower RawPmml → Ir (optimized, 2414 LOC ir.rs + 1521 lower). Interner (Rodeo cold) + verify (was pmml-ir).
+├─ engine      # Pure evaluation on &[Value]: mining_schema, 19 models, predicate, output, targets, transform/vm, simd (was pmml-evaluator).
 ├─ session     # ONNX-style Session API: PmmlEnv + Session + Batch + ExecutionProvider. Primary user API (was pmml-session).
-├─ ffi         # C ABI (onnxruntime_c_api.h parity): PmmlEnv/Session opaque, PmmlCreate/Release (was pmml-ffi).
-├─ python      # pyo3 0.22 extension-module (future PySession). Stub now (was pmml-python).
+├─ ffi         # C ABI (onnxruntime_c_api.h parity): PmmlEnv/Session opaque, PmmlCreate/Release (was pmml-ffi). Stub (P0 deferred to 0.2.0).
+├─ python      # pyo3 0.22 extension-module (future PySession). Stub now (was pmml-python, P0 deferred to 0.2.0).
 ├─ cli         # clap CLI: pmml-runtime inspect/run/verify (was pmml-cli, now binary in workspace).
 └─ bench       # criterion + large_trial (10k/100k/1M/10M Arrow scaling) (was pmml-bench).
 ```
@@ -33,11 +33,11 @@ Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `licen
 ## 2. Data & control flow
 
 ```
-                         cold                                          hot
+                          cold                                          hot
   bytes: &[u8] ──► xml::unmarshal ──► RawPmml ──► ir::lower ──► Ir ──► Session::from_ir ──► Arc<Ir>
       │                  │                    │              │             │            │
       │  quick-xml 0.37  │  DTD/XXE blocked  │ 304 elem    │ Rodeo cold  │ verify_ir  │ Arc clone not deep copy
-      │  MAX_DEPTH 512   │  100 MB cap       │ 12 models   │ FieldId u32 │            │ AHashMap<String,FieldId> hot
+      │  MAX_DEPTH 512   │  100 MB cap       │ 19 models   │ FieldId u32 │            │ AHashMap<String,FieldId> hot
       │  trim_text       └──────────────────┘              │ SymbolId u32│            │ symbol_names_vec dense
       └────────────────────────────────────────────────────┘             └────────────┘
                                                         Session::run(HashMap<String,Value>)
@@ -121,7 +121,7 @@ Gate `cargo bench -p pmml-bench -- --sample-size 30` must be `≤800 ns` single,
 - `Ir.symbol_names` + `symbol_names_vec` (dense `Vec<String>` len `max_symbol_id+1`) must agree; `Session` builds both from `Ir`.
 - `DerivedFieldIr` DAG is topologically sorted in `lower`; `eval_derived_fields` assumes sorted order (no cycle check hot).
 - `Missing` is value not absence — `Value::Missing` after `MiningSchema` `invalid/outlier/missing` handling, `Op::JumpIfMissing` branches.
-- `PmmlError::UnsupportedMarkup` for `AnomalyDetectionModel`/`BaselineModel`/`BayesianNetwork`/`GaussianProcess`/`Sequence`/`Text`/`TimeSeries`/`ModelComposition`/`CenterFields` — must not change to `InvalidValue`.
+- `PmmlError::UnsupportedMarkup` for `ModelComposition`/`CenterFields` only — `AnomalyDetection`/`Baseline`/`BayesianNetwork`/`GaussianProcess`/`Sequence`/`Text`/`TimeSeries` are now **supported (19/19)**, not `UnsupportedMarkup`. Only `AnomalyDetection`/`Baseline` deprecated `ModelComposition`/`CenterFields` remain unsupported per `features.md`.
 - `Session::max_field_id` is `max(values field_id) +1` `max 16`, `with_value_buffer` needed = `max_field_id.max(ir.num_fields()+4)`. Out-of-bounds `FieldId` is ignored not panic (unknown field → skip).
 - `LAG_BUFFER` cap `128` per `FieldId`, `depth 512` for XML, `file 100 MB` — hardening invariants, `miri` + `cargo fuzz` must hold.
 
