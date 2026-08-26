@@ -353,13 +353,16 @@ pub struct RawSegment {
 }
 
 #[derive(Debug, Clone)]
-/// The model embedded in a [`RawSegment`] — currently `Tree` or `Regression`.
+/// The model embedded in a [`RawSegment`] — `Tree`, `Regression` or nested `Mining`.
 ///
 /// Matches PMML `MiningModel` `Segmentation` where each `Segment` may contain a
-/// `TreeModel` or `RegressionModel` (and historically an inline `Regression` element).
+/// `TreeModel`, `RegressionModel`, `MiningModel` (GBDT ensembles such as LightGBM
+/// `lightgbm2pmml` emit a `MiningModel` `modelChain` whose first segment is a `MiningModel`
+/// `sum` over stumps), and historically an inline `Regression` element.
 pub enum RawSegmentModel {
     Tree(RawTreeModel),
     Regression(RawRegressionModel),
+    Mining(Box<RawMiningModel>),
 }
 
 #[derive(Debug, Clone)]
@@ -1294,6 +1297,119 @@ pub enum RawExpression {
 }
 
 #[derive(Debug, Clone)]
+/// Anomaly detection inner model — the embedded `MODEL-ELEMENT` inside `AnomalyDetectionModel`.
+/// Any of the 12 supported models may appear; `AnomalyDetectionModel` itself is excluded per XSD.
+pub enum RawAnomalyModel {
+    Tree(RawTreeModel),
+    Regression(RawRegressionModel),
+    Mining(Box<RawMiningModel>),
+    Scorecard(RawScorecard),
+    Clustering(RawClusteringModel),
+    NaiveBayes(RawNaiveBayesModel),
+    NearestNeighbor(RawNearestNeighborModel),
+    SupportVectorMachine(RawSupportVectorMachineModel),
+    NeuralNetwork(RawNeuralNetwork),
+    GeneralRegression(RawGeneralRegressionModel),
+    Association(RawAssociationModel),
+    RuleSet(RawRuleSetModel),
+}
+
+#[derive(Debug, Clone)]
+/// Raw `AnomalyDetectionModel` — mirrors `pmml.xsd:AnomalyDetectionModel` (1718-1737).
+pub struct RawAnomalyDetectionModel {
+    pub function_name: String,
+    pub algorithm_type: String,
+    pub model_name: Option<String>,
+    pub sample_data_size: Option<String>,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub model: RawAnomalyModel,
+    pub mean_cluster_distances: Option<Vec<f64>>,
+}
+
+#[derive(Debug, Clone)]
+/// Continuous distribution choice for `BaselineModel` / `TestDistributions`.
+pub enum RawContinuousDistribution {
+    Any { mean: f64, variance: f64 },
+    Gaussian { mean: f64, variance: f64 },
+    Poisson { mean: f64 },
+    Uniform { lower: f64, upper: f64 },
+}
+
+#[derive(Debug, Clone)]
+/// A single `<FieldValueCount>` inside a `CountTable`.
+pub struct RawFieldValueCount {
+    pub field: String,
+    pub value: String,
+    pub count: f64,
+}
+
+#[derive(Debug, Clone)]
+/// A recursive `<FieldValue>` inside a `CountTable` — field/value plus nested counts.
+pub struct RawFieldValue {
+    pub field: String,
+    pub value: String,
+    pub field_values: Vec<RawFieldValue>,
+    pub field_value_counts: Vec<RawFieldValueCount>,
+}
+
+#[derive(Debug, Clone)]
+/// A `<CountTable>` or `<NormalizedCountTable>` — discrete baseline distribution.
+pub struct RawCountTable {
+    pub sample: Option<f64>,
+    pub field_values: Vec<RawFieldValue>,
+    pub field_value_counts: Vec<RawFieldValueCount>,
+}
+
+#[derive(Debug, Clone)]
+/// Discrete distribution choice for `BaselineModel`.
+pub enum RawDiscreteDistribution {
+    CountTable(RawCountTable),
+    NormalizedCountTable(RawCountTable),
+    FieldRefs(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+/// Content of a `<Baseline>` element — either continuous or discrete.
+pub struct RawBaseline {
+    pub continuous: Option<RawContinuousDistribution>,
+    pub discrete: Option<RawDiscreteDistribution>,
+}
+
+#[derive(Debug, Clone)]
+/// Content of an `<Alternate>` element — only continuous per XSD.
+pub struct RawAlternate {
+    pub distribution: RawContinuousDistribution,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `<TestDistributions>` inside `BaselineModel`.
+pub struct RawTestDistributions {
+    pub field: String,
+    pub test_statistic: String,
+    pub reset_value: f64,
+    pub window_size: i32,
+    pub weight_field: Option<String>,
+    pub normalization_scheme: Option<String>,
+    pub baseline: RawBaseline,
+    pub alternate: Option<RawAlternate>,
+}
+
+#[derive(Debug, Clone)]
+/// Raw `BaselineModel` — mirrors `pmml.xsd:BaselineModel` (3659-3815).
+pub struct RawBaselineModel {
+    pub function_name: String,
+    pub model_name: Option<String>,
+    pub mining_schema: Vec<RawMiningField>,
+    pub output: Vec<RawOutputField>,
+    pub targets: Vec<RawTarget>,
+    pub local_derived_fields: Vec<RawDerivedField>,
+    pub test_distributions: RawTestDistributions,
+}
+
+#[derive(Debug, Clone)]
 /// Top-level PMML document produced by [`unmarshal`] — the `RawPmml` IR pre-lowering.
 ///
 /// Holds `DataDictionary` plus at most one of the 12 supported model types, plus
@@ -1344,6 +1460,8 @@ pub struct RawPmml {
     pub general_regression_model: Option<RawGeneralRegressionModel>,
     pub association_model: Option<RawAssociationModel>,
     pub rule_set_model: Option<RawRuleSetModel>,
+    pub anomaly_detection_model: Option<RawAnomalyDetectionModel>,
+    pub baseline_model: Option<RawBaselineModel>,
     /// TransformationDictionary derived fields (global)
     pub transformation_dictionary: Vec<RawDerivedField>,
     /// TransformationDictionary define functions
@@ -3241,6 +3359,10 @@ fn parse_segment(reader: &mut quick_xml::Reader<&[u8]>, start: &BytesStart) -> R
                     "RegressionModel" => {
                         let rm = parse_regression_model(reader, &e)?;
                         model = Some(RawSegmentModel::Regression(rm));
+                    }
+                    "MiningModel" => {
+                        let mm = parse_mining_model(reader, &e)?;
+                        model = Some(RawSegmentModel::Mining(Box::new(mm)));
                     }
                     "Regression" => {
                         // Embedded Regression inside MiningModel (PMML 4.1 style)
@@ -6409,6 +6531,1163 @@ fn parse_rule_set_model(
     })
 }
 
+fn parse_mean_cluster_distances(reader: &mut quick_xml::Reader<&[u8]>) -> Result<Vec<f64>> {
+    let mut buf = Vec::new();
+    let mut values = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(inner)) if tag_name(&inner) == "Array" => {
+                let mut inner2 = Vec::new();
+                let mut txt = String::new();
+                loop {
+                    match reader.read_event_into(&mut inner2) {
+                        Ok(Event::Text(t)) => {
+                            txt = t.unescape().unwrap_or_default().into_owned();
+                        }
+                        Ok(Event::End(end))
+                            if String::from_utf8_lossy(end.name().as_ref()) == "Array" =>
+                        {
+                            break
+                        }
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                    inner2.clear();
+                }
+                for part in txt.split_whitespace() {
+                    if let Ok(v) = part.parse::<f64>() {
+                        values.push(v);
+                    }
+                }
+            }
+            Ok(Event::Empty(inner)) if tag_name(&inner) == "Array" => {}
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "MeanClusterDistances" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(values)
+}
+
+fn parse_anomaly_detection_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawAnomalyDetectionModel> {
+    let function_name = attr_required(start, "functionName", "AnomalyDetectionModel")?;
+    let algorithm_type = attr(start, "algorithmType").unwrap_or_else(|| "other".to_string());
+    let model_name = attr(start, "modelName");
+    let sample_data_size = attr(start, "sampleDataSize");
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut mean_cluster_distances: Option<Vec<f64>> = None;
+    let mut anomaly_model: Option<RawAnomalyModel> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "MeanClusterDistances" => {
+                        let vals = parse_mean_cluster_distances(reader)?;
+                        mean_cluster_distances = Some(vals);
+                    }
+                    "TreeModel" => {
+                        let tm = parse_tree_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Tree(tm));
+                    }
+                    "RegressionModel" => {
+                        let rm = parse_regression_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Regression(rm));
+                    }
+                    "MiningModel" => {
+                        let mm = parse_mining_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Mining(Box::new(mm)));
+                    }
+                    "Scorecard" => {
+                        let sc = parse_scorecard(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Scorecard(sc));
+                    }
+                    "ClusteringModel" => {
+                        let cm = parse_clustering_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Clustering(cm));
+                    }
+                    "NaiveBayesModel" => {
+                        let nb = parse_naive_bayes_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::NaiveBayes(nb));
+                    }
+                    "NearestNeighborModel" => {
+                        let nn = parse_nearest_neighbor_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::NearestNeighbor(nn));
+                    }
+                    "SupportVectorMachineModel" => {
+                        let svm = parse_support_vector_machine_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::SupportVectorMachine(svm));
+                    }
+                    "NeuralNetwork" => {
+                        let nn = parse_neural_network(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::NeuralNetwork(nn));
+                    }
+                    "GeneralRegressionModel" => {
+                        let gr = parse_general_regression_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::GeneralRegression(gr));
+                    }
+                    "AssociationModel" => {
+                        let am = parse_association_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Association(am));
+                    }
+                    "RuleSetModel" => {
+                        let rsm = parse_rule_set_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::RuleSet(rsm));
+                    }
+                    _ => {
+                        // skip unknown (Extension, ModelStats, etc.)
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "TreeModel" => {
+                        let tm = parse_tree_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Tree(tm));
+                    }
+                    "ClusteringModel" => {
+                        let cm = parse_clustering_model(reader, &e)?;
+                        anomaly_model = Some(RawAnomalyModel::Clustering(cm));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "AnomalyDetectionModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let model = anomaly_model.ok_or_else(|| PmmlError::ParseError {
+        context: "AnomalyDetectionModel".into(),
+        message: "missing embedded MODEL-ELEMENT".into(),
+    })?;
+    Ok(RawAnomalyDetectionModel {
+        function_name,
+        algorithm_type,
+        model_name,
+        sample_data_size,
+        mining_schema,
+        output,
+        targets: Vec::new(),
+        local_derived_fields,
+        model,
+        mean_cluster_distances,
+    })
+}
+
+fn parse_continuous_distribution(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+    tag: &str,
+) -> Result<RawContinuousDistribution> {
+    match tag {
+        "AnyDistribution" => {
+            let mean = attr(start, "mean")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let variance = attr(start, "variance")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            // consume until end
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref()) == "AnyDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Any { mean, variance })
+        }
+        "GaussianDistribution" => {
+            let mean = attr(start, "mean")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let variance = attr(start, "variance")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref())
+                            == "GaussianDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Gaussian { mean, variance })
+        }
+        "PoissonDistribution" => {
+            let mean = attr(start, "mean")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref())
+                            == "PoissonDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Poisson { mean })
+        }
+        "UniformDistribution" => {
+            let lower = attr(start, "lower")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let upper = attr(start, "upper")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::End(end))
+                        if String::from_utf8_lossy(end.name().as_ref())
+                            == "UniformDistribution" =>
+                    {
+                        break
+                    }
+                    Ok(Event::Empty(_)) => break,
+                    Ok(Event::Eof) => break,
+                    _ => {}
+                }
+                buf.clear();
+            }
+            Ok(RawContinuousDistribution::Uniform { lower, upper })
+        }
+        _ => Err(PmmlError::ParseError {
+            context: "Distribution".into(),
+            message: format!("unknown continuous distribution {tag}"),
+        }),
+    }
+}
+
+fn parse_count_table(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawCountTable> {
+    let sample = attr(start, "sample").and_then(|s| s.parse::<f64>().ok());
+    let mut field_value_counts = Vec::new();
+    let mut field_values = Vec::new();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "FieldValueCount" => {
+                        let field = attr_required(&e, "field", "FieldValueCount")?;
+                        let value = attr_required(&e, "value", "FieldValueCount")?;
+                        let count = attr(&e, "count")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        field_value_counts.push(RawFieldValueCount {
+                            field,
+                            value,
+                            count,
+                        });
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "FieldValueCount" =>
+                                {
+                                    break
+                                }
+                                Ok(Event::Empty(_)) => break,
+                                _ => {}
+                            }
+                            inner.clear();
+                            break;
+                        }
+                    }
+                    "FieldValue" => {
+                        // simplified: treat nested as opaque, but try to collect inner counts
+                        let field = attr(&e, "field").unwrap_or_default();
+                        let value = attr(&e, "value").unwrap_or_default();
+                        let mut inner = Vec::new();
+                        let mut nested_fvcs = Vec::new();
+                        let nested_fvs = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(iv)) if tag_name(&iv) == "FieldValueCount" => {
+                                    let f = attr_required(&iv, "field", "FieldValueCount")?;
+                                    let v = attr_required(&iv, "value", "FieldValueCount")?;
+                                    let c = attr(&iv, "count")
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.0);
+                                    nested_fvcs.push(RawFieldValueCount {
+                                        field: f,
+                                        value: v,
+                                        count: c,
+                                    });
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "FieldValueCount" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(iv)) if tag_name(&iv) == "FieldValueCount" => {
+                                    let f = attr_required(&iv, "field", "FieldValueCount")?;
+                                    let v = attr_required(&iv, "value", "FieldValueCount")?;
+                                    let c = attr(&iv, "count")
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.0);
+                                    nested_fvcs.push(RawFieldValueCount {
+                                        field: f,
+                                        value: v,
+                                        count: c,
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "FieldValue" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        field_values.push(RawFieldValue {
+                            field,
+                            value,
+                            field_values: nested_fvs,
+                            field_value_counts: nested_fvcs,
+                        });
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(_)) => {}
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                if tag == "FieldValueCount" {
+                    let field = attr_required(&e, "field", "FieldValueCount")?;
+                    let value = attr_required(&e, "value", "FieldValueCount")?;
+                    let count = attr(&e, "count")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    field_value_counts.push(RawFieldValueCount {
+                        field,
+                        value,
+                        count,
+                    });
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "CountTable"
+                    || String::from_utf8_lossy(end.name().as_ref()) == "NormalizedCountTable" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(RawCountTable {
+        sample,
+        field_values,
+        field_value_counts,
+    })
+}
+
+fn parse_test_distributions(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawTestDistributions> {
+    let field = attr_required(start, "field", "TestDistributions")?;
+    let test_statistic = attr_required(start, "testStatistic", "TestDistributions")?;
+    let reset_value = attr(start, "resetValue")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let window_size = attr(start, "windowSize")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
+    let weight_field = attr(start, "weightField");
+    let normalization_scheme = attr(start, "normalizationScheme");
+    let mut baseline: Option<RawBaseline> = None;
+    let mut alternate: Option<RawAlternate> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "Baseline" => {
+                        let mut cont: Option<RawContinuousDistribution> = None;
+                        let mut disc: Option<RawDiscreteDistribution> = None;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    match itag.as_str() {
+                                        "AnyDistribution"
+                                        | "GaussianDistribution"
+                                        | "PoissonDistribution"
+                                        | "UniformDistribution" => {
+                                            let d = parse_continuous_distribution(
+                                                reader, &inner_e, &itag,
+                                            )?;
+                                            cont = Some(d);
+                                        }
+                                        "CountTable" => {
+                                            let ct = parse_count_table(reader, &inner_e)?;
+                                            disc = Some(RawDiscreteDistribution::CountTable(ct));
+                                        }
+                                        "NormalizedCountTable" => {
+                                            let ct = parse_count_table(reader, &inner_e)?;
+                                            disc = Some(
+                                                RawDiscreteDistribution::NormalizedCountTable(ct),
+                                            );
+                                        }
+                                        "FieldRef" => {
+                                            // collect FieldRefs for chiSquareIndependence
+                                            let mut refs = Vec::new();
+                                            let field_name =
+                                                attr_required(&inner_e, "field", "FieldRef")?;
+                                            refs.push(field_name);
+                                            // consume end
+                                            let mut skip = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut skip) {
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "FieldRef" =>
+                                                    {
+                                                        break
+                                                    }
+                                                    Ok(Event::Empty(_)) => break,
+                                                    _ => {}
+                                                }
+                                                skip.clear();
+                                                break;
+                                            }
+                                            // check for more FieldRefs siblings
+                                            let mut extra = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut extra) {
+                                                    Ok(Event::Start(ff))
+                                                        if tag_name(&ff) == "FieldRef" =>
+                                                    {
+                                                        let f = attr_required(
+                                                            &ff, "field", "FieldRef",
+                                                        )?;
+                                                        refs.push(f);
+                                                        let mut s2 = Vec::new();
+                                                        loop {
+                                                            match reader.read_event_into(&mut s2) {
+                                                                Ok(Event::End(end))
+                                                                    if String::from_utf8_lossy(
+                                                                        end.name().as_ref(),
+                                                                    ) == "FieldRef" =>
+                                                                {
+                                                                    break
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                            s2.clear();
+                                                            break;
+                                                        }
+                                                    }
+                                                    Ok(Event::Empty(ff))
+                                                        if tag_name(&ff) == "FieldRef" =>
+                                                    {
+                                                        let f = attr_required(
+                                                            &ff, "field", "FieldRef",
+                                                        )?;
+                                                        refs.push(f);
+                                                    }
+                                                    Ok(Event::End(end))
+                                                        if String::from_utf8_lossy(
+                                                            end.name().as_ref(),
+                                                        ) == "Baseline" =>
+                                                    {
+                                                        // Baseline ends after FieldRefs; outer assignment handles it
+                                                        break;
+                                                    }
+                                                    _ => {
+                                                        // peek whether next is End Baseline by checking buffer? simplified
+                                                        // if we haven't seen End, continue
+                                                        // For now, try to detect FieldRef vs other
+                                                        // If not FieldRef, put back? Not easy.
+                                                        // We'll assume FieldRefs case ends with Baseline end, so break
+                                                        // But if tag not FieldRef, we treat as end of baseline
+                                                        // Check if End Baseline
+                                                        // We need to handle generically: if we see End Baseline, break
+                                                        // Otherwise skip
+                                                        // Since we are in inner loop for Baseline children, we can check tag
+                                                        // But we are peeking one event ahead; if it's not Start FieldRef nor Empty FieldRef, it's likely End Baseline
+                                                        // So we push refs and then break to outer handling
+                                                        // To simplify, if extra contains End Baseline, handle
+                                                        break;
+                                                    }
+                                                }
+                                                extra.clear();
+                                                // after collecting, set disc and break inner
+                                            }
+                                            disc = Some(RawDiscreteDistribution::FieldRefs(refs));
+                                        }
+                                        _ => {
+                                            let mut depth = 1usize;
+                                            let mut skip = Vec::new();
+                                            loop {
+                                                match reader.read_event_into(&mut skip) {
+                                                    Ok(Event::Start(_)) => depth += 1,
+                                                    Ok(Event::End(end)) => {
+                                                        depth -= 1;
+                                                        if depth == 0
+                                                            && String::from_utf8_lossy(
+                                                                end.name().as_ref(),
+                                                            ) == itag
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                                skip.clear();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    match itag.as_str() {
+                                        "GaussianDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            cont = Some(RawContinuousDistribution::Gaussian {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "AnyDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            cont = Some(RawContinuousDistribution::Any {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "PoissonDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            cont =
+                                                Some(RawContinuousDistribution::Poisson { mean });
+                                        }
+                                        "UniformDistribution" => {
+                                            let lower = attr(&inner_e, "lower")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let upper = attr(&inner_e, "upper")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            cont = Some(RawContinuousDistribution::Uniform {
+                                                lower,
+                                                upper,
+                                            });
+                                        }
+                                        "FieldRef" => {
+                                            let f = attr_required(&inner_e, "field", "FieldRef")?;
+                                            // For Empty FieldRef inside Baseline, need to collect multiple
+                                            // Here we may have only one; handle second via next loop
+                                            let refs = vec![f];
+                                            // peek next inner_e already consumed; continue loop will handle next
+                                            // So set disc now and let loop continue to collect more
+                                            // To keep simple, set disc with current refs; later will extend if more
+                                            // For now, handle single case; multi will be built by subsequent iterations
+                                            // But we need to not overwrite. So push.
+                                            // Instead collect by extending existing FieldRefs if present
+                                            if let Some(RawDiscreteDistribution::FieldRefs(
+                                                existing,
+                                            )) = &disc
+                                            {
+                                                let mut new_refs = existing.clone();
+                                                new_refs.extend(refs);
+                                                disc = Some(RawDiscreteDistribution::FieldRefs(
+                                                    new_refs,
+                                                ));
+                                            } else {
+                                                disc =
+                                                    Some(RawDiscreteDistribution::FieldRefs(refs));
+                                            }
+                                        }
+                                        "CountTable" => {
+                                            let ct = RawCountTable {
+                                                sample: attr(&inner_e, "sample")
+                                                    .and_then(|s| s.parse::<f64>().ok()),
+                                                field_values: Vec::new(),
+                                                field_value_counts: Vec::new(),
+                                            };
+                                            disc = Some(RawDiscreteDistribution::CountTable(ct));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Baseline" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        baseline = Some(RawBaseline {
+                            continuous: cont,
+                            discrete: disc,
+                        });
+                    }
+                    "Alternate" => {
+                        let mut dist_opt: Option<RawContinuousDistribution> = None;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    if matches!(
+                                        itag.as_str(),
+                                        "AnyDistribution"
+                                            | "GaussianDistribution"
+                                            | "PoissonDistribution"
+                                            | "UniformDistribution"
+                                    ) {
+                                        let d =
+                                            parse_continuous_distribution(reader, &inner_e, &itag)?;
+                                        dist_opt = Some(d);
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e)) => {
+                                    let itag = tag_name(&inner_e);
+                                    match itag.as_str() {
+                                        "GaussianDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            dist_opt = Some(RawContinuousDistribution::Gaussian {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "AnyDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let var = attr(&inner_e, "variance")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            dist_opt = Some(RawContinuousDistribution::Any {
+                                                mean,
+                                                variance: var,
+                                            });
+                                        }
+                                        "PoissonDistribution" => {
+                                            let mean = attr(&inner_e, "mean")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            dist_opt =
+                                                Some(RawContinuousDistribution::Poisson { mean });
+                                        }
+                                        "UniformDistribution" => {
+                                            let lower = attr(&inner_e, "lower")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(0.0);
+                                            let upper = attr(&inner_e, "upper")
+                                                .and_then(|s| s.parse::<f64>().ok())
+                                                .unwrap_or(1.0);
+                                            dist_opt = Some(RawContinuousDistribution::Uniform {
+                                                lower,
+                                                upper,
+                                            });
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Alternate" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                        if let Some(d) = dist_opt {
+                            alternate = Some(RawAlternate { distribution: d });
+                        }
+                    }
+                    _ => {
+                        let mut depth = 1usize;
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(_)) => depth += 1,
+                                Ok(Event::End(end)) => {
+                                    depth -= 1;
+                                    if depth == 0
+                                        && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                    {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let tag = tag_name(&e);
+                // Empty Alternate/Baseline not typical; ignore
+                if tag == "Baseline" || tag == "Alternate" {
+                    // empty -> no dist
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "TestDistributions" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let baseline = baseline.ok_or_else(|| PmmlError::ParseError {
+        context: "TestDistributions".into(),
+        message: "missing Baseline".into(),
+    })?;
+    Ok(RawTestDistributions {
+        field,
+        test_statistic,
+        reset_value,
+        window_size,
+        weight_field,
+        normalization_scheme,
+        baseline,
+        alternate,
+    })
+}
+
+fn parse_baseline_model(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    start: &BytesStart,
+) -> Result<RawBaselineModel> {
+    let function_name = attr_required(start, "functionName", "BaselineModel")?;
+    let model_name = attr(start, "modelName");
+    let mut mining_schema = Vec::new();
+    let mut output = Vec::new();
+    let mut targets = Vec::new();
+    let mut local_derived_fields = Vec::new();
+    let mut test_distributions: Option<RawTestDistributions> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag = tag_name(&e);
+                match tag.as_str() {
+                    "MiningSchema" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "MiningField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "MiningField" =>
+                                {
+                                    let mf = parse_mining_field(&inner_e)?;
+                                    mining_schema.push(mf);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "MiningSchema" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Output" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "OutputField" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                }
+                                Ok(Event::Empty(inner_e))
+                                    if tag_name(&inner_e) == "OutputField" =>
+                                {
+                                    let of = parse_output_field(&inner_e)?;
+                                    output.push(of);
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref()) == "Output" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "Targets" => {
+                        let mut inner = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut inner) {
+                                Ok(Event::Start(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    // consume inner Target
+                                    let mut skip = Vec::new();
+                                    loop {
+                                        match reader.read_event_into(&mut skip) {
+                                            Ok(Event::End(end))
+                                                if String::from_utf8_lossy(end.name().as_ref())
+                                                    == "Target" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Empty(_)) => break,
+                                            _ => {}
+                                        }
+                                        skip.clear();
+                                        break;
+                                    }
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: Vec::new(),
+                                    });
+                                }
+                                Ok(Event::Empty(inner_e)) if tag_name(&inner_e) == "Target" => {
+                                    let field = attr(&inner_e, "field");
+                                    let op_type = attr(&inner_e, "opType");
+                                    let cast_integer = attr(&inner_e, "castInteger");
+                                    let rescale_constant = attr(&inner_e, "rescaleConstant")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    let rescale_factor = attr(&inner_e, "rescaleFactor")
+                                        .and_then(|s| s.parse::<f64>().ok());
+                                    targets.push(RawTarget {
+                                        field,
+                                        op_type,
+                                        cast_integer,
+                                        min: None,
+                                        max: None,
+                                        rescale_constant,
+                                        rescale_factor,
+                                        target_values: Vec::new(),
+                                    });
+                                }
+                                Ok(Event::End(end))
+                                    if String::from_utf8_lossy(end.name().as_ref())
+                                        == "Targets" =>
+                                {
+                                    break
+                                }
+                                _ => {}
+                            }
+                            inner.clear();
+                        }
+                    }
+                    "LocalTransformations" => {
+                        let fields = parse_local_transformations(reader)?;
+                        local_derived_fields.extend(fields);
+                    }
+                    "TestDistributions" => {
+                        let td = parse_test_distributions(reader, &e)?;
+                        test_distributions = Some(td);
+                    }
+                    _ => {
+                        if tag == "ModelStats"
+                            || tag == "ModelExplanation"
+                            || tag == "ModelVerification"
+                        {
+                            let mut depth = 1usize;
+                            let mut inner = Vec::new();
+                            loop {
+                                match reader.read_event_into(&mut inner) {
+                                    Ok(Event::Start(_)) => depth += 1,
+                                    Ok(Event::End(end)) => {
+                                        depth -= 1;
+                                        if depth == 0
+                                            && String::from_utf8_lossy(end.name().as_ref()) == tag
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(Event::Empty(_)) => {}
+                                    _ => {}
+                                }
+                                inner.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(end))
+                if String::from_utf8_lossy(end.name().as_ref()) == "BaselineModel" =>
+            {
+                break
+            }
+            Ok(Event::Eof) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    let td = test_distributions.ok_or_else(|| PmmlError::ParseError {
+        context: "BaselineModel".into(),
+        message: "missing TestDistributions".into(),
+    })?;
+    Ok(RawBaselineModel {
+        function_name,
+        model_name,
+        mining_schema,
+        output,
+        targets,
+        local_derived_fields,
+        test_distributions: td,
+    })
+}
+
 // ---------- Top-level ----------
 
 /// Unmarshal `bytes` into a [`RawPmml`] with hardened `quick-xml` 0.37 parsing.
@@ -6495,6 +7774,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
     let mut general_regression_model: Option<RawGeneralRegressionModel> = None;
     let mut association_model: Option<RawAssociationModel> = None;
     let mut rule_set_model: Option<RawRuleSetModel> = None;
+    let mut anomaly_detection_model: Option<RawAnomalyDetectionModel> = None;
+    let mut baseline_model: Option<RawBaselineModel> = None;
     let mut transformation_dictionary: Vec<RawDerivedField> = Vec::new();
     let mut define_functions: Vec<RawDefineFunction> = Vec::new();
     let mut buf = Vec::new();
@@ -6660,6 +7941,14 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         let fields = parse_local_transformations(&mut reader)?;
                         transformation_dictionary.extend(fields);
                     }
+                    "AnomalyDetectionModel" => {
+                        let adm = parse_anomaly_detection_model(&mut reader, &e)?;
+                        anomaly_detection_model = Some(adm);
+                    }
+                    "BaselineModel" => {
+                        let bm = parse_baseline_model(&mut reader, &e)?;
+                        baseline_model = Some(bm);
+                    }
                     "Extension" => {
                         // Gracefully capture vendor extension, do not error
                         let mut ext = parse_extension(&e);
@@ -6688,9 +7977,7 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                         extensions.push(ext);
                     }
                     // Unsupported PMML 4.4 models — captured gracefully for verification (plan D1)
-                    "AnomalyDetectionModel"
-                    | "BaselineModel"
-                    | "BaselineRegressionModel"
+                    "BaselineRegressionModel"
                     | "BayesianNetworkModel"
                     | "GaussianProcessModel"
                     | "SequenceModel"
@@ -6780,6 +8067,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
                 } else if tag == "Extension" {
                     extensions.push(parse_extension(&e));
                 } else if (tag.ends_with("Model") || tag == "ModelComposition")
+                    && tag != "AnomalyDetectionModel"
+                    && tag != "BaselineModel"
                     && unsupported_model.is_none()
                 {
                     unsupported_model = Some(tag);
@@ -6811,6 +8100,8 @@ pub fn unmarshal(bytes: &[u8]) -> Result<RawPmml> {
         general_regression_model,
         association_model,
         rule_set_model,
+        anomaly_detection_model,
+        baseline_model,
         transformation_dictionary,
         define_functions,
         extensions,
