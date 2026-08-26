@@ -315,6 +315,9 @@ impl ExecutionProvider for CpuBatchedProvider {
     /// Handles `DerivedFields` then `ModelIr` variant. For `MiningModel`/`GeneralRegression`
     /// it uses the `OnceLock` cached `name_to_id` map.
     fn eval_row(&self, ir: &Ir, values: &mut [Value]) -> Result<Value> {
+        if !ir.symbol_names.is_empty() {
+            crate::engine::transform::vm::vm_set_symbol_map(ir.symbol_names.clone());
+        }
         // Derived fields first (if any) — per-row, thread-local values
         if !ir.derived_fields.is_empty() {
             crate::engine::eval_derived_fields(&ir.derived_fields, values)
@@ -360,6 +363,21 @@ impl ExecutionProvider for CpuBatchedProvider {
             }
             ModelIr::Association(a) => crate::engine::models::evaluate_association(a, values),
             ModelIr::RuleSet(r) => crate::engine::models::evaluate_rule_set(r, values),
+            ModelIr::AnomalyDetection(ad) => {
+                crate::engine::models::evaluate_anomaly_detection(ad, values)
+            }
+            ModelIr::Baseline(b) => crate::engine::models::evaluate_baseline(b, values),
+            ModelIr::GaussianProcess(gp) => {
+                crate::engine::models::evaluate_gaussian_process(gp, values)
+            }
+            ModelIr::Text(t) => {
+                crate::engine::models::evaluate_text(t, values, Some(&ir.symbol_names))
+            }
+            ModelIr::TimeSeries(ts) => crate::engine::models::evaluate_time_series(ts, values),
+            ModelIr::Sequence(s) => crate::engine::models::evaluate_sequence(s, values),
+            ModelIr::BayesianNetwork(bn) => {
+                crate::engine::models::evaluate_bayesian_network(bn, values)
+            }
         };
         Ok(predicted)
     }

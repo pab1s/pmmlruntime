@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<PMML xmlns="http://www.dmg.org/PMML-4_4" version="4.4">
+    <Header copyright="2019 dmg.org"/>
+    <DataDictionary numberOfFields="3">
+        <DataField name="x1" optype="continuous" dataType="double"/>
+        <DataField name="x2" optype="continuous" dataType="double"/>
+        <DataField name="y" optype="continuous" dataType="double"/>
+    </DataDictionary>
+    <GaussianProcessModel functionName="regression" modelName="GPTest">
+        <MiningSchema>
+            <MiningField name="x1" usageType="active"/>
+            <MiningField name="x2" usageType="active"/>
+            <MiningField name="y" usageType="target"/>
+        </MiningSchema>
+        <Output>
+            <OutputField name="predicted_y" optype="continuous" dataType="double" feature="predictedValue"/>
+        </Output>
+        <RadialBasisKernel gamma="1.0" noiseVariance="0.1" description="rbf"/>
+        <TrainingInstances isTransformed="false" recordCount="2" fieldCount="2">
+            <InstanceFields>
+                <InstanceField field="x1" column="x1"/>
+                <InstanceField field="x2" column="x2"/>
+            </InstanceFields>
+            <InlineTable>
+                <row><x1>0.0</x1><x2>0.0</x2><y>0.0</y></row>
+                <row><x1>1.0</x1><x2>1.0</x2><y>1.0</y></row>
+            </InlineTable>
+        </TrainingInstances>
+    </GaussianProcessModel>
+</PMML>

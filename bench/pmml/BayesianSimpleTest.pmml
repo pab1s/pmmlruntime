@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PMML version="4.4" xmlns="https://www.dmg.org/PMML-4_4">
+<Header copyright="test"/>
+<DataDictionary>
+  <DataField name="A" dataType="string" optype="categorical"><Value value="0"/><Value value="1"/></DataField>
+  <DataField name="B" dataType="string" optype="categorical"><Value value="0"/><Value value="1"/></DataField>
+  <DataField name="C" dataType="string" optype="categorical"><Value value="0"/><Value value="1"/><Value value="2"/></DataField>
+</DataDictionary>
+<BayesianNetworkModel functionName="classification">
+  <MiningSchema><MiningField name="A" usageType="target"/><MiningField name="C" usageType="active"/></MiningSchema>
+  <BayesianNetworkNodes>
+    <DiscreteNode name="A"><ValueProbability value="0" probability="0.4"/><ValueProbability value="1" probability="0.6"/></DiscreteNode>
+    <DiscreteNode name="B"><ValueProbability value="0" probability="0.7"/><ValueProbability value="1" probability="0.3"/></DiscreteNode>
+    <DiscreteNode name="C">
+      <DiscreteConditionalProbability><ParentValue parent="A" value="0"/><ParentValue parent="B" value="0"/><ValueProbability value="0" probability="0.7"/><ValueProbability value="1" probability="0.2"/><ValueProbability value="2" probability="0.1"/></DiscreteConditionalProbability>
+      <DiscreteConditionalProbability><ParentValue parent="A" value="0"/><ParentValue parent="B" value="1"/><ValueProbability value="0" probability="0.6"/><ValueProbability value="1" probability="0.2"/><ValueProbability value="2" probability="0.2"/></DiscreteConditionalProbability>
+      <DiscreteConditionalProbability><ParentValue parent="A" value="1"/><ParentValue parent="B" value="0"/><ValueProbability value="0" probability="0.4"/><ValueProbability value="1" probability="0.3"/><ValueProbability value="2" probability="0.3"/></DiscreteConditionalProbability>
+      <DiscreteConditionalProbability><ParentValue parent="A" value="1"/><ParentValue parent="B" value="1"/><ValueProbability value="0" probability="0.3"/><ValueProbability value="1" probability="0.3"/><ValueProbability value="2" probability="0.4"/></DiscreteConditionalProbability>
+    </DiscreteNode>
+  </BayesianNetworkNodes>
+</BayesianNetworkModel>
+</PMML>

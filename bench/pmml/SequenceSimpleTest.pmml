@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PMML version="4.4" xmlns="https://www.dmg.org/PMML-4_4">
+<Header copyright="test"/>
+<DataDictionary>
+  <DataField name="item" dataType="string" optype="categorical"><Value value="milk"/><Value value="bread"/><Value value="butter"/></DataField>
+  <DataField name="group" dataType="string" optype="categorical"/>
+  <DataField name="order" dataType="integer" optype="continuous"/>
+</DataDictionary>
+<SequenceModel functionName="associationRules">
+  <MiningSchema>
+    <MiningField name="item" usageType="active"/>
+    <MiningField name="group" usageType="group"/>
+    <MiningField name="order" usageType="order"/>
+  </MiningSchema>
+  <Item id="i0" value="milk"/>
+  <Item id="i1" value="bread"/>
+  <Item id="i2" value="butter"/>
+  <Itemset id="is0"><ItemRef itemRef="i0"/></Itemset>
+  <Itemset id="is1"><ItemRef itemRef="i1"/></Itemset>
+  <Itemset id="is2"><ItemRef itemRef="i2"/></Itemset>
+  <Sequence id="s0"><SetReference setId="is0"/></Sequence>
+  <Sequence id="s1"><SetReference setId="is1"/></Sequence>
+  <Sequence id="s2"><SetReference setId="is2"/></Sequence>
+  <SequenceRule id="r0" numberOfSets="2" occurrence="5" support="0.2" confidence="0.9">
+    <AntecedentSequence><SequenceReference seqId="s0"/></AntecedentSequence>
+    <Delimiter delimiter="acrossTimeWindows" gap="unknown"/>
+    <ConsequentSequence><SequenceReference seqId="s1"/></ConsequentSequence>
+  </SequenceRule>
+  <SequenceRule id="r1" numberOfSets="2" occurrence="5" support="0.2" confidence="0.8">
+    <AntecedentSequence><SequenceReference seqId="s1"/></AntecedentSequence>
+    <Delimiter delimiter="acrossTimeWindows" gap="unknown"/>
+    <ConsequentSequence><SequenceReference seqId="s2"/></ConsequentSequence>
+  </SequenceRule>
+</SequenceModel>
+</PMML>

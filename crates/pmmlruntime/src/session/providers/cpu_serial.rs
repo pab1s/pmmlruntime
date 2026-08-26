@@ -221,6 +221,12 @@ impl ExecutionProvider for CpuSerialProvider {
     ///
     /// Returns `PmmlError::InvalidValue` if derived field evaluation fails.
     fn eval_row(&self, ir: &Ir, values: &mut [Value]) -> Result<Value> {
+        // Install symbol map for string/date builtins (per-row thread-local, cheap for <50 entries)
+        // This is needed because vm decodes Discrete SymbolId via thread_local SYMBOL_STR_MAP
+        // For GeneralRegression and other models, derived fields may use string functions
+        if !ir.symbol_names.is_empty() {
+            crate::engine::transform::vm::vm_set_symbol_map(ir.symbol_names.clone());
+        }
         if !ir.derived_fields.is_empty() {
             crate::engine::eval_derived_fields(&ir.derived_fields, values)
                 .map_err(crate::base::error::PmmlError::InvalidValue)?;
@@ -265,6 +271,21 @@ impl ExecutionProvider for CpuSerialProvider {
             }
             ModelIr::Association(a) => crate::engine::models::evaluate_association(a, values),
             ModelIr::RuleSet(r) => crate::engine::models::evaluate_rule_set(r, values),
+            ModelIr::AnomalyDetection(ad) => {
+                crate::engine::models::evaluate_anomaly_detection(ad, values)
+            }
+            ModelIr::Baseline(b) => crate::engine::models::evaluate_baseline(b, values),
+            ModelIr::GaussianProcess(gp) => {
+                crate::engine::models::evaluate_gaussian_process(gp, values)
+            }
+            ModelIr::Text(t) => {
+                crate::engine::models::evaluate_text(t, values, Some(&ir.symbol_names))
+            }
+            ModelIr::TimeSeries(ts) => crate::engine::models::evaluate_time_series(ts, values),
+            ModelIr::Sequence(s) => crate::engine::models::evaluate_sequence(s, values),
+            ModelIr::BayesianNetwork(bn) => {
+                crate::engine::models::evaluate_bayesian_network(bn, values)
+            }
         };
         Ok(predicted)
     }

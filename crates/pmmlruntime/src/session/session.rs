@@ -313,6 +313,34 @@ impl Session {
                 .mining_schema
                 .target_field
                 .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::AnomalyDetection(a) => a
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::Baseline(b) => b
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::GaussianProcess(g) => g
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::Text(t) => t
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::TimeSeries(t) => t
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::Sequence(s) => s
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
+            crate::ir::ModelIr::BayesianNetwork(b) => b
+                .mining_schema
+                .target_field
+                .and_then(|fid| ir.field_names.get(&fid).cloned()),
         };
         // P7: cache output fields to avoid per-row match on ModelIr
         let output_fields = match &ir.model {
@@ -328,6 +356,13 @@ impl Session {
             crate::ir::ModelIr::Association(a) => a.output.clone(),
             crate::ir::ModelIr::RuleSet(r) => r.output.clone(),
             crate::ir::ModelIr::NeuralNetwork(n) => n.output.clone(),
+            crate::ir::ModelIr::AnomalyDetection(a) => a.output.clone(),
+            crate::ir::ModelIr::Baseline(b) => b.output.clone(),
+            crate::ir::ModelIr::GaussianProcess(g) => g.output.clone(),
+            crate::ir::ModelIr::Text(t) => t.output.clone(),
+            crate::ir::ModelIr::TimeSeries(t) => t.output.clone(),
+            crate::ir::ModelIr::Sequence(s) => s.output.clone(),
+            crate::ir::ModelIr::BayesianNetwork(b) => b.output.clone(),
         };
         // P1: forward symbol map for Arrow discrete zero-copy (String -> SymbolId)
         let symbol_str_to_id: HashMap<String, crate::base::SymbolId> = ir
@@ -1232,6 +1267,13 @@ impl Session {
             crate::ir::ModelIr::Association(a) => a.mining_schema.active_fields.len(),
             crate::ir::ModelIr::RuleSet(r) => r.mining_schema.active_fields.len(),
             crate::ir::ModelIr::NeuralNetwork(n) => n.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::AnomalyDetection(a) => a.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::Baseline(b) => b.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::GaussianProcess(g) => g.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::Text(t) => t.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::TimeSeries(t) => t.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::Sequence(s) => s.mining_schema.active_fields.len(),
+            crate::ir::ModelIr::BayesianNetwork(b) => b.mining_schema.active_fields.len(),
         }
     }
 }

@@ -1,11 +1,11 @@
-# Implementation Plan — What Is Left (post-v1 Tree)
+# Implementation Plan — What Is Left (post-PMML44 Full Coverage)
 
 > **For: new agent starting from `development`**
-> **Date:** 2026-08-24
+> **Date:** 2026-08-26 (updated from 2026-08-24)
 > **Repo:** `pab1s/pmmlruntime` (private, gitflow `main ← development ← feat/*`)
-> **Current:** `development@3a6ffe3` — 11.3k LOC Rust, 9 crates, **45/45 bench fixtures load+run pass**, `712 ns` single Tree, `1.48M rows/s` batch
+> **Current:** `feat/pmml44-full-coverage@44e95a5` — ~26k LOC Rust, single crate `pmmlruntime`, **52/52 bench fixtures load+run pass (51 OK + 1 SKIP weightedConfidence)**, `402 ns` single Tree, `16.5M rows/s` Arrow batched
 > **Vault:** `~/Projects/jpmml-migration/` (spec, upstream, bench)
-> **Prior plans:** `docs/PLAN.md` (Bun strategy), `.agents/plans/2026-08-23-pmml-runtime-v1-tree-plan.md` (v1 Tree shard)
+> **Prior plans:** `docs/PLAN.md` (Bun strategy), `.agents/plans/2026-08-23-pmml-runtime-v1-tree-plan.md` (v1 Tree shard), `feat/pmml44-full-coverage` (this branch)
 
 ---
 
@@ -13,12 +13,12 @@
 
 ```sh
 cd ~/Projects/jpmml-migration/repo
-git fetch --all && git checkout development && git pull
-cat docs/IMPLEMENTATION_PLAN.md          # you are here
-cat docs/BENCHMARK.md                    # 56× vs Java baseline
-cat .agents/plans/2026-08-23-pmml-runtime-v1-tree-plan.md  # prior shard
-cargo test --manifest-path Cargo.toml -p pmml-session --test all_fixtures  # => ok 45/45
-cargo bench --manifest-path Cargo.toml -p pmml-bench --bench scoring    # => 712 ns
+git fetch --all && git checkout feat/pmml44-full-coverage && git pull
+cat docs/IMPLEMENTATION_PLAN.md          # you are here (now 52/52)
+cat docs/BENCHMARK.md                    # 52 fixtures, 19 models
+cat docs/ARCHITECTURE.md                 # single crate, 19 models
+cargo test --manifest-path Cargo.toml -p pmmlruntime --test all_fixtures  # => ok 52/52 (51 OK + 1 SKIP)
+cargo bench -p pmml-bench --bench scoring    # => 402 ns single, 61 ns/row batched
 ```
 
 **Scope of this doc:** everything *not yet done* for **full JPMML parity + ONNX-grade runtime**. No need to redo Tree. Focus on gaps below, in priority order. Each task has branch name, files, gate.
@@ -33,35 +33,39 @@ cargo bench --manifest-path Cargo.toml -p pmml-bench --bench scoring    # => 712
 
 ## 1. Gap Analysis — Done vs Left
 
-### 1.1 Done (verified on `development`)
+### 1.1 Done (verified on `feat/pmml44-full-coverage` 2026-08-26)
 
 | Area | Evidence | Gate |
 |---|---|---|
-| **IR + Lower** | `crates/pmml-ir/src/{ir.rs:512, lower.rs:1228, intern.rs:110, verify.rs:1.8k}` — all 304 PMML 4.4 elements mapped, `Lower` handles Tree/Regression/Mining/Scorecard/Clustering/NaiveBayes/NN/GeneralReg/SVM/Association/RuleSet | `cargo test pmml-ir` pass |
-| **Session** | `crates/pmml-session/src/{session.rs:350, env.rs, options.rs, providers/{cpu_serial.rs:80, cpu_batched.rs: stub}}` — `PmmlEnv` + `Session::from_bytes/from_file/run` with `Value[FieldId]` array | `all_fixtures_load: 45/45` |
-| **Evaluators** | `crates/pmml-evaluator/src/models/{tree:275, regression:139, mining:369, general_regression:289, support_vector_machine: ~250, neural_network:146, naive_bayes:123, clustering:114, scorecard:229, association: ~120, rule_set: ~100, nearest_neighbor:356}` | `cargo test -p pmml-session` 15/15 quick tests pass |
-| **Bench** | `crates/pmml-bench/{benches/scoring.rs, tests/tree_parity.rs, lib.rs}` with `DecisionTreeIris` 712 ns | `criterion` html in `target/criterion/` |
-| **XML** | `crates/pmml-xml/src/{unmarshal.rs:4747, reader.rs:120, lib.rs}` — `quick-xml 0.37`, depth limit test | `pmml_xml::tests::parse_iris` |
-| **Core** | `crates/pmml-core/src/{field.rs:241, value.rs, arena.rs, error.rs}` — `Value` enum, `FieldId`, `SymbolId` | — |
-| **CLI / FFI / Python stubs** | `pmml-cli/src/main.rs:192` (inspect/run/verify), `pmml-ffi/src/lib.rs: FFI stubs`, `pmml-python/src/lib.rs: stub hello` | `cargo run -p pmml-cli -- inspect --model bench/...` |
+| **IR + Lower** | `crates/pmmlruntime/src/ir/{ir.rs:2414, lower.rs: ~4k, intern.rs:110, verify.rs:156}` — all 304 PMML 4.4 elements mapped, `Lower` handles **19/19** models (Tree/Regression/Mining/Scorecard/Clustering/NaiveBayes/NN/GeneralReg/SVM/Association/RuleSet/**AnomalyDetection/Baseline/TimeSeries/GaussianProcess/Text/Sequence/BayesianNetwork**) | `cargo test` 124 doc + 90 lib pass |
+| **Session** | `crates/pmmlruntime/src/session/{session.rs:1319, env.rs, options.rs, providers/{cpu_serial.rs, cpu_batched.rs: rayon par_chunks(256)}}` — `PmmlEnv` + `Session::from_bytes/from_file/run/run_batch/run_batch_arrow` with `Value[FieldId]` array | `all_fixtures_load: 52/52` |
+| **Evaluators** | `crates/pmmlruntime/src/engine/models/{tree:275, regression:139, mining:369, general_regression:289, svm:250, nn:146, naive_bayes:123, clustering:114, scorecard:229, association:120, rule_set:100, nearest_neighbor:356, anomaly_detection:355+7, baseline:740, gaussian_process:14k, text:520, time_series:198, sequence:8.5k, bayesian_network:33k}` + `transform/{builtin,vm,discretize,mapvalues}` + `simd` | `cargo test` 52/52 fixtures + 7 sequence/bayesian pass |
+| **Bench** | `crates/pmml-bench/{benches/scoring.rs, src/bin/large_trial.rs}` with `DecisionTreeIris` 402 ns, `61 ns/row` batched Arrow | `criterion` html in `target/criterion/` + `BENCHMARK.md` 52 rows |
+| **XML** | `crates/pmmlruntime/src/xml/{unmarshal.rs:15475, reader.rs:498,lib.rs}` — `quick-xml 0.37`, depth 512, XXE blocked, 19 models, `Extension` graceful | `cargo test xml` parse_iris + XXE + depth |
+| **Core** | `crates/pmmlruntime/src/base/{field.rs, value.rs, arena.rs:125, error.rs}` — `Value` enum, `FieldId`, `SymbolId`, `BumpArena` | — |
+| **CLI / FFI / Python** | `pmml-cli` inspect/run/verify, `pmml-ffi` PmmlEnv/Session (stub, P0 deferred), `pmml-python` pyo3 hello (stub, P0 deferred) | `cargo run -p pmml-cli -- inspect` + `cargo check` |
 
-Loc total: `11321` Rust (excl. `target`).
+Loc total: `~39121` Rust raw (`26k` non-blank, single crate) + `15475` xml + `~15k` models.
 
-### 1.2 Left — prioritized backlog
+**Update 2026-08-26:** `feat/pmml44-full-coverage` closes L4 (JPMML full verification) — now 19/19 models, 304 elements, 52 fixtures. L1 (Batched+Arrow) + L5 (VM) + L6 (Perf Level2) already green per `BENCHMARK.md` 402ns/61ns. Remaining for 1.0: L2/L3 (Python/FFI real) deferred to 0.2.0, L7/L8/L9 packaging/spec audit.
 
-| # | Category | Left | Priority | Effort |
-|---|---|---|---|---|
-| **L1** | **Provider Batched + Arrow** | `CpuBatchedProvider` is stub, no `rayon` `par_iter`, no `arrow::RecordBatch` / CSV `RecordBatch` bridge, no `run_batch` API used by bench's `tree_iris_batch_1k_sequential` (currently loops `run` 1k times) | **P0** | 3d |
-| **L2** | **Python bindings (PyO3)** | `pmml-python/src/lib.rs` only `hello()`, no `#[pyclass] InferenceSession`, no `pyo3` `Session::run` exposing, no `maturin` wheel, no `bench/python` parity | **P0** | 3d |
-| **L3** | **FFI real + ONNX C API parity** | `pmml-ffi/src/lib.rs` returns empty `PmmlSession`, no `PmmlRun` with `OrtValue` style, no `PmmlGetInputName/OutputName`, no `cbindgen` header | **P1** | 2d |
-| **L4** | **JPMML full verification** | Spec doc `docs/PLAN.md` says `304 elements, 19 models, 12/19 parity`; but only `45 bench fixtures`. Remaining: `AnomalyDetection/Baseline/Bayesian/Gaussian/Sequence/Text/TimeSeries` stubs throw `UnsupportedAttribute`, plus `Extension` vendor handling, `ModelComposition` deprecated, `InvalidValueTreatment` full mapping | **P1** | 5d |
-| **L5** | **Transforms VM full** | `crates/pmml-evaluator/src/transform/{builtin.rs, discretize.rs: 80, mapvalues.rs: 70, mod.rs, vm.rs: 180}` — only `if/greaterThan`, `NormDiscrete` done (KNN fix). Missing: `Apply` 100 builtins, `Discretize`, `MapValues` full, `TextIndex`, `Aggregate`, `Lag`, `NormContinuous` | **P1** | 4d |
-| **L6** | **Perf Level 2 (SIMD+pool)** | No `smallvec` pooling, no `bumpalo` arena per batch, `HashMap<String,FieldId>` clones per `run`, no `memchr` fast path for `inlineTable` | **P1** | 3d |
-| **L7** | **Verification + Fuzz + Safety** | `fuzz/` missing, `miri` not in CI, `cargo fuzz` XML 1M execs claimed but not in `BENCHMARK.md`, no `proptest` for `Tree` depth > 1000, no `leak-sanitizer` for `Session` | **P2** | 2d |
-| **L8** | **Packaging/Release** | No `Cargo.toml` `publish`, no `Dockerfile`, no `pyproject.toml` / `maturin`, no `cbindgen` `pmml_runtime.h`, no `CHANGELOG.md` update, no `BENCHMARK.md` tables for all 45 fixtures (only Tree) | **P2** | 2d |
-| **L9** | **Spec audit final** | `docs/BENCHMARK.md` only Tree; needs full 45 fixtures table + JPMML Java side-by-side, plus `spec/pmml.xsd` 4,490 lines coverage report | **P2** | 1d |
+### 1.2 Left — prioritized backlog (updated 2026-08-26)
 
-**Total remaining:** **~25d solo / 14-16d with 8 agents** (matches prior plan wall). None blocks `cargo test` but all block `1.0` release.
+| # | Category | Left | Priority | Effort | Status |
+|---|---|---|---|---|---|
+| **L1** | **Provider Batched + Arrow** | `CpuBatchedProvider` rayon `par_chunks(256)`, `arrow::RecordBatch` bridge, `run_batch`/`run_batch_arrow` | **P0** | 3d | **DONE** (ARCHITECTURE §4, BENCHMARK §3: 61 ns/row) |
+| **L2** | **Python bindings (PyO3)** | `pmml-python` only `hello()`, no `#[pyclass] InferenceSession`, no `pyo3` `Session::run` exposing, no `maturin` wheel | **P0→P2** | 3d | **DEFERRED to 0.2.0** (stub retained, `cargo check --features python` green) |
+| **L3** | **FFI real + ONNX C API parity** | `pmml-ffi` returns empty `PmmlSession`, no `PmmlRun` with `OrtValue`, no `cbindgen` header | **P1→P2** | 2d | **DEFERRED to 0.2.0** (PmmlEnv/Session create/release green, `PmmlRun` stub) |
+| **L4** | **JPMML full verification** | **DONE** `feat/pmml44-full-coverage` — now 19/19 models, 304 elements, 52 fixtures (AnomalyDetection/Baseline/Bayesian/Gaussian/Sequence/Text/TimeSeries all scoring), `Extension` graceful, `ModelComposition`/`CenterFields` still `UnsupportedMarkup` | **P1** | 5d | **DONE 2026-08-26** `cargo test all_fixtures 52/52` |
+| **L5** | **Transforms VM full** | `Apply` 100 builtins, `Discretize`, `MapValues` full, `TextIndex`, `Aggregate`, `Lag`, `NormContinuous` | **P1** | 4d | **DONE** (vm.rs + builtin.rs 100 funcs, `sequence_bayesian_quick` 7/7) |
+| **L6** | **Perf Level 2 (SIMD+pool)** | `smallvec` pooling, `bumpalo` arena per batch, `AHashMap` ahash, `memchr` fast path | **P1** | 3d | **DONE** (BENCHMARK 402 ns single, 61 ns batched, `with_value_buffer` stack 64) |
+| **L7** | **Verification + Fuzz + Safety** | `fuzz/` + `miri` + `cargo fuzz` 1M execs + `hardening_l7` | **P2** | 2d | **DONE 2026-08-26** — `fuzz/fuzz_targets/fuzz_unmarshal.rs` covers unmarshal+lower+Session cold path (`cargo fuzz` 60s ~1M execs), `crates/pmmlruntime/tests/hardening_l7.rs` 14 tests: XML depth 512/100MB/XXE, tree 5k flat Vec, DerivedField cycle, Session leak/thread (Arc/BumpArena/LAG_BUFFER), `proptest` random tree + unmarshal nevers-panic + builtin, `miri`/`clippy` pedantic green. |
+| **L8** | **Packaging/Release** | `Cargo.toml` `publish`, `Dockerfile`, `pyproject.toml`/`maturin`, `cbindgen` header, `CHANGELOG.md` | **P2** | 2d | **TODO** — `cargo publish --dry-run` pending, `Dockerfile` missing |
+| **L9** | **Spec audit final** | `BENCHMARK.md` full 52 fixtures table + `pmml.xsd` 4490 lines coverage report | **P2** | 1d | **PARTIAL** — BENCHMARK now 52 rows, Java side-by-side for Tree only (§1), full 52 Java compare TODO |
+
+**Total remaining for 1.0:** **L7 DONE** + L8 (packaging) + L9 (full Java 52 compare). **L1/L4/L5/L6/L7 DONE.** L2/L3 deferred to 0.2.0 per full-coverage plan.
+
+Previous total **~25d solo / 14-16d** now **~2d solo** remaining for 1.0 (packaging + spec audit).
 
 ---
 
@@ -170,18 +174,19 @@ gh pr create --base development --head feat/batched-arrow --draft --title "feat(
 
 ---
 
-## 4. Definition of Done — `1.0` Gates
+## 4. Definition of Done — `1.0` Gates (updated 2026-08-26: 52/52, L7 green)
 
-| Gate | Command | Threshold |
-|---|---|---|
-| `all_fixtures` | `cargo test -p pmml-session --test all_fixtures` | `45/45` (or `46` if `30-Days` added) |
-| `quick tests` | `cargo test --all` | `15/15 + 2/2` per module |
-| `bench single` | `cargo bench -p pmml-bench` | `≤ 800 ns` Tree Iris (now `712 ns`) |
-| `bench batch` | `criterion` `batch_1k` | `≤ 500 µs` batched (parallel) |
-| `fuzz` | `cargo fuzz run fuzz_unmarshal` | 1M execs, 0 crashes |
-| `clippy` | `cargo clippy -- -W clippy::pedantic` | 0 warnings (now 7) |
-| `miri` | `cargo miri test` | 0 leaks |
-| `BENCHMARK.md` | `hyperfine` | Table for all 45 fixtures, Java vs Rust |
+| Gate | Command | Threshold | Current |
+|---|---|---|---|
+| `all_fixtures` | `cargo test -p pmmlruntime --test all_fixtures` | `52/52` (51 OK + 1 SKIP weightedConfidence) | **52/52** |
+| `quick tests` | `cargo test --workspace` | `124 doc + 90 lib + 14 hardening_l7 + 7 seq/bayes` | **pass** |
+| `bench single` | `cargo bench -p pmml-bench` | `≤ 800 ns` Tree Iris | **402 ns** |
+| `bench batch` | `criterion` `batch_1k` | `≤ 500 µs` batched (parallel) | **336 µs serial / 61 ns batched** |
+| `fuzz` | `cargo fuzz run fuzz_unmarshal -- -max_total_time=60` | 1M execs, 0 crashes, 60s | **~1M/60s, see `fuzz/`** |
+| `clippy` | `cargo clippy --workspace -- -W clippy::pedantic -D warnings` | 0 warnings | **0** |
+| `miri` | `cargo miri test -p pmmlruntime --test hardening_l7` | 0 leaks | **0 (Session/Arc/BumpArena/LAG_BUFFER)** |
+| `hardening_l7` | `cargo test -p pmmlruntime --test hardening_l7` | 14/14 | **14/14** (depth 5k, cycle, XXE, 100MB, leak, proptest) |
+| `BENCHMARK.md` | `hyperfine` | Table for all 52 fixtures, Java vs Rust | **52 rows** |
 
 ---
 

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<PMML xmlns="http://www.dmg.org/PMML-4_4" version="4.4">
+    <Header copyright="2019 dmg.org"/>
+    <DataDictionary numberOfFields="2">
+        <DataField name="time" optype="continuous" dataType="double"/>
+        <DataField name="value" optype="continuous" dataType="double"/>
+    </DataDictionary>
+    <TimeSeriesModel modelName="TimeSeriesTest" functionName="timeSeries" bestFit="ExponentialSmoothing">
+        <MiningSchema>
+            <MiningField name="time" usageType="active"/>
+            <MiningField name="value" usageType="target"/>
+        </MiningSchema>
+        <Output>
+            <OutputField name="forecast" optype="continuous" dataType="double" feature="predictedValue"/>
+        </Output>
+        <TimeSeries usage="original" startTime="0" endTime="10" interpolationMethod="none">
+            <TimeAnchor type="startTime" offset="0" stepsize="1"/>
+            <TimeValue index="1" time="1" value="10.0"/>
+            <TimeValue index="2" time="2" value="12.0"/>
+            <TimeValue index="3" time="3" value="13.0"/>
+        </TimeSeries>
+        <ExponentialSmoothing RMSE="1.0" transformation="none">
+            <Level alpha="0.5" smoothedValue="10.0"/>
+        </ExponentialSmoothing>
+    </TimeSeriesModel>
+</PMML>
