@@ -1,4 +1,4 @@
-//! Model evaluators — 12 pure `(&IrStruct, &[Value]) -> Value` scorers.
+//! Model evaluators — 14 pure `(&IrStruct, &[Value]) -> Value` scorers.
 //!
 //! Each submodule implements one PMML model family. All evaluators are pure functions
 //! over `&[Value]` (no `Session` state), `Send + Sync`, and benchable at ~402 ns
@@ -18,10 +18,14 @@
 //! | [`support_vector_machine`] | `SupportVectorMachineModel` | [`evaluate_support_vector_machine`](crate::engine::models::evaluate_support_vector_machine) | `Continuous` RBF sum |
 //! | [`association`] | `AssociationModel` | [`evaluate_association`](crate::engine::models::evaluate_association) | `Discrete` consequent |
 //! | [`rule_set`] | `RuleSetModel` | [`evaluate_rule_set`](crate::engine::models::evaluate_rule_set) | first firing `Discrete` |
+//! | [`anomaly_detection`] | `AnomalyDetectionModel` | [`evaluate_anomaly_detection`](crate::engine::models::evaluate_anomaly_detection) | `Continuous` anomaly score |
+//! | [`baseline`] | `BaselineModel` | [`evaluate_baseline`](crate::engine::models::evaluate_baseline) | `Continuous` test statistic |
 //!
 //! Re-exported at crate root for ergonomic `crate::engine::models::*`.
 
+pub mod anomaly_detection;
 pub mod association;
+pub mod baseline;
 pub mod clustering;
 pub mod general_regression;
 pub mod mining;
@@ -34,7 +38,9 @@ pub mod scorecard;
 pub mod support_vector_machine;
 pub mod tree;
 
+pub use anomaly_detection::evaluate_anomaly_detection;
 pub use association::evaluate_association;
+pub use baseline::evaluate_baseline;
 pub use clustering::evaluate_clustering;
 pub use general_regression::{evaluate_general_regression, evaluate_general_regression_with_probs};
 pub use mining::evaluate_mining;
