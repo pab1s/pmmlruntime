@@ -5,10 +5,14 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage = "https://github.com/pab1s/pmmlruntime"
+documentation = "https://docs.rs/pmmlruntime"
+readme = "../../README.md"
 rust-version.workspace = true
-description = "PMML 4.4 runtime — session-based execution, Arrow batch, hardened XML (single crate)"
+description = "PMML 4.4 runtime — session-based execution, Arrow batch, hardened XML"
 keywords = ["pmml", "scoring", "machine-learning"]
 categories = ["science"]
+include = ["src/**/*", "examples/**/*", "tests/**/*", "Cargo.toml", "../../README.md", "../../LICENSE-MIT", "../../LICENSE-APACHE"]
 
 [dependencies]
 quick-xml = { workspace = true }
