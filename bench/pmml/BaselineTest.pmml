@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<PMML xmlns="http://www.dmg.org/PMML-4_4" version="4.4">
+    <Header copyright="2019 dmg.org"/>
+    <DataDictionary>
+        <DataField name="defects" optype="continuous" dataType="double"/>
+        <DataField name="score" optype="continuous" dataType="double"/>
+    </DataDictionary>
+    <BaselineModel modelName="standard-score" functionName="regression">
+        <MiningSchema>
+            <MiningField name="defects" optype="continuous" usageType="active"/>
+            <MiningField name="score" optype="continuous" usageType="target"/>
+        </MiningSchema>
+        <Output>
+            <OutputField name="score" optype="continuous" dataType="double" feature="predictedValue"/>
+        </Output>
+        <TestDistributions field="defects" testStatistic="zValue">
+            <Baseline>
+                <GaussianDistribution mean="18.2" variance="17.64"/>
+            </Baseline>
+        </TestDistributions>
+    </BaselineModel>
+</PMML>
