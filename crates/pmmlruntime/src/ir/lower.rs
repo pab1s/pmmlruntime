@@ -55,6 +55,9 @@ fn parse_missing_strategy(s: Option<&str>) -> MissingValueStrategy {
         "lastPrediction" => MissingValueStrategy::LastPrediction,
         "nullPrediction" => MissingValueStrategy::NullPrediction,
         "defaultChild" => MissingValueStrategy::DefaultChild,
+        "none" => MissingValueStrategy::None,
+        "weightedConfidence" => MissingValueStrategy::WeightedConfidence,
+        "aggregateNodes" => MissingValueStrategy::AggregateNodes,
         _ => MissingValueStrategy::NullPrediction,
     }
 }
@@ -486,65 +489,7 @@ fn lower_constant_to_symbol_or_continuous(
 }
 
 fn resolve_builtin(name: &str) -> Option<BuiltinId> {
-    Some(match name {
-        "add" | "+" => BuiltinId::Add,
-        "subtract" | "-" => BuiltinId::Sub,
-        "multiply" | "*" => BuiltinId::Mul,
-        "divide" | "/" => BuiltinId::Div,
-        "pow" => BuiltinId::Pow,
-        "log" | "ln" => BuiltinId::Log,
-        "log10" => BuiltinId::Log10,
-        "exp" => BuiltinId::Exp,
-        "sqrt" => BuiltinId::Sqrt,
-        "abs" => BuiltinId::Abs,
-        "floor" => BuiltinId::Floor,
-        "ceil" => BuiltinId::Ceil,
-        "round" => BuiltinId::Round,
-        "sin" => BuiltinId::Sin,
-        "cos" => BuiltinId::Cos,
-        "tan" => BuiltinId::Tan,
-        "asin" => BuiltinId::Asin,
-        "acos" => BuiltinId::Acos,
-        "atan" => BuiltinId::Atan,
-        "sinh" => BuiltinId::Sinh,
-        "cosh" => BuiltinId::Cosh,
-        "tanh" => BuiltinId::Tanh,
-        "remainder" => BuiltinId::Remainder,
-        "min" => BuiltinId::Min,
-        "max" => BuiltinId::Max,
-        "uppercase" | "upperCase" => BuiltinId::Uppercase,
-        "lowercase" | "lowerCase" => BuiltinId::Lowercase,
-        "substring" => BuiltinId::Substring,
-        "trimBlanks" => BuiltinId::TrimBlanks,
-        "concat" => BuiltinId::Concat,
-        "stringLength" => BuiltinId::StringLength,
-        "replace" => BuiltinId::Replace,
-        "matches" => BuiltinId::Matches,
-        "textIndex" => BuiltinId::TextIndex,
-        "count" | "aggregateCount" => BuiltinId::AggregateCount,
-        "sum" | "aggregateSum" => BuiltinId::AggregateSum,
-        "average" | "avg" | "aggregateAverage" => BuiltinId::AggregateAvg,
-        "aggregateMin" => BuiltinId::AggregateMin,
-        "aggregateMax" => BuiltinId::AggregateMax,
-        "lag" => BuiltinId::Lag,
-        "normContinuous" => BuiltinId::NormContinuousOp,
-        "normDiscrete" => BuiltinId::NormDiscreteOp,
-        "equal" => BuiltinId::Equal,
-        "notEqual" => BuiltinId::NotEqual,
-        "lessThan" => BuiltinId::LessThan,
-        "lessOrEqual" => BuiltinId::LessOrEqual,
-        "greaterThan" => BuiltinId::GreaterThan,
-        "greaterOrEqual" => BuiltinId::GreaterOrEqual,
-        "and" => BuiltinId::And,
-        "or" => BuiltinId::Or,
-        "not" => BuiltinId::Not,
-        "isMissing" => BuiltinId::IsMissing,
-        "isNotMissing" => BuiltinId::IsNotMissing,
-        "isValid" => BuiltinId::IsValid,
-        "if" => BuiltinId::If,
-        "threshold" => BuiltinId::Threshold,
-        _ => return None,
-    })
+    crate::engine::transform::builtin::builtin_by_name(name)
 }
 
 fn lower_expression_to_ops(
@@ -1415,6 +1360,54 @@ fn lower_tree_raw(
     })
 }
 
+fn lower_mining_raw(
+    mm: &crate::xml::RawMiningModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<MiningIr> {
+    let mining_schema = lower_mining_schema(
+        &mm.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&mm.output, field_name_to_id, interner);
+    let segmentation = if let Some(seg_raw) = mm.segmentation.as_ref() {
+        let mut segments = Vec::new();
+        for seg in &seg_raw.segments {
+            let pred = lower_predicate(&seg.predicate, interner, field_meta_map, field_name_to_id)?;
+            let model_ir =
+                lower_segment_model(&seg.model, field_name_to_id, field_meta_map, interner)?;
+            segments.push(SegmentIr {
+                id: seg.id.clone(),
+                predicate: pred,
+                weight: seg.weight,
+                model: Box::new(model_ir),
+            });
+        }
+        SegmentationIr {
+            multiple_model_method: parse_multiple_model_method(&seg_raw.multiple_model_method),
+            missing_prediction_treatment: parse_missing_pred(
+                seg_raw.missing_prediction_treatment.as_deref(),
+            ),
+            segments,
+        }
+    } else {
+        return Err(PmmlError::UnsupportedMarkup(
+            "MiningModel without Segmentation not supported".into(),
+        ));
+    };
+    let targets = lower_targets(&mm.targets, field_name_to_id, interner, field_meta_map);
+    Ok(MiningIr {
+        function_name: mm.function_name.clone(),
+        mining_schema,
+        segmentation,
+        targets,
+        output,
+    })
+}
+
 fn lower_segment_model(
     raw: &crate::xml::RawSegmentModel,
     field_name_to_id: &mut HashMap<String, FieldId>,
@@ -1430,7 +1423,759 @@ fn lower_segment_model(
             let reg_ir = lower_regression(rm, field_name_to_id, field_meta_map, interner)?;
             Ok(ModelIr::Regression(reg_ir))
         }
+        crate::xml::RawSegmentModel::Mining(mm) => {
+            let mining_ir = lower_mining_raw(mm, field_name_to_id, field_meta_map, interner)?;
+            Ok(ModelIr::Mining(mining_ir))
+        }
     }
+}
+
+fn lower_anomaly_model(
+    raw: &crate::xml::RawAnomalyModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<ModelIr> {
+    match raw {
+        crate::xml::RawAnomalyModel::Tree(tm) => {
+            let ir = lower_tree_raw(tm, field_name_to_id, field_meta_map, interner)?;
+            Ok(ModelIr::Tree(ir))
+        }
+        crate::xml::RawAnomalyModel::Regression(rm) => {
+            let ir = lower_regression(rm, field_name_to_id, field_meta_map, interner)?;
+            Ok(ModelIr::Regression(ir))
+        }
+        crate::xml::RawAnomalyModel::Mining(mm) => {
+            let ir = lower_mining_raw(mm, field_name_to_id, field_meta_map, interner)?;
+            Ok(ModelIr::Mining(ir))
+        }
+        crate::xml::RawAnomalyModel::Scorecard(sc) => {
+            let mining_schema = lower_mining_schema(
+                &sc.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&sc.output, field_name_to_id, interner);
+            let mut characteristics = Vec::new();
+            for ch in &sc.characteristics {
+                let mut attrs = Vec::new();
+                for attr in &ch.attributes {
+                    let pred = lower_predicate(
+                        &attr.predicate,
+                        interner,
+                        field_meta_map,
+                        field_name_to_id,
+                    )?;
+                    attrs.push(AttributeIr {
+                        partial_score: attr.partial_score,
+                        predicate: pred,
+                        reason_code: attr.reason_code.clone(),
+                    });
+                }
+                characteristics.push(CharacteristicIr {
+                    name: ch.name.clone(),
+                    reason_code: ch.reason_code.clone(),
+                    baseline_score: ch.baseline_score.unwrap_or(0.0),
+                    attributes: attrs,
+                });
+            }
+            Ok(ModelIr::Scorecard(ScorecardIr {
+                function_name: sc.function_name.clone(),
+                initial_score: sc.initial_score,
+                use_reason_codes: sc.use_reason_codes.unwrap_or(false),
+                reason_code_algorithm: sc
+                    .reason_code_algorithm
+                    .clone()
+                    .unwrap_or_else(|| "pointsAbove".to_string()),
+                mining_schema,
+                characteristics,
+                output,
+            }))
+        }
+        crate::xml::RawAnomalyModel::Clustering(cm) => {
+            let mining_schema = lower_mining_schema(
+                &cm.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&cm.output, field_name_to_id, interner);
+            let mut clusters = Vec::new();
+            for cl in &cm.clusters {
+                let sym = interner.intern_symbol(&cl.name);
+                clusters.push(ClusterIr {
+                    name: sym,
+                    name_str: cl.name.clone(),
+                    array: cl.array.clone(),
+                });
+            }
+            let mut clustering_fields = Vec::new();
+            for f in &cm.clustering_fields {
+                let fid = get_or_intern_field(
+                    f,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                clustering_fields.push(fid);
+            }
+            Ok(ModelIr::Clustering(ClusteringIr {
+                function_name: cm.function_name.clone(),
+                model_class: cm
+                    .model_class
+                    .clone()
+                    .unwrap_or_else(|| "centerBased".to_string()),
+                number_of_clusters: cm.number_of_clusters.unwrap_or(clusters.len()),
+                mining_schema,
+                comparison_measure: cm
+                    .comparison_measure
+                    .as_ref()
+                    .map(|c| c.kind.clone())
+                    .unwrap_or_else(|| "euclidean".to_string()),
+                clustering_fields,
+                clusters,
+                output,
+            }))
+        }
+        crate::xml::RawAnomalyModel::NaiveBayes(nb) => {
+            let mining_schema = lower_mining_schema(
+                &nb.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&nb.output, field_name_to_id, interner);
+            let mut bayes_inputs = Vec::new();
+            for bi in &nb.bayes_inputs {
+                let fid = get_or_intern_field(
+                    &bi.field_name,
+                    DataType::String,
+                    OpType::Categorical,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                let mut target_value_stats = Vec::new();
+                for tvs in &bi.target_value_stats {
+                    let sid = interner.intern_symbol(&tvs.value);
+                    target_value_stats.push(TargetValueStatIr {
+                        value: sid,
+                        mean: tvs.gaussian_mean,
+                        variance: tvs.gaussian_variance,
+                    });
+                }
+                let mut pair_counts = Vec::new();
+                for pc in &bi.pair_counts {
+                    let pc_sid = interner.intern_symbol(&pc.value);
+                    let mut target_counts = Vec::new();
+                    for tc in &pc.target_counts {
+                        let t_sid = interner.intern_symbol(&tc.value);
+                        target_counts.push(TargetValueCountIr {
+                            value: t_sid,
+                            count: tc.count,
+                        });
+                    }
+                    pair_counts.push(PairCountsIr {
+                        value: pc_sid,
+                        target_counts,
+                    });
+                }
+                bayes_inputs.push(BayesInputIr {
+                    field: fid,
+                    target_value_stats,
+                    pair_counts,
+                });
+            }
+            let mut bayes_output_counts = Vec::new();
+            for tc in &nb.bayes_output_counts {
+                let sid = interner.intern_symbol(&tc.value);
+                bayes_output_counts.push(TargetValueCountIr {
+                    value: sid,
+                    count: tc.count,
+                });
+            }
+            Ok(ModelIr::NaiveBayes(NaiveBayesIr {
+                function_name: nb.function_name.clone(),
+                threshold: nb.threshold,
+                mining_schema,
+                output,
+                bayes_inputs,
+                bayes_output_counts,
+            }))
+        }
+        crate::xml::RawAnomalyModel::NearestNeighbor(nn) => {
+            let mining_schema = lower_mining_schema(
+                &nn.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&nn.output, field_name_to_id, interner);
+            let mut knn_inputs = Vec::new();
+            for f in &nn.knn_inputs {
+                let fid = get_or_intern_field(
+                    f,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                knn_inputs.push(fid);
+            }
+            let mut instances = Vec::new();
+            let mut instance_ids = Vec::new();
+            for row in &nn.instances {
+                let mut map: std::collections::HashMap<crate::base::FieldId, crate::base::Value> =
+                    std::collections::HashMap::new();
+                for inst_field in &nn.instance_fields {
+                    let col = &inst_field.column;
+                    let field_name = &inst_field.field;
+                    if let Some(val_str) = row.get(col) {
+                        let fid = get_or_intern_field(
+                            field_name,
+                            DataType::String,
+                            OpType::Categorical,
+                            interner,
+                            field_name_to_id,
+                            field_meta_map,
+                        );
+                        let val = if let Ok(f) = val_str.parse::<f64>() {
+                            crate::base::Value::Continuous(f)
+                        } else {
+                            let sid = interner.intern_symbol(val_str);
+                            crate::base::Value::Discrete(sid)
+                        };
+                        map.insert(fid, val);
+                    }
+                }
+                let id_val = row
+                    .values()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| format!("{}", instances.len()));
+                instance_ids.push(id_val);
+                instances.push(map);
+            }
+            Ok(ModelIr::NearestNeighbor(NearestNeighborIr {
+                function_name: nn.function_name.clone(),
+                number_of_neighbors: nn.number_of_neighbors,
+                mining_schema,
+                output,
+                knn_inputs,
+                instances,
+                instance_ids,
+            }))
+        }
+        crate::xml::RawAnomalyModel::SupportVectorMachine(svm) => {
+            let mining_schema = lower_mining_schema(
+                &svm.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&svm.output, field_name_to_id, interner);
+            let mut vector_fields = Vec::new();
+            for vf in &svm.vector_fields {
+                let fid = get_or_intern_field(
+                    &vf.field,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                vector_fields.push(fid);
+            }
+            let mut vector_instances = Vec::new();
+            for vi in &svm.vector_instances {
+                vector_instances.push((vi.id.clone(), vi.array.clone()));
+            }
+            let mut support_vectors = Vec::new();
+            let mut coefficients = Vec::new();
+            let mut absolute_value = 0.0;
+            let kernel_gamma = svm.kernel_gamma.unwrap_or(1.0);
+            if let Some(inner) = &svm.support_vector_machine {
+                for sv in &inner.support_vectors {
+                    support_vectors.push(sv.vector_id.clone());
+                }
+                for coeff in &inner.coefficients {
+                    coefficients.push(coeff.value);
+                }
+                if let Some(av) = inner.absolute_value {
+                    absolute_value = av;
+                }
+            }
+            Ok(ModelIr::SupportVectorMachine(SupportVectorMachineIr {
+                function_name: svm.function_name.clone(),
+                mining_schema,
+                output,
+                vector_fields,
+                vector_instances,
+                support_vectors,
+                coefficients,
+                absolute_value,
+                kernel_gamma,
+            }))
+        }
+        crate::xml::RawAnomalyModel::NeuralNetwork(nn) => {
+            let mining_schema = lower_mining_schema(
+                &nn.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&nn.output, field_name_to_id, interner);
+            let mut neural_inputs = Vec::new();
+            for ni in &nn.neural_inputs {
+                let fid = get_or_intern_field(
+                    &ni.field,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                neural_inputs.push(NeuralInputIr {
+                    id: ni.id.clone(),
+                    field: fid,
+                });
+            }
+            let mut neural_layers = Vec::new();
+            for layer in &nn.neural_layers {
+                let mut neurons = Vec::new();
+                for neuron in &layer.neurons {
+                    let mut cons = Vec::new();
+                    for con in &neuron.cons {
+                        cons.push((con.from.clone(), con.weight));
+                    }
+                    neurons.push(NeuronIr {
+                        id: neuron.id.clone(),
+                        bias: neuron.bias.unwrap_or(0.0),
+                        cons,
+                    });
+                }
+                neural_layers.push(NeuralLayerIr {
+                    number_of_neurons: layer.number_of_neurons.unwrap_or(neurons.len()),
+                    activation_function: layer
+                        .activation_function
+                        .clone()
+                        .unwrap_or_else(|| "identity".to_string()),
+                    neurons,
+                });
+            }
+            Ok(ModelIr::NeuralNetwork(NeuralNetworkIr {
+                function_name: nn.function_name.clone(),
+                mining_schema,
+                output,
+                neural_inputs,
+                neural_layers,
+                activation_function: nn
+                    .activation_function
+                    .clone()
+                    .unwrap_or_else(|| "logistic".to_string()),
+            }))
+        }
+        crate::xml::RawAnomalyModel::GeneralRegression(gr) => {
+            let mining_schema = lower_mining_schema(
+                &gr.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&gr.output, field_name_to_id, interner);
+            let parameters = gr
+                .parameters
+                .iter()
+                .map(|p| ParameterIr {
+                    name: p.name.clone(),
+                    label: p.label.clone(),
+                })
+                .collect();
+            let mut factors = Vec::new();
+            for f in &gr.factors {
+                let fid = get_or_intern_field(
+                    &f.name,
+                    DataType::String,
+                    OpType::Categorical,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                let cats = f
+                    .categories
+                    .iter()
+                    .map(|c| interner.intern_symbol(c))
+                    .collect();
+                factors.push(FactorIr {
+                    name: fid,
+                    categories: cats,
+                    matrix: f.matrix.clone(),
+                });
+            }
+            let mut covariates = Vec::new();
+            for c in &gr.covariates {
+                let fid = get_or_intern_field(
+                    c,
+                    DataType::Double,
+                    OpType::Continuous,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                covariates.push(fid);
+            }
+            let pp_matrix = gr
+                .pp_matrix
+                .iter()
+                .map(|ppc| PPCellIr {
+                    value: interner.intern_symbol(&ppc.value),
+                    predictor_name: ppc.predictor_name.clone(),
+                    parameter_name: ppc.parameter_name.clone(),
+                })
+                .collect();
+            let param_matrix = gr
+                .param_matrix
+                .iter()
+                .map(|pc| PCellIr {
+                    target_category: pc
+                        .target_category
+                        .as_ref()
+                        .map(|s| interner.intern_symbol(s)),
+                    parameter_name: pc.parameter_name.clone(),
+                    beta: pc.beta,
+                })
+                .collect();
+            Ok(ModelIr::GeneralRegression(GeneralRegressionIr {
+                function_name: gr.function_name.clone(),
+                mining_schema,
+                output,
+                model_type: gr.model_type.clone(),
+                target_variable_name: gr.target_variable_name.clone(),
+                target_reference_category: gr
+                    .target_reference_category
+                    .as_ref()
+                    .map(|s| interner.intern_symbol(s)),
+                parameters,
+                factors,
+                covariates,
+                pp_matrix,
+                param_matrix,
+            }))
+        }
+        crate::xml::RawAnomalyModel::Association(am) => {
+            let mining_schema = lower_mining_schema(
+                &am.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&am.output, field_name_to_id, interner);
+            let mut items = Vec::new();
+            for it in &am.items {
+                let sid = interner.intern_symbol(&it.value);
+                items.push(ItemIr {
+                    id: it.id.clone(),
+                    value: sid,
+                });
+            }
+            let mut itemsets = Vec::new();
+            for is in &am.itemsets {
+                itemsets.push(ItemsetIr {
+                    id: is.id.clone(),
+                    item_ids: is.item_refs.clone(),
+                });
+            }
+            let mut rules = Vec::new();
+            for r in &am.rules {
+                rules.push(AssociationRuleIr {
+                    antecedent: r.antecedent.clone(),
+                    consequent: r.consequent.clone(),
+                    support: r.support,
+                    confidence: r.confidence,
+                    lift: r.lift,
+                });
+            }
+            Ok(ModelIr::Association(AssociationIr {
+                function_name: am.function_name.clone(),
+                mining_schema,
+                output,
+                items,
+                itemsets,
+                rules,
+            }))
+        }
+        crate::xml::RawAnomalyModel::RuleSet(rsm) => {
+            let mining_schema = lower_mining_schema(
+                &rsm.mining_schema,
+                field_name_to_id,
+                field_meta_map,
+                interner,
+            )?;
+            let output = lower_output(&rsm.output, field_name_to_id, interner);
+            let mut rules = Vec::new();
+            let mut default_score = None;
+            if let Some(rule_set) = &rsm.rule_set {
+                for sr in &rule_set.rules {
+                    let pred =
+                        lower_predicate(&sr.predicate, interner, field_meta_map, field_name_to_id)?;
+                    let score_sid = interner.intern_symbol(&sr.score);
+                    rules.push(SimpleRuleIr {
+                        id: sr.id.clone(),
+                        score: score_sid,
+                        predicate: pred,
+                    });
+                }
+                default_score = rule_set
+                    .default_score
+                    .as_ref()
+                    .map(|s| interner.intern_symbol(s));
+            }
+            Ok(ModelIr::RuleSet(RuleSetIr {
+                function_name: rsm.function_name.clone(),
+                mining_schema,
+                output,
+                default_score,
+                rules,
+            }))
+        }
+    }
+}
+
+fn parse_baseline_stat(s: &str) -> BaselineTestStatistic {
+    match s {
+        "zValue" => BaselineTestStatistic::ZValue,
+        "chiSquareIndependence" => BaselineTestStatistic::ChiSquareIndependence,
+        "chiSquareDistribution" => BaselineTestStatistic::ChiSquareDistribution,
+        "CUSUM" => BaselineTestStatistic::Cusum,
+        "scalarProduct" => BaselineTestStatistic::ScalarProduct,
+        _ => BaselineTestStatistic::ZValue,
+    }
+}
+
+fn lower_continuous_distribution(
+    raw: &crate::xml::RawContinuousDistribution,
+) -> ContinuousDistributionIr {
+    match raw {
+        crate::xml::RawContinuousDistribution::Any { mean, variance } => {
+            ContinuousDistributionIr::Any {
+                mean: *mean,
+                variance: *variance,
+            }
+        }
+        crate::xml::RawContinuousDistribution::Gaussian { mean, variance } => {
+            ContinuousDistributionIr::Gaussian {
+                mean: *mean,
+                variance: *variance,
+            }
+        }
+        crate::xml::RawContinuousDistribution::Poisson { mean } => {
+            ContinuousDistributionIr::Poisson { mean: *mean }
+        }
+        crate::xml::RawContinuousDistribution::Uniform { lower, upper } => {
+            ContinuousDistributionIr::Uniform {
+                lower: *lower,
+                upper: *upper,
+            }
+        }
+    }
+}
+
+fn lower_baseline_raw(
+    raw: &crate::xml::RawBaselineModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<BaselineIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let targets = lower_targets(&raw.targets, field_name_to_id, interner, field_meta_map);
+    let td_raw = &raw.test_distributions;
+    let field_id = get_or_intern_field(
+        &td_raw.field,
+        DataType::Double,
+        OpType::Continuous,
+        interner,
+        field_name_to_id,
+        field_meta_map,
+    );
+    let baseline_continuous = td_raw
+        .baseline
+        .continuous
+        .as_ref()
+        .map(lower_continuous_distribution);
+    let baseline_discrete = td_raw.baseline.discrete.as_ref().map(|d| match d {
+        crate::xml::RawDiscreteDistribution::CountTable(ct) => {
+            let mut entries = Vec::new();
+            for e in &ct.field_value_counts {
+                let fid = get_or_intern_field(
+                    &e.field,
+                    DataType::String,
+                    OpType::Categorical,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                let sid = interner.intern_symbol(&e.value);
+                entries.push(FieldValueCountIr {
+                    field: fid,
+                    value: sid,
+                    count: e.count,
+                });
+            }
+            // also handle nested FieldValue counts if present
+            for fv in &ct.field_values {
+                for e in &fv.field_value_counts {
+                    let fid = get_or_intern_field(
+                        &e.field,
+                        DataType::String,
+                        OpType::Categorical,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
+                    let sid = interner.intern_symbol(&e.value);
+                    entries.push(FieldValueCountIr {
+                        field: fid,
+                        value: sid,
+                        count: e.count,
+                    });
+                }
+            }
+            DiscreteDistributionIr::CountTable(CountTableIr {
+                sample: ct.sample,
+                entries,
+            })
+        }
+        crate::xml::RawDiscreteDistribution::NormalizedCountTable(ct) => {
+            let mut entries = Vec::new();
+            for e in &ct.field_value_counts {
+                let fid = get_or_intern_field(
+                    &e.field,
+                    DataType::String,
+                    OpType::Categorical,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                let sid = interner.intern_symbol(&e.value);
+                entries.push(FieldValueCountIr {
+                    field: fid,
+                    value: sid,
+                    count: e.count,
+                });
+            }
+            for fv in &ct.field_values {
+                for e in &fv.field_value_counts {
+                    let fid = get_or_intern_field(
+                        &e.field,
+                        DataType::String,
+                        OpType::Categorical,
+                        interner,
+                        field_name_to_id,
+                        field_meta_map,
+                    );
+                    let sid = interner.intern_symbol(&e.value);
+                    entries.push(FieldValueCountIr {
+                        field: fid,
+                        value: sid,
+                        count: e.count,
+                    });
+                }
+            }
+            DiscreteDistributionIr::NormalizedCountTable(CountTableIr {
+                sample: ct.sample,
+                entries,
+            })
+        }
+        crate::xml::RawDiscreteDistribution::FieldRefs(fields) => {
+            let mut fids = Vec::new();
+            for f in fields {
+                let fid = get_or_intern_field(
+                    f,
+                    DataType::String,
+                    OpType::Categorical,
+                    interner,
+                    field_name_to_id,
+                    field_meta_map,
+                );
+                fids.push(fid);
+            }
+            DiscreteDistributionIr::FieldRefs(fids)
+        }
+    });
+    let alternate = td_raw
+        .alternate
+        .as_ref()
+        .map(|a| lower_continuous_distribution(&a.distribution));
+    let weight_field = td_raw.weight_field.as_ref().map(|f| {
+        get_or_intern_field(
+            f,
+            DataType::Double,
+            OpType::Continuous,
+            interner,
+            field_name_to_id,
+            field_meta_map,
+        )
+    });
+    let td_ir = TestDistributionsIr {
+        field: field_id,
+        field_name: td_raw.field.clone(),
+        test_statistic: parse_baseline_stat(&td_raw.test_statistic),
+        reset_value: td_raw.reset_value,
+        window_size: td_raw.window_size,
+        weight_field,
+        normalization_scheme: td_raw.normalization_scheme.clone(),
+        baseline_continuous,
+        baseline_discrete,
+        alternate,
+    };
+    Ok(BaselineIr {
+        function_name: raw.function_name.clone(),
+        mining_schema,
+        output,
+        targets,
+        test_distributions: td_ir,
+    })
+}
+
+fn lower_anomaly_raw(
+    raw: &crate::xml::RawAnomalyDetectionModel,
+    field_name_to_id: &mut HashMap<String, FieldId>,
+    field_meta_map: &mut HashMap<FieldId, FieldMeta>,
+    interner: &mut Interner,
+) -> Result<AnomalyDetectionIr> {
+    let mining_schema = lower_mining_schema(
+        &raw.mining_schema,
+        field_name_to_id,
+        field_meta_map,
+        interner,
+    )?;
+    let output = lower_output(&raw.output, field_name_to_id, interner);
+    let targets = lower_targets(&raw.targets, field_name_to_id, interner, field_meta_map);
+    let model = lower_anomaly_model(&raw.model, field_name_to_id, field_meta_map, interner)?;
+    let sample_data_size = raw
+        .sample_data_size
+        .as_ref()
+        .and_then(|s| s.parse::<f64>().ok());
+    Ok(AnomalyDetectionIr {
+        function_name: raw.function_name.clone(),
+        algorithm_type: raw.algorithm_type.clone(),
+        sample_data_size,
+        mining_schema,
+        output,
+        targets,
+        model: Box::new(model),
+        mean_cluster_distances: raw.mean_cluster_distances.clone(),
+    })
 }
 
 /// Lowers a [`RawPmml`] (from [`crate::xml::unmarshal()`]) into an optimized [`Ir`].
@@ -1563,6 +2308,25 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
                     crate::xml::RawSegmentModel::Regression(rm) => {
                         all_raw_derived.extend(rm.local_derived_fields.clone())
                     }
+                    crate::xml::RawSegmentModel::Mining(inner_mm) => {
+                        all_raw_derived.extend(inner_mm.local_derived_fields.clone());
+                        // handle nested mining's segments (one level deep, enough for GBDT modelChain)
+                        if let Some(inner_seg) = &inner_mm.segmentation {
+                            for inner_s in &inner_seg.segments {
+                                match &inner_s.model {
+                                    crate::xml::RawSegmentModel::Tree(tm) => {
+                                        all_raw_derived.extend(tm.local_derived_fields.clone())
+                                    }
+                                    crate::xml::RawSegmentModel::Regression(rm) => {
+                                        all_raw_derived.extend(rm.local_derived_fields.clone())
+                                    }
+                                    crate::xml::RawSegmentModel::Mining(deeper) => {
+                                        all_raw_derived.extend(deeper.local_derived_fields.clone())
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1593,6 +2357,65 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
     }
     if let Some(ref rs) = raw.rule_set_model {
         all_raw_derived.extend(rs.local_derived_fields.clone());
+    }
+    if let Some(ref adm) = raw.anomaly_detection_model {
+        all_raw_derived.extend(adm.local_derived_fields.clone());
+        match &adm.model {
+            crate::xml::RawAnomalyModel::Tree(tm) => {
+                all_raw_derived.extend(tm.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::Regression(rm) => {
+                all_raw_derived.extend(rm.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::Mining(mm) => {
+                all_raw_derived.extend(mm.local_derived_fields.clone());
+                if let Some(seg) = &mm.segmentation {
+                    for s in &seg.segments {
+                        match &s.model {
+                            crate::xml::RawSegmentModel::Tree(tm) => {
+                                all_raw_derived.extend(tm.local_derived_fields.clone())
+                            }
+                            crate::xml::RawSegmentModel::Regression(rm) => {
+                                all_raw_derived.extend(rm.local_derived_fields.clone())
+                            }
+                            crate::xml::RawSegmentModel::Mining(inner) => {
+                                all_raw_derived.extend(inner.local_derived_fields.clone())
+                            }
+                        }
+                    }
+                }
+            }
+            crate::xml::RawAnomalyModel::Scorecard(sc) => {
+                all_raw_derived.extend(sc.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::Clustering(cm) => {
+                all_raw_derived.extend(cm.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::NaiveBayes(nb) => {
+                all_raw_derived.extend(nb.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::NearestNeighbor(nn) => {
+                all_raw_derived.extend(nn.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::SupportVectorMachine(s) => {
+                all_raw_derived.extend(s.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::NeuralNetwork(nn) => {
+                all_raw_derived.extend(nn.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::GeneralRegression(gr) => {
+                all_raw_derived.extend(gr.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::Association(am) => {
+                all_raw_derived.extend(am.local_derived_fields.clone())
+            }
+            crate::xml::RawAnomalyModel::RuleSet(r) => {
+                all_raw_derived.extend(r.local_derived_fields.clone())
+            }
+        }
+    }
+    if let Some(ref bm) = raw.baseline_model {
+        all_raw_derived.extend(bm.local_derived_fields.clone());
     }
 
     for df in &all_raw_derived {
@@ -1658,61 +2481,12 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
         )?;
         (ModelIr::Regression(reg_ir), vec![])
     } else if let Some(mm) = raw.mining_model {
-        // MiningModel: need to lower its mining_schema + segmentation
-        let mining_schema = lower_mining_schema(
-            &mm.mining_schema,
+        let mining_ir = lower_mining_raw(
+            &mm,
             &mut field_name_to_id,
             &mut field_meta_map,
             &mut interner,
         )?;
-        let output = lower_output(&mm.output, &field_name_to_id, &mut interner);
-        let segmentation = if let Some(seg_raw) = mm.segmentation {
-            let mut segments = Vec::new();
-            for seg in &seg_raw.segments {
-                let pred = lower_predicate(
-                    &seg.predicate,
-                    &mut interner,
-                    &mut field_meta_map,
-                    &mut field_name_to_id,
-                )?;
-                let model_ir = lower_segment_model(
-                    &seg.model,
-                    &mut field_name_to_id,
-                    &mut field_meta_map,
-                    &mut interner,
-                )?;
-                segments.push(SegmentIr {
-                    id: seg.id.clone(),
-                    predicate: pred,
-                    weight: seg.weight,
-                    model: Box::new(model_ir),
-                });
-            }
-            SegmentationIr {
-                multiple_model_method: parse_multiple_model_method(&seg_raw.multiple_model_method),
-                missing_prediction_treatment: parse_missing_pred(
-                    seg_raw.missing_prediction_treatment.as_deref(),
-                ),
-                segments,
-            }
-        } else {
-            return Err(PmmlError::UnsupportedMarkup(
-                "MiningModel without Segmentation not supported".into(),
-            ));
-        };
-        let targets = lower_targets(
-            &mm.targets,
-            &mut field_name_to_id,
-            &mut interner,
-            &mut field_meta_map,
-        );
-        let mining_ir = MiningIr {
-            function_name: mm.function_name.clone(),
-            mining_schema,
-            segmentation,
-            targets,
-            output,
-        };
         (ModelIr::Mining(mining_ir), vec![])
     } else if let Some(sc) = raw.scorecard {
         let mining_schema = lower_mining_schema(
@@ -2273,6 +3047,22 @@ pub fn lower(raw: RawPmml) -> Result<Ir> {
             };
             (ModelIr::RuleSet(rs_ir), vec![])
         }
+    } else if let Some(adm) = raw.anomaly_detection_model {
+        let adm_ir = lower_anomaly_raw(
+            &adm,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        (ModelIr::AnomalyDetection(adm_ir), vec![])
+    } else if let Some(bm) = raw.baseline_model {
+        let bm_ir = lower_baseline_raw(
+            &bm,
+            &mut field_name_to_id,
+            &mut field_meta_map,
+            &mut interner,
+        )?;
+        (ModelIr::Baseline(bm_ir), vec![])
     } else if let Some(nn) = raw.neural_network {
         let mining_schema = lower_mining_schema(
             &nn.mining_schema,
