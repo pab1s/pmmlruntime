@@ -660,6 +660,10 @@ pub enum ModelIr {
     Association(AssociationIr),
     /// `RuleSetModel` (`RuleSet` with ordered simple rules).
     RuleSet(RuleSetIr),
+    /// `AnomalyDetectionModel` (wrapper over any model with `MeanClusterDistances`).
+    AnomalyDetection(AnomalyDetectionIr),
+    /// `BaselineModel` (change-detection / hypothesis testing via `TestDistributions`).
+    Baseline(BaselineIr),
 }
 
 /// Lowered `RegressionModel`.
@@ -1192,6 +1196,134 @@ pub struct RuleSetIr {
     pub default_score: Option<SymbolId>,
     /// Rules in PMML order (first match wins in evaluator).
     pub rules: Vec<SimpleRuleIr>,
+}
+
+/// Lowered `AnomalyDetectionModel` — wrapper around an embedded model.
+///
+/// Mirrors `pmml.xsd:AnomalyDetectionModel` (`1718-1737`). The embedded `MODEL-ELEMENT`
+/// (`Tree`, `Regression`, `Mining`, `Clustering`, `SVM`, …) is scored first; the outer
+/// model then maps the raw score to an anomaly value per `algorithm_type`.
+///
+/// - `iforest` → `2^(-avg_path / c(n))` where `c(n)=2*H(n-1)-2*(n-1)/n`, `H(k)=ln(k)+γ`.
+/// - `clusterMeanDist` → `distance_to_cluster / mean_cluster_distances[cluster]`.
+/// - otherwise → raw embedded score.
+#[derive(Debug, Clone)]
+pub struct AnomalyDetectionIr {
+    /// `AnomalyDetectionModel/@functionName`.
+    pub function_name: String,
+    /// `AnomalyDetectionModel/@algorithmType` (`iforest`, `ocsvm`, `clusterMeanDist`, `other`).
+    pub algorithm_type: String,
+    /// `AnomalyDetectionModel/@sampleDataSize` parsed as `f64` if present.
+    pub sample_data_size: Option<f64>,
+    /// Mining schema for the outer model.
+    pub mining_schema: MiningSchemaIr,
+    /// Output fields.
+    pub output: Vec<OutputFieldIr>,
+    /// `Targets` (rare for anomaly, but preserved).
+    pub targets: Vec<TargetIr>,
+    /// Embedded model (`MODEL-ELEMENT`).
+    pub model: Box<ModelIr>,
+    /// `MeanClusterDistances/Array` values, one per cluster (for `clusterMeanDist`).
+    pub mean_cluster_distances: Option<Vec<f64>>,
+}
+
+/// Test statistic for `BaselineModel/TestDistributions/@testStatistic`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaselineTestStatistic {
+    /// `zValue` — `(x-mean)/sqrt(var)`.
+    ZValue,
+    /// `chiSquareIndependence`.
+    ChiSquareIndependence,
+    /// `chiSquareDistribution`.
+    ChiSquareDistribution,
+    /// `CUSUM` — `max(reset, prev + log(f1/f0))`.
+    Cusum,
+    /// `scalarProduct`.
+    ScalarProduct,
+}
+
+/// Continuous baseline distribution.
+#[derive(Debug, Clone)]
+pub enum ContinuousDistributionIr {
+    /// `AnyDistribution` with `mean`/`variance`.
+    Any { mean: f64, variance: f64 },
+    /// `GaussianDistribution` with `mean`/`variance`.
+    Gaussian { mean: f64, variance: f64 },
+    /// `PoissonDistribution` with `mean`.
+    Poisson { mean: f64 },
+    /// `UniformDistribution` with `lower`/`upper`.
+    Uniform { lower: f64, upper: f64 },
+}
+
+/// Single `FieldValueCount` inside a `CountTable`.
+#[derive(Debug, Clone)]
+pub struct FieldValueCountIr {
+    /// Field id (`FieldValueCount/@field`).
+    pub field: FieldId,
+    /// Value symbol (`@value` interned).
+    pub value: SymbolId,
+    /// Count (`@count`).
+    pub count: f64,
+}
+
+/// Discrete `CountTable` (or `NormalizedCountTable`).
+#[derive(Debug, Clone)]
+pub struct CountTableIr {
+    /// `CountTable/@sample` if present.
+    pub sample: Option<f64>,
+    /// Flat `FieldValueCount` entries.
+    pub entries: Vec<FieldValueCountIr>,
+}
+
+/// Discrete baseline distribution.
+#[derive(Debug, Clone)]
+pub enum DiscreteDistributionIr {
+    /// `CountTable`.
+    CountTable(CountTableIr),
+    /// `NormalizedCountTable`.
+    NormalizedCountTable(CountTableIr),
+    /// List of `FieldRef/@field` for `chiSquareIndependence`.
+    FieldRefs(Vec<FieldId>),
+}
+
+/// Lowered `TestDistributions` inside `BaselineModel`.
+#[derive(Debug, Clone)]
+pub struct TestDistributionsIr {
+    /// `TestDistributions/@field` (target for baseline test).
+    pub field: FieldId,
+    /// Name of the test field (for materialization).
+    pub field_name: String,
+    /// `TestDistributions/@testStatistic`.
+    pub test_statistic: BaselineTestStatistic,
+    /// `TestDistributions/@resetValue` (for `CUSUM`).
+    pub reset_value: f64,
+    /// `TestDistributions/@windowSize`.
+    pub window_size: i32,
+    /// `TestDistributions/@weightField` if any.
+    pub weight_field: Option<FieldId>,
+    /// `TestDistributions/@normalizationScheme` if any.
+    pub normalization_scheme: Option<String>,
+    /// `Baseline` continuous or discrete.
+    pub baseline_continuous: Option<ContinuousDistributionIr>,
+    /// Baseline discrete (alternative storage for discrete case).
+    pub baseline_discrete: Option<DiscreteDistributionIr>,
+    /// `Alternate` continuous (only for `CUSUM`).
+    pub alternate: Option<ContinuousDistributionIr>,
+}
+
+/// Lowered `BaselineModel` (change-detection).
+#[derive(Debug, Clone)]
+pub struct BaselineIr {
+    /// `BaselineModel/@functionName`.
+    pub function_name: String,
+    /// Mining schema.
+    pub mining_schema: MiningSchemaIr,
+    /// Output fields.
+    pub output: Vec<OutputFieldIr>,
+    /// Targets.
+    pub targets: Vec<TargetIr>,
+    /// Single `TestDistributions`.
+    pub test_distributions: TestDistributionsIr,
 }
 
 /// Lowered `TreeModel`.
