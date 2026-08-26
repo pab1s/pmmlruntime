@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/pmmlruntime.png" alt="pmmlruntime — A fast, modern PMML inference runtime" width="100%">
+</p>
+
 # pmmlruntime
 
 <p align="center">
