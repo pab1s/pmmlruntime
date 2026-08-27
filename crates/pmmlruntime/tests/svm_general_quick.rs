@@ -1,4 +1,5 @@
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+use std::collections::HashMap;
 
 #[test]
 fn general_regression_load() {
@@ -14,12 +15,12 @@ fn general_regression_load() {
                 sess.num_active_fields()
             );
             // Try to run with dummy values
-            let out = sess.run(Default::default());
-            println!("general regression run: {:?}", out);
+            let out = sess.run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch);
+            println!("general regression run: {out:?}");
             assert!(out.is_ok() || out.is_err());
         }
         Err(e) => {
-            println!("general regression load error: {}", e);
+            println!("general regression load error: {e}");
             panic!("should load");
         }
     }
@@ -35,9 +36,9 @@ fn svm_load() {
     match res {
         Ok(sess) => {
             println!("svm load ok, active {}", sess.num_active_fields());
-            let out = sess.run(Default::default());
-            println!("svm run: {:?}", out);
+            let out = sess.run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch);
+            println!("svm run: {out:?}");
         }
-        Err(e) => println!("svm load error: {}", e),
+        Err(e) => println!("svm load error: {e}"),
     }
 }

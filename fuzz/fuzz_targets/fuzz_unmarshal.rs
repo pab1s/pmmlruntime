@@ -3,7 +3,7 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     // Fuzz pmmlruntime::xml::unmarshal with arbitrary bytes — should not panic, only return Ok or Err
-    // Mirrors JPMML SAXUtil hardening and validates reader depth 512 / 100 MB cap / XXE blocked
+    // Validates hardened reader limits: depth 512 / 100 MB cap / XXE blocked
     let _ = pmmlruntime::xml::unmarshal(data);
     // Also fuzz lower/verify pipeline for coverage (45 fixtures + random)
     if let Ok(raw) = pmmlruntime::xml::unmarshal(data) {

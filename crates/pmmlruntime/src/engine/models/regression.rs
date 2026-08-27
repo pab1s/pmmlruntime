@@ -202,7 +202,7 @@ pub(crate) fn apply_normalization(score: f64, method: RegressionNormalizationMet
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base::{FieldId, SymbolId};
+    use crate::base::FieldId;
     use crate::ir::*;
 
     #[test]

@@ -47,7 +47,7 @@
 //!
 //! # Performance
 //!
-//! Cold path only. Hot scoring (`pmml-evaluator`) never touches `quick-xml`. Measured `68 µs`
+//! Cold path only. Hot scoring never touches `quick-xml`. Measured `68 µs`
 //! for `DecisionTreeIris.pmml` (2.9 KB) on x86_64; cost scales linearly with document size.
 //!
 //! # What to import

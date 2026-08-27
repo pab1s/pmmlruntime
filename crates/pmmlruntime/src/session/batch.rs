@@ -188,6 +188,10 @@ pub trait Batch: Send + Sync {
     }
     /// Physical layout hint (`RowMajor` vs `Columnar`).
     fn format(&self) -> BatchFormat;
+    /// Downcast helper for `RecordBatch` ctx building.
+    fn as_any(&self) -> &dyn std::any::Any {
+        &()
+    }
     /// Materialize `row` into `values[FieldId.as_usize()] = Value`.
     /// `values` is already zeroed with `Missing`; impl only overwrites known fields.
     ///
@@ -217,6 +221,7 @@ pub trait Batch: Send + Sync {
 /// let br = BatchResult::Rows(vec![]);
 /// assert!(br.is_empty());
 /// ```
+#[derive(Debug)]
 pub enum BatchResult {
     /// Row-major `Vec<HashMap>` — used for `Vec<HashMap>` inputs and Arrow inputs that still output rows.
     Rows(Vec<HashMap<String, Value>>),
@@ -268,6 +273,17 @@ impl BatchResult {
             BatchResult::Columnar(b) => crate::session::arrow::record_batch_to_value_maps(&b),
         }
     }
+    /// Unwrap single row — convenient for `run` on a single `HashMap`.
+    pub fn into_single(self) -> Option<HashMap<String, Value>> {
+        match self {
+            BatchResult::Rows(mut v) if v.len() == 1 => v.pop(),
+            BatchResult::Columnar(b) if b.num_rows() == 1 => {
+                let maps = crate::session::arrow::record_batch_to_value_maps(&b);
+                maps.into_iter().next()
+            }
+            _ => None,
+        }
+    }
 }
 
 // Row-major: Vec<HashMap<String, Value>>
@@ -314,6 +330,28 @@ impl Batch for [HashMap<String, Value>] {
     }
 }
 
+// Row-major single: HashMap<String, Value> (1 row)
+impl Batch for HashMap<String, Value> {
+    fn len(&self) -> usize {
+        1
+    }
+    fn format(&self) -> BatchFormat {
+        BatchFormat::RowMajor
+    }
+    fn materialize_row(&self, row: usize, values: &mut [Value], ctx: &BatchCtx) -> Result<()> {
+        debug_assert_eq!(row, 0);
+        for (name, val) in self {
+            if let Some(&fid) = ctx.name_to_id.get(name) {
+                let idx = fid.as_usize();
+                if idx < values.len() {
+                    values[idx] = *val;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 // Columnar: RecordBatch
 impl Batch for RecordBatch {
     fn len(&self) -> usize {
@@ -321,6 +359,9 @@ impl Batch for RecordBatch {
     }
     fn format(&self) -> BatchFormat {
         BatchFormat::Columnar
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
     fn materialize_row(&self, row: usize, values: &mut [Value], ctx: &BatchCtx) -> Result<()> {
         for (fid, col_idx) in &ctx.col_map {
@@ -364,6 +405,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    #[allow(clippy::too_many_arguments)]
     fn dummy_ctx<'a>(
         name_to_id: &'a AHashMap<String, FieldId>,
         name_to_id_std: &'a HashMap<String, FieldId>,

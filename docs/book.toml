@@ -1,0 +1,21 @@
+[book]
+title = "pmmlruntime"
+authors = ["Pablo Olivares"]
+language = "en"
+src = "src"
+description = "PMML 4.4 runtime — session-based execution, Arrow batch, hardened XML"
+
+[build]
+build-dir = "book"
+
+[output.html]
+additional-css = []
+git-repository-url = "https://github.com/pab1s/pmmlruntime"
+edit-url-template = "https://github.com/pab1s/pmmlruntime/edit/main/docs/src/{path}"
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+renderer = ["html"]
+
+[output.html.search]
+limit-results = 20

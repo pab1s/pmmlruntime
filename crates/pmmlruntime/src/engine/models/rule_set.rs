@@ -3,7 +3,7 @@
 //! Implements `RuleSetModel` where `RuleSet` holds an ordered list of `SimpleRule`s.
 //! Each rule's [`PredicateIr`](crate::ir::PredicateIr) is tested via a local
 //! `eval_predicate` (identical semantics to [`crate::engine::predicate::eval_predicate`] but
-//! duplicated for bootstrapping; migration to the shared helper is pending) in document
+//! duplicated for bootstrapping; consolidation to the shared helper is pending) in document
 //! order. The first firing rule's `score: SymbolId` is returned as `Discrete`. When no rule
 //! fires, `defaultScore` (when present) is returned; otherwise `Missing`.
 //!

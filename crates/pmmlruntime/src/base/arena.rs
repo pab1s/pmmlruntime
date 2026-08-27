@@ -201,17 +201,18 @@ unsafe impl Send for BumpArena {}
 
 #[cfg(test)]
 #[allow(clippy::pedantic)]
+#[allow(unused_must_use)]
 mod tests {
     use super::*;
 
     #[test]
     fn arena_resets() {
-        let _ = with_arena(|arena| {
+        with_arena(|arena| {
             let _v = arena.alloc_str("hello");
             assert_eq!(_v, "hello");
         });
         // second run should not see previous allocation
-        let _ = with_arena(|arena| {
+        with_arena(|arena| {
             let _w = arena.alloc_str("world");
             assert_eq!(_w, "world");
         });
