@@ -26,8 +26,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use pmmlruntime::session::batch::Batch;
+use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use pmmlruntime::Value;
 
 #[allow(clippy::too_many_lines)]

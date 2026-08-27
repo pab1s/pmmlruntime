@@ -8,6 +8,7 @@ use crate::session::providers::{CpuProvider, ExecutionProvider};
 use ahash::AHashMap;
 #[allow(unused_imports)]
 use arrow::array::{Array, Float64Array, StringArray};
+#[allow(unused_imports)]
 use arrow::datatypes::DataType as ArrowDataType;
 use arrow::record_batch::RecordBatch;
 use std::cell::RefCell;
@@ -462,11 +463,15 @@ impl Session {
                                 if !col.is_null(row_idx) {
                                     let val = match col.data_type() {
                                         ArrowDataType::Float64 => {
-                                            let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
+                                            let arr = col
+                                                .as_any()
+                                                .downcast_ref::<Float64Array>()
+                                                .unwrap();
                                             Value::Continuous(arr.value(row_idx))
                                         }
                                         ArrowDataType::Utf8 => {
-                                            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+                                            let arr =
+                                                col.as_any().downcast_ref::<StringArray>().unwrap();
                                             let s = arr.value(row_idx);
                                             if let Some(sid) = self.symbol_str_to_id.get(s) {
                                                 Value::Discrete(*sid)
@@ -483,11 +488,14 @@ impl Session {
                             }
                             batch_values.push(row_vals);
                         }
-                        let refs: Vec<&[Value]> = batch_values.iter().map(|v| v.as_slice()).collect();
-                        let simd_results = crate::engine::simd::evaluate_regression_batch_simd(reg, &refs);
+                        let refs: Vec<&[Value]> =
+                            batch_values.iter().map(|v| v.as_slice()).collect();
+                        let simd_results =
+                            crate::engine::simd::evaluate_regression_batch_simd(reg, &refs);
                         let mut results = Vec::with_capacity(rb.num_rows());
                         for predicted in simd_results {
-                            let mut output = HashMap::with_capacity(self.output_fields.len().max(1) + 2);
+                            let mut output =
+                                HashMap::with_capacity(self.output_fields.len().max(1) + 2);
                             if self.output_fields.is_empty() {
                                 output.insert("predictedValue".to_string(), predicted);
                             } else {
@@ -509,7 +517,9 @@ impl Session {
                             if let Some(tname) = &self.target_name {
                                 final_out.entry(tname.clone()).or_insert(predicted);
                             }
-                            final_out.entry("predictedValue".to_string()).or_insert(predicted);
+                            final_out
+                                .entry("predictedValue".to_string())
+                                .or_insert(predicted);
                             results.push(final_out);
                         }
                         return Ok(BatchResult::Rows(results));
@@ -559,7 +569,6 @@ impl Session {
         };
         self.provider.eval_batch(&self.ir, batch, &ctx)
     }
-
 
     /// Resolve a field name to its stable [`FieldId`] for zero-copy [`run_with_ids`](Self::run_with_ids).
     ///
@@ -653,7 +662,6 @@ impl Session {
         crate::session::input::string_to_value(field_name, s, fid, dt, op, &self.symbol_str_to_id)
     }
 
-
     /// Number of active (input) fields for this model.
     ///
     /// Reads `mining_schema.active_fields.len()` for whichever `ModelIr` is held.
@@ -716,7 +724,11 @@ mod tests {
         let mut input = HashMap::new();
         input.insert("Petal.Length".to_string(), Value::Continuous(1.4)); // setosa
         input.insert("Petal.Width".to_string(), Value::Continuous(0.2));
-        let out = sess.run(&input as &dyn crate::session::batch::Batch).unwrap().into_single().unwrap();
+        let out = sess
+            .run(&input as &dyn crate::session::batch::Batch)
+            .unwrap()
+            .into_single()
+            .unwrap();
         // Predicted should be setosa
         let pred = out.get("predictedValue").unwrap();
         match pred {
@@ -738,7 +750,11 @@ mod tests {
         let mut input = HashMap::new();
         input.insert("Petal.Length".to_string(), Value::Continuous(6.0));
         input.insert("Petal.Width".to_string(), Value::Continuous(2.0));
-        let out = sess.run(&input as &dyn crate::session::batch::Batch).unwrap().into_single().unwrap();
+        let out = sess
+            .run(&input as &dyn crate::session::batch::Batch)
+            .unwrap()
+            .into_single()
+            .unwrap();
         assert!(out.contains_key("predictedValue"));
     }
 }

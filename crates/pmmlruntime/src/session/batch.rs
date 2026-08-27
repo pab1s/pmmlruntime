@@ -332,14 +332,20 @@ impl Batch for [HashMap<String, Value>] {
 
 // Row-major single: HashMap<String, Value> (1 row)
 impl Batch for HashMap<String, Value> {
-    fn len(&self) -> usize { 1 }
-    fn format(&self) -> BatchFormat { BatchFormat::RowMajor }
+    fn len(&self) -> usize {
+        1
+    }
+    fn format(&self) -> BatchFormat {
+        BatchFormat::RowMajor
+    }
     fn materialize_row(&self, row: usize, values: &mut [Value], ctx: &BatchCtx) -> Result<()> {
         debug_assert_eq!(row, 0);
         for (name, val) in self {
             if let Some(&fid) = ctx.name_to_id.get(name) {
                 let idx = fid.as_usize();
-                if idx < values.len() { values[idx] = *val; }
+                if idx < values.len() {
+                    values[idx] = *val;
+                }
             }
         }
         Ok(())
@@ -354,7 +360,9 @@ impl Batch for RecordBatch {
     fn format(&self) -> BatchFormat {
         BatchFormat::Columnar
     }
-    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
     fn materialize_row(&self, row: usize, values: &mut [Value], ctx: &BatchCtx) -> Result<()> {
         for (fid, col_idx) in &ctx.col_map {
             let col = self.column(*col_idx);

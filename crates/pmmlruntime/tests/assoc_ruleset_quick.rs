@@ -11,7 +11,11 @@ fn association_load() {
     match res {
         Ok(sess) => {
             println!("assoc load ok, active {}", sess.num_active_fields());
-            let out = sess.run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run assoc");
+            let out = sess
+                .run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch)
+                .unwrap()
+                .into_single()
+                .expect("run assoc");
             println!("assoc out: {out:?}");
             assert!(out.contains_key("predictedValue") || !out.is_empty());
         }
@@ -32,7 +36,11 @@ fn ruleset_load() {
     match res {
         Ok(sess) => {
             println!("ruleset load ok, active {}", sess.num_active_fields());
-            let out = sess.run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run ruleset");
+            let out = sess
+                .run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch)
+                .unwrap()
+                .into_single()
+                .expect("run ruleset");
             println!("ruleset out: {out:?}");
             assert!(!out.is_empty());
         }

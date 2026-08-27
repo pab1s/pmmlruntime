@@ -34,7 +34,11 @@ fn general_regression_contrast() {
     m.insert("educ".to_string(), Value::Continuous(19.0));
     m.insert("jobcat".to_string(), Value::Discrete(sid_3));
     m.insert("salbegin".to_string(), Value::Continuous(45000.0));
-    let out = sess.run(&m as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run gr");
+    let out = sess
+        .run(&m as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .expect("run gr");
     println!("general regression out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     match pred {
@@ -88,7 +92,11 @@ fn svm_xor() {
         let mut m = HashMap::new();
         m.insert("x1".to_string(), Value::Continuous(x1));
         m.insert("x2".to_string(), Value::Continuous(x2));
-        let out = sess.run(&m as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run svm");
+        let out = sess
+            .run(&m as &dyn pmmlruntime::session::batch::Batch)
+            .unwrap()
+            .into_single()
+            .expect("run svm");
         println!("svm ({x1}, {x2}) out: {out:?}");
         let pred = out
             .get("predictedValue")

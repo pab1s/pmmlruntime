@@ -34,7 +34,11 @@ fn scorecard_attribute_reason() {
     m.insert("department".to_string(), Value::Discrete(marketing_sid));
     m.insert("age".to_string(), Value::Continuous(35.0));
     m.insert("income".to_string(), Value::Continuous(1500.0));
-    let out = sess.run(&m as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run scorecard");
+    let out = sess
+        .run(&m as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .expect("run scorecard");
     println!("scorecard out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     match pred {
@@ -65,7 +69,11 @@ fn clustering_ranking() {
         Session::from_bytes(&env, &bytes, SessionOptions::default()).expect("load clustering");
     let mut m = HashMap::new();
     m.insert("input".to_string(), Value::Continuous(2.8));
-    let out = sess.run(&m as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run clustering");
+    let out = sess
+        .run(&m as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .expect("run clustering");
     println!("clustering out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     // Should be discrete cluster name, e.g., positive
