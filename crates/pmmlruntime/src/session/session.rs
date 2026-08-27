@@ -3,11 +3,12 @@ use crate::base::{FieldId, SymbolId, Value};
 use crate::ir::Ir;
 use crate::session::batch::{Batch, BatchCtx, BatchResult};
 use crate::session::env::PmmlEnv;
-use crate::session::options::{ExecutionProviderKind, SessionOptions};
-use crate::session::providers::{CpuBatchedProvider, CpuSerialProvider, ExecutionProvider};
+use crate::session::options::SessionOptions;
+use crate::session::providers::{CpuProvider, ExecutionProvider};
 use ahash::AHashMap;
 #[allow(unused_imports)]
 use arrow::array::{Array, Float64Array, StringArray};
+#[allow(unused_imports)]
 use arrow::datatypes::DataType as ArrowDataType;
 use arrow::record_batch::RecordBatch;
 use std::cell::RefCell;
@@ -93,7 +94,7 @@ pub(crate) fn with_value_buffer<R>(needed: usize, f: impl FnOnce(&mut [Value]) -
 /// - `Ir` is `Arc` immutable (like `Ir`), `Session` is `Send+Sync`
 /// - `Value[FieldId]` is materialized per row via `with_value_buffer` helper (stack `64` + `thread_local`)
 /// - `Batch` trait abstracts `Vec<HashMap>` (row-major, PMML compat) vs `RecordBatch` (columnar, Arrow zero-copy)
-/// - `ExecutionProvider` owns batch sharding (`rayon` for `CpuBatched`), `Session` only does `Value` materialization + output mapping.
+/// - `ExecutionProvider` (`Cpu`) owns batch sharding (auto serial vs `rayon`), `Session` only does `Value` materialization + output mapping.
 ///
 /// See [`crate::session::batch`] for `Batch`/`BatchResult` and [`crate::session::providers`] for `eval_row`/`eval_batch`.
 ///
@@ -109,6 +110,7 @@ pub(crate) fn with_value_buffer<R>(needed: usize, f: impl FnOnce(&mut [Value]) -
 ///
 /// ```
 /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+/// use pmmlruntime::session::batch::Batch;
 /// use pmmlruntime::base::Value;
 /// use std::collections::HashMap;
 ///
@@ -117,7 +119,7 @@ pub(crate) fn with_value_buffer<R>(needed: usize, f: impl FnOnce(&mut [Value]) -
 /// let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
 /// let mut input = HashMap::new();
 /// input.insert("x".to_string(), Value::Continuous(1.0));
-/// let out = sess.run(input).unwrap();
+/// let out = sess.run(&input as &dyn Batch).unwrap().into_single().unwrap();
 /// assert!(out.contains_key("predictedValue"));
 /// ```
 pub struct Session {
@@ -133,7 +135,7 @@ pub struct Session {
     // zero-alloc via `Borrow<str>`; `Rodeo`/`Spur` only needed if Python passes `&str` without `String` alloc (re-add then).
     name_to_id: AHashMap<String, FieldId>,
     // std HashMap clone for GeneralRegression/Mining evaluator (cached, not per-row)
-    // `pmml-evaluator` API expects `HashMap<String, FieldId>` — keep `std` here, `AHashMap` for hot path above.
+    // Engine expects `HashMap<String, FieldId>` — keep `std` here, `AHashMap` for hot path above.
     name_to_id_std: HashMap<String, FieldId>,
     // max field id for values vec size
     max_field_id: usize,
@@ -151,7 +153,7 @@ impl Session {
     /// Create a session from PMML XML bytes (cold path).
     ///
     /// Delegates to `crate::xml::unmarshal` → `crate::ir::verify_raw` → `crate::ir::lower` → `crate::ir::verify_ir` → `from_ir`.
-    /// The `Session` then holds `Arc<Ir>` and a boxed [`ExecutionProvider`] chosen by `options.execution_provider`.
+    /// The `Session` then holds `Arc<Ir>` and a boxed `Cpu` [`ExecutionProvider`].
     ///
     /// # Parameters
     ///
@@ -240,12 +242,9 @@ impl Session {
     /// cached `output_fields` (P7), forward `symbol_str_to_id` (P1), and dense
     /// `symbol_names_vec` (cache-line friendly for probability output).
     ///
-    /// Provider is chosen by `options.execution_provider` (`CpuSerial` vs `CpuBatched`).
+    /// Provider is always the unified `Cpu` (auto serial vs `rayon`).
     fn from_ir(env: PmmlEnv, ir: Ir, options: SessionOptions) -> Result<Self> {
-        let provider: Box<dyn ExecutionProvider> = match options.execution_provider {
-            ExecutionProviderKind::CpuSerial => Box::new(CpuSerialProvider::new()),
-            ExecutionProviderKind::CpuBatched => Box::new(CpuBatchedProvider::new()),
-        };
+        let provider: Box<dyn ExecutionProvider> = Box::new(CpuProvider::new());
 
         // Build name->FieldId map from Ir field_names (FieldId -> name) — E1: ahash for hot path
         // `AHashMap::get(&str)` is zero-alloc via `Borrow<str>`; no Rodeo needed until Python needs `&str` interning.
@@ -395,473 +394,183 @@ impl Session {
         })
     }
 
-    /// Run a single row (hot path).
+    /// Unified scoring — single row, batch, or Arrow. One CPU provider, one method.
     ///
-    /// Materializes `HashMap<String, Value>` into `Value[FieldId]` via `with_value_buffer`,
-    /// evaluates `DerivedFields` + model via the `ExecutionProvider`, then maps the predicted
-    /// [`Value`] back to named outputs. Unknown input fields are ignored per PMML spec.
+    /// Accepts any `&dyn Batch`:
+    /// - `&HashMap<String, Value>` — single row (1 row)
+    /// - `&Vec<HashMap<String, Value>>` / `&[HashMap]` — batch row-major
+    /// - `&RecordBatch` — columnar Arrow (zero-copy)
     ///
-    /// Output always contains `predictedValue`; if the model has a `target_field` or
-    /// `Output` fields, those names are also inserted. For classification with probabilities,
-    /// `Probability_*` and per-category entries are added.
-    ///
-    /// # Parameters
-    ///
-    /// - `input`: map of field name → [`Value`] (`Continuous(f64)` or `Discrete(SymbolId)` or `Missing`).
-    ///
-    /// # Returns
-    ///
-    /// `HashMap<String, Value>` with at least `predictedValue`. For `GeneralRegression` with
-    /// softmax, the map also contains per-category probabilities.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PmmlError::InvalidValue`] if `eval_derived_fields` fails, or propagates
-    /// provider errors. In practice scoring rarely errors; missing fields become [`Value::Missing`].
-    ///
-    /// # Panics
-    ///
-    /// Does not panic. Unknown fields are ignored; out-of-range `FieldId` is bounds-checked.
-    ///
-    /// # Performance
-    ///
-    /// ~402 ns per row (stack `64` path, no allocation). `GeneralRegression` softmax does one extra
-    /// allocation for probabilities. The `AHashMap` lookup is ~3× faster than `SipHash`.
-    ///
-    /// # Concurrency
-    ///
-    /// `&self` is `Send` + `Sync`. Each call uses its own thread-local buffer via `with_value_buffer` (`thread_local!` for large models),
-    /// so concurrent `run` calls on the same `Session` are safe without external locking.
+    /// Returns `BatchResult::Rows` (row-major) for all inputs; `RecordBatch` inputs still return `Rows`
+    /// (provider always returns `Rows`; call `.into_record_batch(schema)` if you need Arrow output).
+    /// For single row, use `.into_single().unwrap()` or `.into_rows()[0]`.
     ///
     /// # Examples
     ///
     /// ```
     /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+    /// use pmmlruntime::session::batch::Batch;
     /// use pmmlruntime::base::Value;
     /// use std::collections::HashMap;
+    /// use arrow::array::Float64Array;
+    /// use arrow::datatypes::{DataType, Field, Schema};
+    /// use arrow::record_batch::RecordBatch;
+    /// use std::sync::Arc;
     ///
     /// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
     /// let env = PmmlEnv::new();
     /// let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
     ///
-    /// let mut input = HashMap::new();
-    /// input.insert("x".to_string(), Value::Continuous(1.0));
-    /// // unknown field is ignored, not an error
-    /// input.insert("unknown".to_string(), Value::Continuous(9.9));
-    /// let out = sess.run(input).unwrap();
+    /// // 1) single row via &HashMap
+    /// let mut single = HashMap::new();
+    /// single.insert("x".to_string(), Value::Continuous(1.0));
+    /// let out = sess.run(&single as &dyn Batch).unwrap().into_single().unwrap();
     /// assert!(out.contains_key("predictedValue"));
-    /// ```
-    pub fn run(&self, input: HashMap<String, Value>) -> Result<HashMap<String, Value>> {
-        let needed = self.max_field_id.max(self.ir.num_fields() + 4);
-        with_value_buffer(needed, |values| {
-            // Fill from input using ahash map (E1: SipHash -> ahash, Rodeo interned at build time for validation)
-            // Rodeo spur_to_id is kept for future zero-alloc &str -> FieldId fast path via lasso, but ahash already ~3x faster
-            for (name, val) in input {
-                if let Some(&fid) = self.name_to_id.get(&name) {
-                    let idx = fid.as_usize();
-                    if idx < needed {
-                        values[idx] = val;
-                    }
-                } else {
-                    // Unknown field — ignore per PMML (or error). We'll ignore.
-                }
-            }
-            // We now have &mut [Value] in `values[..needed]` to evaluate
-            // To avoid double borrow issues, we will clone the slice handling into a helper that operates on &mut [Value]
-            // Use a closure to handle GeneralRegression vs other models without holding borrow across return
-            let result: Result<HashMap<String, Value>> = (|| {
-                // Handle GeneralRegression specially to get probabilities (needs field_names + symbol_names + name_to_id)
-                if let crate::ir::ModelIr::GeneralRegression(gr) = &self.ir.model {
-                    // Use cached std map (P0) — no per-row allocation
-                    let std_map = &self.name_to_id_std;
-                    let (predicted, probs) =
-                        crate::engine::models::evaluate_general_regression_with_probs(
-                            gr,
-                            &values[..needed],
-                            &self.ir.field_names,
-                            &self.ir.symbol_names,
-                            std_map,
-                        );
-                    let mut output = HashMap::new();
-                    for of in &gr.output {
-                        match of.feature {
-                            crate::base::field::ResultFeature::Probability => {
-                                if let Some(cat_sid) = of.value {
-                                    if let Some(cat_str) = self
-                                        .symbol_names_vec
-                                        .get(cat_sid.0 as usize)
-                                        .filter(|s| !s.is_empty())
-                                    {
-                                        if let Some(p) = probs.get(cat_str) {
-                                            output.insert(of.name.clone(), Value::Continuous(*p));
-                                            continue;
-                                        }
-                                    }
-                                }
-                                if let Some(cat_sid) = of.value {
-                                    if let Some(cat_str) = self
-                                        .symbol_names_vec
-                                        .get(cat_sid.0 as usize)
-                                        .filter(|s| !s.is_empty())
-                                    {
-                                        if let Some(p) = probs.get(cat_str) {
-                                            output.insert(of.name.clone(), Value::Continuous(*p));
-                                            continue;
-                                        }
-                                    }
-                                }
-                                output.insert(of.name.clone(), Value::Missing);
-                            }
-                            crate::base::field::ResultFeature::PredictedValue => {
-                                output.insert(of.name.clone(), predicted);
-                            }
-                            _ => {
-                                output.insert(of.name.clone(), predicted);
-                            }
-                        }
-                    }
-                    if output.is_empty() {
-                        output.insert("predictedValue".to_string(), predicted);
-                    }
-                    let mut final_out = output;
-                    if let Some(tname) = &self.target_name {
-                        final_out.entry(tname.clone()).or_insert(predicted);
-                    }
-                    final_out
-                        .entry("predictedValue".to_string())
-                        .or_insert(predicted);
-                    for (k, v) in probs {
-                        final_out.entry(k.clone()).or_insert(Value::Continuous(v));
-                        let prob_name = format!("Probability_{}", k);
-                        final_out.entry(prob_name).or_insert(Value::Continuous(v));
-                    }
-                    return Ok(final_out);
-                }
-
-                // Call provider for other models — provider evaluates derived fields + model
-                let predicted = self.provider.evaluate(&self.ir, &mut values[..needed])?;
-
-                // P7: use cached output_fields (no per-row ModelIr match, no per-row allocation of match)
-                let output = {
-                    let mut out = HashMap::with_capacity(self.output_fields.len().max(1) + 2);
-                    if self.output_fields.is_empty() {
-                        out.insert("predictedValue".to_string(), predicted);
-                    } else {
-                        for of in &self.output_fields {
-                            match of.feature {
-                                crate::base::field::ResultFeature::PredictedValue => {
-                                    out.insert(of.name.clone(), predicted);
-                                }
-                                crate::base::field::ResultFeature::Probability => {
-                                    // stub 0.0 if not calculated via derived probabilities
-                                    out.insert(of.name.clone(), Value::Continuous(0.0));
-                                }
-                                _ => {
-                                    out.insert(of.name.clone(), predicted);
-                                }
-                            }
-                        }
-                    }
-                    out
-                };
-
-                let mut final_out = output;
-                if let Some(tname) = &self.target_name {
-                    final_out.entry(tname.clone()).or_insert(predicted);
-                }
-                final_out
-                    .entry("predictedValue".to_string())
-                    .or_insert(predicted);
-
-                Ok(final_out)
-            })();
-            result
-        })
-    }
-    /// Fast path: run with pre-resolved [`FieldId`] values (no string hashing).
     ///
-    /// Avoids `HashMap<String, Value>` lookup by accepting already-resolved `(FieldId, Value)` pairs.
-    /// Used by benches to achieve ~400 ns per row and by callers that cache [`field_id`](Self::field_id).
+    /// // 2) batch via &Vec
+    /// let batch = vec![single.clone(), single.clone()];
+    /// let outs = sess.run(&batch as &dyn Batch).unwrap().into_rows();
+    /// assert_eq!(outs.len(), 2);
     ///
-    /// # Parameters
-    ///
-    /// - `fields`: slice of `(FieldId, Value)` for the active fields of the row.
-    ///
-    /// # Returns
-    ///
-    /// Same output map as [`run`](Self::run): `predictedValue` + target + probabilities.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`PmmlError::InvalidValue`] from derived-field evaluation or provider.
-    ///
-    /// # Performance
-    ///
-    /// Stack fast path for `needed <= 64`; no per-row `HashMap` allocation, just array writes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-    /// use pmmlruntime::base::Value;
-    ///
-    /// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
-    /// let env = PmmlEnv::new();
-    /// let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
-    /// let fid = sess.field_id("x").unwrap();
-    /// let out = sess.run_with_ids(&[(fid, Value::Continuous(2.0))]).unwrap();
-    /// assert!(out.contains_key("predictedValue"));
-    /// ```
-    pub fn run_with_ids(&self, fields: &[(FieldId, Value)]) -> Result<HashMap<String, Value>> {
-        let needed = self.max_field_id.max(self.ir.num_fields() + 4);
-        with_value_buffer(needed, |values| {
-            for (fid, val) in fields {
-                let idx = fid.as_usize();
-                if idx < needed {
-                    values[idx] = *val;
-                }
-            }
-            // Reuse same evaluation logic as run but without string map
-            if let crate::ir::ModelIr::GeneralRegression(gr) = &self.ir.model {
-                let std_map = &self.name_to_id_std;
-                let (predicted, probs) =
-                    crate::engine::models::evaluate_general_regression_with_probs(
-                        gr,
-                        &values[..needed],
-                        &self.ir.field_names,
-                        &self.ir.symbol_names,
-                        std_map,
-                    );
-                let mut output = HashMap::new();
-                for of in &gr.output {
-                    match of.feature {
-                        crate::base::field::ResultFeature::Probability => {
-                            if let Some(cat_sid) = of.value {
-                                if let Some(cat_str) = self
-                                    .symbol_names_vec
-                                    .get(cat_sid.0 as usize)
-                                    .filter(|s| !s.is_empty())
-                                {
-                                    if let Some(p) = probs.get(cat_str) {
-                                        output.insert(of.name.clone(), Value::Continuous(*p));
-                                        continue;
-                                    }
-                                }
-                            }
-                            output.insert(of.name.clone(), Value::Missing);
-                        }
-                        _ => {
-                            output.insert(of.name.clone(), predicted);
-                        }
-                    }
-                }
-                if output.is_empty() {
-                    output.insert("predictedValue".to_string(), predicted);
-                }
-                let mut final_out = output;
-                if let Some(tname) = &self.target_name {
-                    final_out.entry(tname.clone()).or_insert(predicted);
-                }
-                final_out
-                    .entry("predictedValue".to_string())
-                    .or_insert(predicted);
-                for (k, v) in probs {
-                    final_out.entry(k.clone()).or_insert(Value::Continuous(v));
-                }
-                return Ok(final_out);
-            }
-            let predicted = self.provider.evaluate(&self.ir, &mut values[..needed])?;
-            let output = {
-                let mut out = HashMap::with_capacity(self.output_fields.len().max(1) + 2);
-                if self.output_fields.is_empty() {
-                    out.insert("predictedValue".to_string(), predicted);
-                } else {
-                    for of in &self.output_fields {
-                        match of.feature {
-                            crate::base::field::ResultFeature::PredictedValue => {
-                                out.insert(of.name.clone(), predicted);
-                            }
-                            crate::base::field::ResultFeature::Probability => {
-                                out.insert(of.name.clone(), Value::Continuous(0.0));
-                            }
-                            _ => {
-                                out.insert(of.name.clone(), predicted);
-                            }
-                        }
-                    }
-                }
-                out
-            };
-            let mut final_out = output;
-            if let Some(tname) = &self.target_name {
-                final_out.entry(tname.clone()).or_insert(predicted);
-            }
-            final_out
-                .entry("predictedValue".to_string())
-                .or_insert(predicted);
-            Ok(final_out)
-        })
-    }
-
-    /// Batched run over `Vec<HashMap>` — delegates to [`ExecutionProvider::eval_batch`] via [`Batch`].
-    ///
-    /// Builds a [`BatchCtx`] (no per-row allocation) that captures `name_to_id` / `symbol_str_to_id` / `Ir` refs,
-    /// then calls `provider.eval_batch`. `CpuBatched` shards with `rayon::par_chunks(256)`; `CpuSerial` loops serially.
-    /// For tiny batches (`<256` rows or fewer than `threads*4`) `CpuBatched` falls back to serial to avoid `rayon` overhead.
-    ///
-    /// # Parameters
-    ///
-    /// - `batch`: row-major batch, each map is `field name → Value`. Empty batch returns `Ok(Vec::new())` without calling provider.
-    ///
-    /// # Returns
-    ///
-    /// `Vec<HashMap<String, Value>>` one output map per input row, same semantics as [`run`](Self::run).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`PmmlError`] from `provider.eval_batch` or `materialize_row` (e.g. `InvalidValue`).
-    ///
-    /// # Performance
-    ///
-    /// `BatchCtx` construction is O(fields), not O(rows). Provider reuses the thread-local `Value` buffer per row. Use
-    /// [`run_batch_arrow`](Self::run_batch_arrow) for columnar data (61 ns/row at 100k) to avoid per-row `HashMap` clone for input.
-    ///
-    /// # Concurrency
-    ///
-    /// `&self` scoring is `Send+Sync`. `CpuBatched::eval_batch` uses `rayon` internally; concurrent `run_batch`
-    /// calls from multiple threads are safe.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-    /// use pmmlruntime::base::Value;
-    /// use std::collections::HashMap;
-    ///
-    /// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
-    /// let env = PmmlEnv::new();
-    /// let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
-    /// let batch = vec![
-    ///     { let mut m = HashMap::new(); m.insert("x".into(), Value::Continuous(1.0)); m },
-    ///     { let mut m = HashMap::new(); m.insert("x".into(), Value::Continuous(2.0)); m },
-    /// ];
-    /// let outs = sess.run_batch(batch).unwrap();
+    /// // 3) Arrow via &RecordBatch
+    /// let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Float64, true)]));
+    /// let rb = RecordBatch::try_new(schema, vec![Arc::new(Float64Array::from(vec![1.0, 2.0])) as _]).unwrap();
+    /// let outs = sess.run(&rb as &dyn Batch).unwrap().into_rows();
     /// assert_eq!(outs.len(), 2);
     /// ```
-    pub fn run_batch(
-        &self,
-        batch: Vec<HashMap<String, Value>>,
-    ) -> Result<Vec<HashMap<String, Value>>> {
+    pub fn run(&self, batch: &dyn Batch) -> Result<BatchResult> {
         if batch.is_empty() {
-            return Ok(Vec::new());
+            return Ok(BatchResult::Rows(Vec::new()));
         }
-        let ctx = BatchCtx::new(
-            &self.name_to_id,
-            &self.name_to_id_std,
-            &self.symbol_str_to_id,
-            &self.ir.symbol_names,
-            &self.ir,
-            self.max_field_id,
-            &self.output_fields,
-            self.target_name.as_ref(),
-            &self.symbol_names_vec,
-        );
-        let result = self
-            .provider
-            .eval_batch(&self.ir, &batch as &dyn Batch, &ctx)?;
-        Ok(result.into_rows())
-    }
-
-    /// Batched run with shared reference (avoids moving the original `Vec`).
-    ///
-    /// Clones the slice into a `Vec` internally to reuse the `Vec<HashMap>` [`Batch`] impl.
-    /// Useful for benches that retain the original batch. For true zero-copy prefer `RecordBatch` path.
-    ///
-    /// # Parameters
-    ///
-    /// - `batch`: slice of row maps.
-    ///
-    /// # Returns
-    ///
-    /// Same as [`run_batch`](Self::run_batch): one output map per row.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`PmmlError`] from provider.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-    /// use pmmlruntime::base::Value;
-    /// use std::collections::HashMap;
-    /// # let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
-    /// # let env = PmmlEnv::new();
-    /// # let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
-    /// let batch: Vec<HashMap<String, Value>> = vec![];
-    /// let outs = sess.run_batch_ref(&batch).unwrap();
-    /// # let _ = outs;
-    /// ```
-    pub fn run_batch_ref(
-        &self,
-        batch: &[HashMap<String, Value>],
-    ) -> Result<Vec<HashMap<String, Value>>> {
-        if batch.is_empty() {
-            return Ok(Vec::new());
+        // SIMD fast path for RecordBatch + single-table Regression (kept from run_batch_arrow)
+        #[cfg(all(feature = "simd", not(target_arch = "wasm32")))]
+        if batch.format() == crate::session::batch::BatchFormat::Columnar {
+            if let Some(rb) = batch.as_any().downcast_ref::<RecordBatch>() {
+                if let crate::ir::ModelIr::Regression(reg) = &self.ir.model {
+                    if reg.regression_tables.len() == 1 && rb.num_rows() >= 4 {
+                        let needed = self.max_field_id.max(self.ir.num_fields() + 4);
+                        let mut col_map: Vec<(FieldId, usize)> = Vec::new();
+                        for (col_idx, field) in rb.schema().fields().iter().enumerate() {
+                            if let Some(&fid) = self.name_to_id.get(field.name().as_str()) {
+                                col_map.push((fid, col_idx));
+                            }
+                        }
+                        let mut batch_values: Vec<Vec<Value>> = Vec::with_capacity(rb.num_rows());
+                        for row_idx in 0..rb.num_rows() {
+                            let mut row_vals = vec![Value::Missing; needed];
+                            for (fid, col_idx) in &col_map {
+                                let col = rb.column(*col_idx);
+                                if !col.is_null(row_idx) {
+                                    let val = match col.data_type() {
+                                        ArrowDataType::Float64 => {
+                                            let arr = col
+                                                .as_any()
+                                                .downcast_ref::<Float64Array>()
+                                                .unwrap();
+                                            Value::Continuous(arr.value(row_idx))
+                                        }
+                                        ArrowDataType::Utf8 => {
+                                            let arr =
+                                                col.as_any().downcast_ref::<StringArray>().unwrap();
+                                            let s = arr.value(row_idx);
+                                            if let Some(sid) = self.symbol_str_to_id.get(s) {
+                                                Value::Discrete(*sid)
+                                            } else if let Ok(f) = s.parse::<f64>() {
+                                                Value::Continuous(f)
+                                            } else {
+                                                Value::Missing
+                                            }
+                                        }
+                                        _ => Value::Missing,
+                                    };
+                                    row_vals[fid.as_usize()] = val;
+                                }
+                            }
+                            batch_values.push(row_vals);
+                        }
+                        let refs: Vec<&[Value]> =
+                            batch_values.iter().map(|v| v.as_slice()).collect();
+                        let simd_results =
+                            crate::engine::simd::evaluate_regression_batch_simd(reg, &refs);
+                        let mut results = Vec::with_capacity(rb.num_rows());
+                        for predicted in simd_results {
+                            let mut output =
+                                HashMap::with_capacity(self.output_fields.len().max(1) + 2);
+                            if self.output_fields.is_empty() {
+                                output.insert("predictedValue".to_string(), predicted);
+                            } else {
+                                for of in &self.output_fields {
+                                    match of.feature {
+                                        crate::base::field::ResultFeature::PredictedValue => {
+                                            output.insert(of.name.clone(), predicted);
+                                        }
+                                        crate::base::field::ResultFeature::Probability => {
+                                            output.insert(of.name.clone(), Value::Continuous(0.0));
+                                        }
+                                        _ => {
+                                            output.insert(of.name.clone(), predicted);
+                                        }
+                                    }
+                                }
+                            }
+                            let mut final_out = output;
+                            if let Some(tname) = &self.target_name {
+                                final_out.entry(tname.clone()).or_insert(predicted);
+                            }
+                            final_out
+                                .entry("predictedValue".to_string())
+                                .or_insert(predicted);
+                            results.push(final_out);
+                        }
+                        return Ok(BatchResult::Rows(results));
+                    }
+                }
+            }
         }
-        // Use Vec Batch impl to avoid DST trait object for [HashMap]
-        let owned: Vec<HashMap<String, Value>> = batch.to_vec();
-        self.run_batch(owned)
-    }
-
-    /// Generic batch via `&dyn Batch` — session `Run` / `RunWithBinding` style.
-    ///
-    /// Accepts any `Batch` impl (`Vec<HashMap>` or `RecordBatch`) and returns a [`BatchResult`]
-    /// that can be `Rows` or `Columnar`. This is the primary batched API; convenience wrappers
-    /// [`run_batch`](Self::run_batch) and [`run_batch_arrow`](Self::run_batch_arrow) delegate here.
-    ///
-    /// # Parameters
-    ///
-    /// - `batch`: reference to a type implementing [`Batch`] (`Send+Sync` + object-safe).
-    ///
-    /// # Returns
-    ///
-    /// [`BatchResult::Rows`] for row-major inputs, or `Rows` for columnar as well (provider always
-    /// returns `Rows`; `run_record_batch` then converts to `Columnar`).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`PmmlError`] from `provider.eval_batch`.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-    /// use pmmlruntime::base::Value;
-    /// use std::collections::HashMap;
-    /// # let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
-    /// # let env = PmmlEnv::new();
-    /// # let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
-    /// let batch: Vec<HashMap<String, Value>> = vec![];
-    /// let res = sess.run_batch_dyn(&batch as &dyn pmmlruntime::session::batch::Batch).unwrap();
-    /// # let _ = res;
-    /// ```
-    pub fn run_batch_dyn(&self, batch: &dyn Batch) -> Result<BatchResult> {
-        let ctx = BatchCtx::new(
-            &self.name_to_id,
-            &self.name_to_id_std,
-            &self.symbol_str_to_id,
-            &self.ir.symbol_names,
-            &self.ir,
-            self.max_field_id,
-            &self.output_fields,
-            self.target_name.as_ref(),
-            &self.symbol_names_vec,
-        );
+        let ctx = if batch.format() == crate::session::batch::BatchFormat::Columnar {
+            if let Some(rb) = batch.as_any().downcast_ref::<RecordBatch>() {
+                BatchCtx::for_record_batch(
+                    &self.name_to_id,
+                    &self.name_to_id_std,
+                    &self.symbol_str_to_id,
+                    &self.ir.symbol_names,
+                    &self.ir,
+                    self.max_field_id,
+                    &self.output_fields,
+                    self.target_name.as_ref(),
+                    &self.symbol_names_vec,
+                    rb,
+                )
+            } else {
+                BatchCtx::new(
+                    &self.name_to_id,
+                    &self.name_to_id_std,
+                    &self.symbol_str_to_id,
+                    &self.ir.symbol_names,
+                    &self.ir,
+                    self.max_field_id,
+                    &self.output_fields,
+                    self.target_name.as_ref(),
+                    &self.symbol_names_vec,
+                )
+            }
+        } else {
+            BatchCtx::new(
+                &self.name_to_id,
+                &self.name_to_id_std,
+                &self.symbol_str_to_id,
+                &self.ir.symbol_names,
+                &self.ir,
+                self.max_field_id,
+                &self.output_fields,
+                self.target_name.as_ref(),
+                &self.symbol_names_vec,
+            )
+        };
         self.provider.eval_batch(&self.ir, batch, &ctx)
     }
 
-    /// Resolve a field name to its stable [`FieldId`] for zero-copy [`run_with_ids`](Self::run_with_ids).
+    /// Resolve a field name to its stable [`FieldId`] for use with [`run`](Self::run).
     ///
     /// # Parameters
     ///
@@ -953,286 +662,6 @@ impl Session {
         crate::session::input::string_to_value(field_name, s, fid, dt, op, &self.symbol_str_to_id)
     }
 
-    /// Arrow columnar batch scoring — zero-copy input path via the [`Batch`] trait.
-    ///
-    /// Takes a `RecordBatch` where columns are named after PMML fields (`Float64` for
-    /// continuous, `Utf8` for categorical). Returns `Vec<HashMap>` per row (same as
-    /// [`run_batch`](Self::run_batch)) but avoids per-row `HashMap<String,Value>` clone for input.
-    /// For Arrow output, use [`run_record_batch`](Self::run_record_batch) which returns a `RecordBatch` directly.
-    /// Delegates to [`ExecutionProvider::eval_batch`] with [`BatchCtx::for_record_batch`](crate::session::batch::BatchCtx::for_record_batch) (provider does sharding).
-    ///
-    /// # Parameters
-    ///
-    /// - `batch`: `RecordBatch` with `num_rows()` rows. Columns must be named after PMML fields; missing columns are `Missing`.
-    ///   `Float64` → `Continuous`, `Utf8` → `Discrete(SymbolId)` if in `symbol_str_to_id`, else `Continuous` if parseable, else `Missing`.
-    ///
-    /// # Returns
-    ///
-    /// `Vec<HashMap<String, Value>>` one per row, same output map as `run`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PmmlError::InvalidValue`] from provider or derived-field evaluation.
-    ///
-    /// # Performance
-    ///
-    /// Zero-copy input (provider reads `Float64Array` / `StringArray` directly). ~61 ns/row at 100k rows
-    /// via `CpuBatched` `par_chunks(256)`. SIMD fast path (feature `simd`, `Regression` single-table, `>=4` rows) uses 4-wide `wide` crate.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-    /// use arrow::array::Float64Array;
-    /// use arrow::datatypes::{DataType, Field, Schema};
-    /// use arrow::record_batch::RecordBatch;
-    /// use std::sync::Arc;
-    /// # let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
-    /// # let env = PmmlEnv::new();
-    /// # let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
-    /// let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Float64, true)]));
-    /// let batch = RecordBatch::try_new(schema, vec![Arc::new(Float64Array::from(vec![1.0, 2.0])) as _]).unwrap();
-    /// let outs = sess.run_batch_arrow(&batch).unwrap();
-    /// assert_eq!(outs.len(), 2);
-    /// ```
-    pub fn run_batch_arrow(&self, batch: &RecordBatch) -> Result<Vec<HashMap<String, Value>>> {
-        if batch.num_rows() == 0 {
-            return Ok(Vec::new());
-        }
-        // P8: SIMD fast path for single-table regression (4-wide, AVX2/NEON via `wide`)
-        // Keep SIMD here before general Batch path — provider does not yet know SIMD.
-        #[cfg(all(feature = "simd", not(target_arch = "wasm32")))]
-        if let crate::ir::ModelIr::Regression(reg) = &self.ir.model {
-            if reg.regression_tables.len() == 1 && batch.num_rows() >= 4 {
-                let needed = self.max_field_id.max(self.ir.num_fields() + 4);
-                let mut col_map: Vec<(FieldId, usize)> = Vec::new();
-                for (col_idx, field) in batch.schema().fields().iter().enumerate() {
-                    if let Some(&fid) = self.name_to_id.get(field.name().as_str()) {
-                        col_map.push((fid, col_idx));
-                    }
-                }
-                let mut batch_values: Vec<Vec<Value>> = Vec::with_capacity(batch.num_rows());
-                for row_idx in 0..batch.num_rows() {
-                    let mut row_vals = vec![Value::Missing; needed];
-                    for (fid, col_idx) in &col_map {
-                        let col = batch.column(*col_idx);
-                        if !col.is_null(row_idx) {
-                            let val = match col.data_type() {
-                                ArrowDataType::Float64 => {
-                                    let arr = col.as_any().downcast_ref::<Float64Array>().unwrap();
-                                    Value::Continuous(arr.value(row_idx))
-                                }
-                                ArrowDataType::Utf8 => {
-                                    let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
-                                    let s = arr.value(row_idx);
-                                    if let Some(sid) = self.symbol_str_to_id.get(s) {
-                                        Value::Discrete(*sid)
-                                    } else if let Ok(f) = s.parse::<f64>() {
-                                        Value::Continuous(f)
-                                    } else {
-                                        Value::Missing
-                                    }
-                                }
-                                _ => Value::Missing,
-                            };
-                            row_vals[fid.as_usize()] = val;
-                        }
-                    }
-                    batch_values.push(row_vals);
-                }
-                let refs: Vec<&[Value]> = batch_values.iter().map(|v| v.as_slice()).collect();
-                let simd_results = crate::engine::simd::evaluate_regression_batch_simd(reg, &refs);
-                let mut results = Vec::with_capacity(batch.num_rows());
-                for predicted in simd_results {
-                    let mut output = HashMap::with_capacity(self.output_fields.len().max(1) + 2);
-                    if self.output_fields.is_empty() {
-                        output.insert("predictedValue".to_string(), predicted);
-                    } else {
-                        for of in &self.output_fields {
-                            match of.feature {
-                                crate::base::field::ResultFeature::PredictedValue => {
-                                    output.insert(of.name.clone(), predicted);
-                                }
-                                crate::base::field::ResultFeature::Probability => {
-                                    output.insert(of.name.clone(), Value::Continuous(0.0));
-                                }
-                                _ => {
-                                    output.insert(of.name.clone(), predicted);
-                                }
-                            }
-                        }
-                    }
-                    let mut final_out = output;
-                    if let Some(tname) = &self.target_name {
-                        final_out.entry(tname.clone()).or_insert(predicted);
-                    }
-                    final_out
-                        .entry("predictedValue".to_string())
-                        .or_insert(predicted);
-                    results.push(final_out);
-                }
-                return Ok(results);
-            }
-        }
-        let ctx = BatchCtx::for_record_batch(
-            &self.name_to_id,
-            &self.name_to_id_std,
-            &self.symbol_str_to_id,
-            &self.ir.symbol_names,
-            &self.ir,
-            self.max_field_id,
-            &self.output_fields,
-            self.target_name.as_ref(),
-            &self.symbol_names_vec,
-            batch,
-        );
-        let result = self
-            .provider
-            .eval_batch(&self.ir, batch as &dyn Batch, &ctx)?;
-        Ok(result.into_rows())
-    }
-
-    /// Direct `RecordBatch` → `RecordBatch` scoring (zero-copy input, Arrow output).
-    ///
-    /// Delegates to [`run_batch_arrow`](Self::run_batch_arrow) for scoring, then builds an output
-    /// `RecordBatch` via [`crate::session::arrow::value_maps_to_record_batch`]. Schema is derived from
-    /// `output_fields` ( `Probability` → `Float64`, `PredictedValue` inferred from first row's `Value`).
-    /// Falls back to `ir_to_arrow_schema` or `predictedValue` `Float64` if no rows.
-    ///
-    /// # Parameters
-    ///
-    /// - `batch`: input `RecordBatch`.
-    ///
-    /// # Returns
-    ///
-    /// `RecordBatch` with `num_rows() == batch.num_rows()` and columns per `output_fields`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PmmlError::InvalidValue`] if `value_maps_to_record_batch` fails (e.g. schema mismatch).
-    ///
-    /// # Performance
-    ///
-    /// One extra allocation to build output arrays; input is zero-copy.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-    /// use arrow::array::Float64Array;
-    /// use arrow::datatypes::{DataType, Field, Schema};
-    /// use arrow::record_batch::RecordBatch;
-    /// use std::sync::Arc;
-    /// # let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
-    /// # let env = PmmlEnv::new();
-    /// # let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
-    /// let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Float64, true)]));
-    /// let batch = RecordBatch::try_new(schema, vec![Arc::new(Float64Array::from(vec![1.0])) as _]).unwrap();
-    /// let out = sess.run_record_batch(&batch).unwrap();
-    /// assert_eq!(out.num_rows(), 1);
-    /// ```
-    pub fn run_record_batch(&self, batch: &RecordBatch) -> Result<RecordBatch> {
-        let maps = self.run_batch_arrow(batch)?;
-        let schema = if self.output_fields.is_empty() {
-            // Fallback schema: single predictedValue Float64 (or Utf8 if discrete)
-            // Infer from first result if available
-            if let Some(first) = maps.first() {
-                if let Some(Value::Discrete(_)) = first.get("predictedValue") {
-                    use arrow::datatypes::{Field, Schema};
-                    std::sync::Arc::new(Schema::new(vec![Field::new(
-                        "predictedValue",
-                        ArrowDataType::Utf8,
-                        true,
-                    )]))
-                } else {
-                    use arrow::datatypes::{Field, Schema};
-                    std::sync::Arc::new(Schema::new(vec![Field::new(
-                        "predictedValue",
-                        ArrowDataType::Float64,
-                        true,
-                    )]))
-                }
-            } else {
-                crate::session::arrow::ir_to_arrow_schema(&self.ir)
-            }
-        } else {
-            // Build schema from output_fields: predictedValue/probability -> Float64 else Utf8
-            use arrow::datatypes::{Field, Schema};
-            let fields: Vec<arrow::datatypes::Field> = self
-                .output_fields
-                .iter()
-                .map(|of| {
-                    let dt = match of.feature {
-                        crate::base::field::ResultFeature::Probability => ArrowDataType::Float64,
-                        crate::base::field::ResultFeature::PredictedValue => {
-                            // Peek at first map to infer type, default Float64
-                            if let Some(first) = maps.first() {
-                                match first.get(&of.name) {
-                                    Some(Value::Discrete(_)) => ArrowDataType::Utf8,
-                                    _ => ArrowDataType::Float64,
-                                }
-                            } else {
-                                ArrowDataType::Float64
-                            }
-                        }
-                        _ => ArrowDataType::Utf8,
-                    };
-                    Field::new(of.name.clone(), dt, true)
-                })
-                .collect();
-            std::sync::Arc::new(Schema::new(fields))
-        };
-        crate::session::arrow::value_maps_to_record_batch(
-            &maps,
-            schema,
-            Some(&self.ir.symbol_names),
-        )
-        .map_err(PmmlError::InvalidValue)
-    }
-
-    /// Convenience: run with string values (coerced via [`string_to_value`](Self::string_to_value)).
-    ///
-    /// Useful for CSV inputs where all fields arrive as `String`. Each value is converted
-    /// via `string_to_value` so categorical strings map to correct `Discrete(SymbolId)` ids
-    /// (not hash placeholder). Empty strings become `Missing`.
-    ///
-    /// # Parameters
-    ///
-    /// - `input`: `HashMap<String, String>` from CSV / user.
-    ///
-    /// # Returns
-    ///
-    /// Same output map as [`run`](Self::run).
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`PmmlError`] from `run`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
-    /// use std::collections::HashMap;
-    /// let xml = br#"<PMML version="4.4"><Header/><DataDictionary><DataField name="x" dataType="double" optype="continuous"/></DataDictionary><TreeModel functionName="classification"><MiningSchema><MiningField name="x"/></MiningSchema><Node score="a"><True/></Node></TreeModel></PMML>"#;
-    /// let env = PmmlEnv::new();
-    /// let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
-    /// let mut input = HashMap::new();
-    /// input.insert("x".to_string(), "3.14".to_string());
-    /// let out = sess.run_from_strings(input).unwrap();
-    /// assert!(out.contains_key("predictedValue"));
-    /// ```
-    pub fn run_from_strings(
-        &self,
-        input: HashMap<String, String>,
-    ) -> Result<HashMap<String, Value>> {
-        let mut map: HashMap<String, Value> = HashMap::new();
-        for (k, v) in input {
-            let val = self.string_to_value(&k, &v);
-            map.insert(k, val);
-        }
-        self.run(map)
-    }
-
     /// Number of active (input) fields for this model.
     ///
     /// Reads `mining_schema.active_fields.len()` for whichever `ModelIr` is held.
@@ -1295,7 +724,11 @@ mod tests {
         let mut input = HashMap::new();
         input.insert("Petal.Length".to_string(), Value::Continuous(1.4)); // setosa
         input.insert("Petal.Width".to_string(), Value::Continuous(0.2));
-        let out = sess.run(input).unwrap();
+        let out = sess
+            .run(&input as &dyn crate::session::batch::Batch)
+            .unwrap()
+            .into_single()
+            .unwrap();
         // Predicted should be setosa
         let pred = out.get("predictedValue").unwrap();
         match pred {
@@ -1317,7 +750,11 @@ mod tests {
         let mut input = HashMap::new();
         input.insert("Petal.Length".to_string(), Value::Continuous(6.0));
         input.insert("Petal.Width".to_string(), Value::Continuous(2.0));
-        let out = sess.run(input).unwrap();
+        let out = sess
+            .run(&input as &dyn crate::session::batch::Batch)
+            .unwrap()
+            .into_single()
+            .unwrap();
         assert!(out.contains_key("predictedValue"));
     }
 }

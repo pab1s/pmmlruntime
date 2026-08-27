@@ -18,7 +18,11 @@ fn sequence_simple_rule() {
     let sid_butter = sess.symbol_id("butter").unwrap();
     let mut input = HashMap::new();
     input.insert("item".to_string(), Value::Discrete(sid_milk));
-    let out = sess.run(input).unwrap();
+    let out = sess
+        .run(&input as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     let pred = out.get("predictedValue").unwrap();
     assert_eq!(
         *pred,
@@ -28,7 +32,11 @@ fn sequence_simple_rule() {
     // bread -> butter
     let mut input2 = HashMap::new();
     input2.insert("item".to_string(), Value::Discrete(sid_bread));
-    let out2 = sess.run(input2).unwrap();
+    let out2 = sess
+        .run(&input2 as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     assert_eq!(
         *out2.get("predictedValue").unwrap(),
         Value::Discrete(sid_butter)
@@ -36,7 +44,11 @@ fn sequence_simple_rule() {
     // butter -> missing (no rule)
     let mut input3 = HashMap::new();
     input3.insert("item".to_string(), Value::Discrete(sid_butter));
-    let out3 = sess.run(input3).unwrap();
+    let out3 = sess
+        .run(&input3 as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     assert_eq!(*out3.get("predictedValue").unwrap(), Value::Missing);
 }
 
@@ -56,11 +68,19 @@ fn bayesian_discrete_inference() {
     let sid_1 = sess.symbol_id("1").unwrap();
     let mut input = HashMap::new();
     input.insert("C".to_string(), Value::Discrete(sid_2));
-    let out = sess.run(input).unwrap();
+    let out = sess
+        .run(&input as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     let pred = out.get("predictedValue").unwrap();
     assert_eq!(*pred, Value::Discrete(sid_1), "C=2 should predict A=1");
     // No evidence: marginal predicts A=1 (0.6 >0.4)
-    let out2 = sess.run(HashMap::new()).unwrap();
+    let out2 = sess
+        .run(&HashMap::new() as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     assert_eq!(*out2.get("predictedValue").unwrap(), Value::Discrete(sid_1));
 }
 
@@ -89,19 +109,26 @@ fn bayesian_continuous_target() {
     let sid1 = sess.symbol_id("1").unwrap();
     let mut in0 = HashMap::new();
     in0.insert("D1".to_string(), Value::Discrete(sid0));
-    let out0 = sess.run(in0).unwrap();
+    let out0 = sess
+        .run(&in0 as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     let pred0 = out0.get("predictedValue").unwrap();
     match pred0 {
         Value::Continuous(f) => assert!(
             (f - 10.0).abs() < 1e-9,
-            "D1=0 should predict C1=10, got {}",
-            f
+            "D1=0 should predict C1=10, got {f}"
         ),
         _ => panic!("expected continuous"),
     }
     let mut in1 = HashMap::new();
     in1.insert("D1".to_string(), Value::Discrete(sid1));
-    let out1 = sess.run(in1).unwrap();
+    let out1 = sess
+        .run(&in1 as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     match out1.get("predictedValue").unwrap() {
         Value::Continuous(f) => assert!((f - 14.0).abs() < 1e-9, "D1=1 should predict C1=14"),
         _ => panic!("expected continuous"),
@@ -147,13 +174,21 @@ fn bayesian_with_derived_discretization() {
     let mut input = HashMap::new();
     input.insert("D3".to_string(), Value::Discrete(sid0));
     input.insert("C3".to_string(), Value::Continuous(5.0));
-    let out = sess.run(input).unwrap();
+    let out = sess
+        .run(&input as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     assert_eq!(*out.get("predictedValue").unwrap(), Value::Discrete(sid0));
     // With D3=0 and C3=15 (discretizes to 2), D4 should predict 1 (prob 0.8)
     let mut input2 = HashMap::new();
     input2.insert("D3".to_string(), Value::Discrete(sid0));
     input2.insert("C3".to_string(), Value::Continuous(15.0));
-    let out2 = sess.run(input2).unwrap();
+    let out2 = sess
+        .run(&input2 as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     assert_eq!(*out2.get("predictedValue").unwrap(), Value::Discrete(sid1));
 }
 
@@ -184,11 +219,15 @@ fn sequence_with_set_predicate() {
     let env = PmmlEnv::new();
     let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
     let sid_red = sess.symbol_id("red").unwrap();
-    let sid_blue = sess.symbol_id("blue").unwrap();
+    let _sid_blue = sess.symbol_id("blue").unwrap();
     // red should match sp0 (supersetOf red blue? For our isIn logic, red in [red,blue] => true) and predict red
     let mut input = HashMap::new();
     input.insert("color".to_string(), Value::Discrete(sid_red));
-    let out = sess.run(input).unwrap();
+    let out = sess
+        .run(&input as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     // consequent is is0 -> red
     let pred = out.get("predictedValue").unwrap();
     assert!(matches!(pred, Value::Discrete(_)));
@@ -226,7 +265,11 @@ fn sequence_large_spec_example() {
     let sid_cognac = sess.symbol_id("Cognac").unwrap();
     let mut input = HashMap::new();
     input.insert("item".to_string(), Value::Discrete(sid_cognac));
-    let out = sess.run(input).unwrap();
+    let out = sess
+        .run(&input as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     // Antecedent s0 is {Cognac} -> consequent s1 is {Cognac, Vodka/Cider/Scotch}?? Actually s1 is itemset 0 then 2; our simple rule checks first set, so Cognac should fire rule 0 and predict Cream (first item of s2 which is {Cream,Tonic water} -> Cream)
     assert!(out.contains_key("predictedValue"));
 }
@@ -294,6 +337,10 @@ fn bayesian_large_mcmc_example() {
     let mut input = HashMap::new();
     input.insert("D4".to_string(), Value::Discrete(sid0));
     input.insert("C4".to_string(), Value::Continuous(7.0));
-    let out = sess.run(input).unwrap();
+    let out = sess
+        .run(&input as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .unwrap();
     assert!(out.contains_key("predictedValue"));
 }

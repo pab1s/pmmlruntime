@@ -1,0 +1,45 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "README.md", "crates/pmmlruntime/src/**", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install mdbook
+        run: cargo install mdbook mdbook-mermaid --locked
+      - name: Build rustdoc
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+      - name: Build mdBook
+        run: mdbook build docs
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/book
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

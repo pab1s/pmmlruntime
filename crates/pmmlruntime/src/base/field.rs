@@ -4,7 +4,7 @@
 //! or `"DOUBLE"` returns `Err`. String values round-trip via [`DataType::as_str`]
 //! (and `OpType`/`MiningFunction`/`ResultFeature` equivalents).
 //!
-//! These enums are used in `pmml-ir::FieldMeta` and `pmml-evaluator` dispatch.
+//! These enums are used in `ir::FieldMeta` and engine dispatch.
 
 use std::str::FromStr;
 

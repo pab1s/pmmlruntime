@@ -59,7 +59,7 @@ impl FieldId {
 /// PMML field value in the evaluator (hot path).
 ///
 /// `Missing` is an explicit variant, not `Option<Value>`, to avoid double wrapping
-/// and to keep `Value` `Copy` with a predictable discriminant. `pmml-evaluator`
+/// and to keep `Value` `Copy` with a predictable discriminant. The engine
 /// treats `Discrete` as an interned [`SymbolId`] and `Continuous` as canonical `f64`
 /// (PMML `double`/`float`/`integer` all coerce to `f64` here).
 ///

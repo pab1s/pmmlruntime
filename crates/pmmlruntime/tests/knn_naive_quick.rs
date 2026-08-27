@@ -18,7 +18,7 @@ fn naive_bayes_load() {
     let res = Session::from_bytes(&env, &bytes, SessionOptions::default());
     match &res {
         Ok(_) => println!("naive bayes load ok (unexpected, stub should error)"),
-        Err(e) => println!("naive bayes load error (expected stub): {}", e),
+        Err(e) => println!("naive bayes load error (expected stub): {e}"),
     }
     assert!(res.is_err() || res.is_ok());
 }
@@ -41,7 +41,7 @@ fn knn_load() {
     let res = Session::from_bytes(&env, &bytes, SessionOptions::default());
     match &res {
         Ok(_) => println!("knn load ok (stub maybe)"),
-        Err(e) => println!("knn load error: {}", e),
+        Err(e) => println!("knn load error: {e}"),
     }
     assert!(res.is_err() || res.is_ok());
 }

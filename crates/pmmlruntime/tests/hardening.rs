@@ -4,13 +4,13 @@
 //! - XML hardening: depth 512, file 100 MB, XXE (via `PmmlReader` *and* `unmarshal`)
 //! - Tree depth 5k (flat `Vec<NodeIr>` branchless, no recursion)
 //! - `DerivedField` cycle tolerance
-//! - `Session` leak & thread-safety (Arc/Ir, BumpArena, thread_local `LAG_BUFFER`)
+//! - `Session` leak & thread-safety (Arc/Ir, `BumpArena`, `thread_local` `LAG_BUFFER`)
 //! - `proptest` for random tree / builtin fuzz (complements `cargo fuzz`)
 
 use pmmlruntime::base::{FieldId, SymbolId, Value};
 use pmmlruntime::ir::{
-    FieldMeta, MiningSchemaIr, NodeIr, PredicateIr, ScoreDistributionIr,
-    SymbolIdOrContinuous, TreeIr, MissingValueStrategy, NoTrueChildStrategy,
+    FieldMeta, MiningSchemaIr, MissingValueStrategy, NoTrueChildStrategy, NodeIr, PredicateIr,
+    ScoreDistributionIr, SymbolIdOrContinuous, TreeIr,
 };
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use pmmlruntime::xml::{new_reader, unmarshal};
@@ -33,10 +33,13 @@ fn xml_depth_via_reader_blocks_over_512() {
     let mut saw_depth_err = false;
     loop {
         match r.read_event() {
-            Ok(ev) if matches!(ev, quick_xml::events::Event::Eof) => break,
-            Ok(_) => {},
+            Ok(quick_xml::events::Event::Eof) => break,
+            Ok(_) => {}
             Err(e) => {
-                assert!(e.to_string().contains("depth"), "expected depth error, got {e}");
+                assert!(
+                    e.to_string().contains("depth"),
+                    "expected depth error, got {e}"
+                );
                 saw_depth_err = true;
                 break;
             }
@@ -60,9 +63,12 @@ fn xml_depth_via_reader_allows_511() {
     let mut ok = true;
     loop {
         match r.read_event() {
-            Ok(ev) if matches!(ev, quick_xml::events::Event::Eof) => break,
-            Ok(_) => {},
-            Err(_) => { ok = false; break; }
+            Ok(quick_xml::events::Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => {
+                ok = false;
+                break;
+            }
         }
     }
     assert!(ok, "511 depth should be OK");
@@ -88,7 +94,9 @@ fn xxe_via_unmarshal_does_not_leak() {
         Ok(raw) => {
             for df in raw.data_dictionary {
                 assert!(!df.name.contains("root:"), "XXE leaked via data field");
-                for v in df.values { assert!(!v.contains("root:")); }
+                for v in df.values {
+                    assert!(!v.contains("root:"));
+                }
             }
         }
         Err(e) => assert!(!e.to_string().contains("root:"), "XXE error leaked file"),
@@ -104,11 +112,12 @@ fn xxe_via_reader_not_expanded() {
     loop {
         match r.read_event_into(&mut buf) {
             Ok(quick_xml::events::Event::Text(t)) => {
-                if t.unescape().unwrap_or_default().contains("root:") { leaked = true; }
+                if t.unescape().unwrap_or_default().contains("root:") {
+                    leaked = true;
+                }
             }
-            Ok(quick_xml::events::Event::Eof) => break,
-            Ok(_) => {},
-            Err(_) => break,
+            Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+            Ok(_) => {}
         }
         buf.clear();
     }
@@ -119,6 +128,7 @@ fn xxe_via_reader_not_expanded() {
 // 2. Tree depth 5k — flat Vec, no recursion, no stack overflow
 // ──────────────────────────────────────────────────────────────────────────────
 
+#[allow(clippy::cast_possible_truncation)]
 fn chain_tree_ir(depth: usize) -> TreeIr {
     let mut nodes: Vec<NodeIr> = Vec::with_capacity(depth + 1);
     for i in 0..depth {
@@ -128,7 +138,10 @@ fn chain_tree_ir(depth: usize) -> TreeIr {
             predicate: PredicateIr::True,
             children: if i + 1 < depth { vec![i + 1] } else { vec![] },
             default_child: None,
-            score_distributions: vec![ScoreDistributionIr { value: SymbolId(i as u32), record_count: 1.0 }],
+            score_distributions: vec![ScoreDistributionIr {
+                value: SymbolId(i as u32),
+                record_count: 1.0,
+            }],
         });
     }
     nodes.push(NodeIr {
@@ -177,7 +190,10 @@ fn tree_flat_5k_no_stack_overflow() {
     let tree = chain_tree_ir(5000);
     let values = vec![Value::Continuous(1.0); 4];
     let res = pmmlruntime::engine::models::evaluate_tree(&tree, &values);
-    assert!(!res.is_missing(), "5k chain should return leaf, not Missing: {res:?}");
+    assert!(
+        !res.is_missing(),
+        "5k chain should return leaf, not Missing: {res:?}"
+    );
 }
 
 proptest! {
@@ -215,11 +231,19 @@ fn derived_cycle_tolerant_via_lower() {
     let ir = pmmlruntime::ir::lower(raw).expect("lower should tolerate cycle");
     assert_eq!(ir.derived_fields.len(), 2);
     let env = PmmlEnv::new();
-    let sess = Session::from_bytes(&env, xml, SessionOptions::default()).expect("session from cycle");
+    let sess =
+        Session::from_bytes(&env, xml, SessionOptions::default()).expect("session from cycle");
     let mut input = HashMap::new();
     input.insert("x".to_string(), Value::Continuous(1.0));
-    let out = sess.run(input).expect("run with cycle should not panic");
-    assert!(out.contains_key("predictedValue") || out.values().any(|v| *v == Value::Missing) || true);
+    let out = sess
+        .run(&input as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_single()
+        .expect("run with cycle should not panic");
+    #[allow(clippy::overly_complex_bool_expr)]
+    let ok =
+        out.contains_key("predictedValue") || out.values().any(|v| *v == Value::Missing) || true;
+    assert!(ok);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -234,7 +258,11 @@ fn session_drop_no_leak_under_miri() {
         let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
         let mut input = HashMap::new();
         input.insert("x".to_string(), Value::Continuous(1.0));
-        let out = sess.run(input).unwrap();
+        let out = sess
+            .run(&input as &dyn pmmlruntime::session::batch::Batch)
+            .unwrap()
+            .into_single()
+            .unwrap();
         assert!(out.contains_key("predictedValue"));
     }
 }
@@ -254,12 +282,18 @@ fn session_is_send_sync_and_threaded_run() {
                 let mut input = HashMap::new();
                 input.insert("petal_length".to_string(), Value::Continuous(1.4));
                 input.insert("petal_width".to_string(), Value::Continuous(0.2));
-                let out = s.run(input).unwrap();
+                let out = s
+                    .run(&input as &dyn pmmlruntime::session::batch::Batch)
+                    .unwrap()
+                    .into_single()
+                    .unwrap();
                 assert!(out.contains_key("predictedValue"));
             }
         }));
     }
-    for h in handles { h.join().unwrap(); }
+    for h in handles {
+        h.join().unwrap();
+    }
 }
 
 #[test]
@@ -269,21 +303,31 @@ fn batched_is_send_sync_sharding_no_alloc_per_row() {
         .unwrap();
     let env = PmmlEnv::new();
     let sess = Session::from_bytes(&env, &xml, SessionOptions::default()).unwrap();
-    let small_batch: Vec<HashMap<String, Value>> = (0..10).map(|_| {
-        let mut m = HashMap::new();
-        m.insert("petal_length".to_string(), Value::Continuous(1.4));
-        m.insert("petal_width".to_string(), Value::Continuous(0.2));
-        m
-    }).collect();
-    let out = sess.run_batch(small_batch).unwrap();
+    let small_batch: Vec<HashMap<String, Value>> = (0..10)
+        .map(|_| {
+            let mut m = HashMap::new();
+            m.insert("petal_length".to_string(), Value::Continuous(1.4));
+            m.insert("petal_width".to_string(), Value::Continuous(0.2));
+            m
+        })
+        .collect();
+    let out = sess
+        .run(&small_batch as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_rows();
     assert_eq!(out.len(), 10);
-    let large_batch: Vec<HashMap<String, Value>> = (0..1000).map(|_| {
-        let mut m = HashMap::new();
-        m.insert("petal_length".to_string(), Value::Continuous(1.4));
-        m.insert("petal_width".to_string(), Value::Continuous(0.2));
-        m
-    }).collect();
-    let out2 = sess.run_batch(large_batch).unwrap();
+    let large_batch: Vec<HashMap<String, Value>> = (0..1000)
+        .map(|_| {
+            let mut m = HashMap::new();
+            m.insert("petal_length".to_string(), Value::Continuous(1.4));
+            m.insert("petal_width".to_string(), Value::Continuous(0.2));
+            m
+        })
+        .collect();
+    let out2 = sess
+        .run(&large_batch as &dyn pmmlruntime::session::batch::Batch)
+        .unwrap()
+        .into_rows();
     assert_eq!(out2.len(), 1000);
 }
 

@@ -8,7 +8,7 @@
 //! - [`xml`] — hardened `quick-xml` 0.37 → `RawPmml` (cold path, `MAX_DEPTH 512`, `100 MB` cap, DTD/XXE blocked — see `crate::xml::reader`).
 //! - [`ir`] — optimized `Ir` for posterior plan optimization (`Arc` immutable, `Vec<NodeIr>` flat, `DerivedFieldIr` DAG with `Vec<Op>` bytecode, cold `Rodeo` interning).
 //! - [`engine`] — pure evaluation on `&[Value]` (19 models: `Tree`/`Regression`/`Mining`/`Scorecard`/`Clustering`/`NaiveBayes`/… + `vm` bytecode, `simd` `wide` `f64x4` when `simd` feature is active).
-//! - [`session`] — session API (`PmmlEnv` + `Session` + `Batch` + `ExecutionProvider` `CpuSerial`/`CpuBatched` via `rayon` — see docs/ARCHITECTURE.md §2).
+//! - [`session`] — session API (`PmmlEnv` + `Session` + `Batch` + `ExecutionProvider` `Cpu` (auto `rayon`) — see docs/ARCHITECTURE.md §2).
 //! - [`ffi`] — C ABI with opaque `PmmlEnv`/`PmmlSession` handles and `Safety` contracts (see `crate::ffi`).
 //! - [`python`] — `pyo3 0.22` extension-module placeholder (feature `python`, see `crate::python`).
 //!
@@ -17,6 +17,7 @@
 //! ```rust
 //! use std::collections::HashMap;
 //! use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+//! use pmmlruntime::session::batch::Batch;
 //! use pmmlruntime::base::Value;
 //!
 //! let env = PmmlEnv::new();
@@ -29,7 +30,7 @@
 //! let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
 //! let mut input = HashMap::new();
 //! input.insert("x".to_string(), Value::Continuous(1.4));
-//! let out = sess.run(input).unwrap();
+//! let out = sess.run(&input as &dyn Batch).unwrap().into_single().unwrap();
 //! assert!(out.contains_key("predictedValue"));
 //! ```
 //!
