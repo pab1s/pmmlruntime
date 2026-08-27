@@ -1,3 +1,4 @@
+#![allow(clippy::unreadable_literal)]
 use pmmlruntime::base::Value;
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use std::collections::HashMap;
@@ -34,12 +35,12 @@ fn general_regression_contrast() {
     m.insert("jobcat".to_string(), Value::Discrete(sid_3));
     m.insert("salbegin".to_string(), Value::Continuous(45000.0));
     let out = sess.run(m).expect("run gr");
-    println!("general regression out: {:?}", out);
+    println!("general regression out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     match pred {
         Value::Discrete(sid) => {
             let s = sess.ir.symbol_names.get(sid).unwrap();
-            println!("pred discrete {}", s);
+            println!("pred discrete {s}");
             assert_eq!(s, "Low");
         }
         _ => panic!("expected discrete Low"),
@@ -52,8 +53,7 @@ fn general_regression_contrast() {
     if let Value::Continuous(p) = prob_low {
         assert!(
             (p - 0.81956470).abs() < 1e-6,
-            "expected Probability_Low 0.819 got {}",
-            p
+            "expected Probability_Low 0.819 got {p}"
         );
     } else {
         panic!("expected continuous prob");
@@ -65,8 +65,7 @@ fn general_regression_contrast() {
     if let Value::Continuous(p) = prob_high {
         assert!(
             (p - 0.18043530).abs() < 1e-6,
-            "expected Probability_High 0.180 got {}",
-            p
+            "expected Probability_High 0.180 got {p}"
         );
     }
 }
@@ -90,7 +89,7 @@ fn svm_xor() {
         m.insert("x1".to_string(), Value::Continuous(x1));
         m.insert("x2".to_string(), Value::Continuous(x2));
         let out = sess.run(m).expect("run svm");
-        println!("svm ({}, {}) out: {:?}", x1, x2, out);
+        println!("svm ({x1}, {x2}) out: {out:?}");
         let pred = out
             .get("predictedValue")
             .or_else(|| out.get("class"))
@@ -98,11 +97,7 @@ fn svm_xor() {
         if let Value::Continuous(p) = pred {
             assert!(
                 (p - expected).abs() < 1e-5,
-                "for ({}, {}) expected {} got {}",
-                x1,
-                x2,
-                expected,
-                p
+                "for ({x1}, {x2}) expected {expected} got {p}"
             );
         } else {
             panic!("expected continuous");

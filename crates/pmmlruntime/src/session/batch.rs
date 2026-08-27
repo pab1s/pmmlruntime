@@ -364,6 +364,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    #[allow(clippy::too_many_arguments)]
     fn dummy_ctx<'a>(
         name_to_id: &'a AHashMap<String, FieldId>,
         name_to_id_std: &'a HashMap<String, FieldId>,

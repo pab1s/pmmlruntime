@@ -13,14 +13,13 @@ fn score_tree_pmml(path: &str) -> anyhow::Result<()> {
     let out = sess.run(HashMap::new())?;
     assert!(
         out.contains_key("predictedValue"),
-        "missing predictedValue for {}",
-        path
+        "missing predictedValue for {path}"
     );
     // Also try a synthetic numeric input for first active field
     if sess.num_active_fields() > 0 {
         let mut m = HashMap::new();
         // we need to know field names; use sess.ir.field_names
-        for (fid, name) in &sess.ir.field_names {
+        for name in sess.ir.field_names.values() {
             let v = Value::Continuous(1.0);
             m.insert(name.clone(), v);
             if m.len() >= 2 {
@@ -30,8 +29,7 @@ fn score_tree_pmml(path: &str) -> anyhow::Result<()> {
         let out2 = sess.run(m)?;
         assert!(
             out2.contains_key("predictedValue"),
-            "second run missing predictedValue for {}",
-            path
+            "second run missing predictedValue for {path}"
         );
     }
     Ok(())
@@ -46,8 +44,8 @@ fn tree_fixtures_parity() {
     for entry in paths {
         let e = entry.unwrap();
         let p = e.path();
-        if p.extension().map(|s| s == "pmml").unwrap_or(false) {
-            let name = p.file_name().unwrap().to_string_lossy().to_string();
+        if p.extension().is_some_and(|s| s == "pmml") {
+            let _name = p.file_name().unwrap().to_string_lossy().to_string();
             // only TreeModel is scored here; skip MiningModel fixtures that will error
             let content = std::fs::read_to_string(&p).unwrap();
             if content.contains("<TreeModel") {
@@ -57,16 +55,15 @@ fn tree_fixtures_parity() {
     }
     assert!(
         !tree_files.is_empty(),
-        "no tree fixtures found in {:?}",
-        bench_dir
+        "no tree fixtures found in {bench_dir:?}"
     );
     println!("Found {} tree fixtures", tree_files.len());
     let mut tested = 0usize;
     for f in &tree_files {
-        println!("Testing {}", f);
+        println!("Testing {f}");
         let res = score_tree_pmml(f);
         match res {
-            Ok(_) => tested += 1,
+            Ok(()) => tested += 1,
             Err(e) => {
                 let msg = e.to_string();
                 // MiningModel fixtures not supported — skip
@@ -81,7 +78,7 @@ fn tree_fixtures_parity() {
                     println!("  -> SKIP (unsupported/PMML parity): {msg}");
                     continue;
                 }
-                panic!("{} failed: {e}", f);
+                panic!("{f} failed: {e}");
             }
         }
     }

@@ -1,4 +1,5 @@
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+use std::collections::HashMap;
 use std::path::Path;
 
 #[test]
@@ -16,7 +17,7 @@ fn all_fixtures_load() {
     for entry in std::fs::read_dir(&dir).unwrap() {
         let e = entry.unwrap();
         let path = e.path();
-        if path.extension().map(|s| s == "pmml").unwrap_or(false) {
+        if path.extension().is_some_and(|s| s == "pmml") {
             total += 1;
             let bytes = std::fs::read(&path).unwrap();
             let env = PmmlEnv::new();
@@ -24,7 +25,7 @@ fn all_fixtures_load() {
             match res {
                 Ok(sess) => {
                     // Try to run with empty input (should not panic)
-                    let out = sess.run(Default::default());
+                    let out = sess.run(HashMap::default());
                     match out {
                         Ok(_) => {
                             println!("OK {}", path.display());
@@ -54,8 +55,8 @@ fn all_fixtures_load() {
     }
     println!("Total {}, ok {}, failed {}", total, ok, failed.len());
     for f in &failed {
-        println!("FAILED: {}", f);
+        println!("FAILED: {f}");
     }
-    assert!(failed.is_empty(), "Some fixtures failed: {:?}", failed);
-    assert!(total >= 44, "Expected at least 44 fixtures, got {}", total);
+    assert!(failed.is_empty(), "Some fixtures failed: {failed:?}");
+    assert!(total >= 44, "Expected at least 44 fixtures, got {total}");
 }

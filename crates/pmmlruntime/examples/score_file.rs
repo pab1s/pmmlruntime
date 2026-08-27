@@ -1,6 +1,6 @@
-//! Score any PMML file (LightGBM, XGBoost, sklearn, R) — same API.
+//! Score any PMML file (`LightGBM`, `XGBoost`, sklearn, R) — same API.
 //!
-//! After conversion there is no "LightGBM PMML" or "XGBoost PMML" —
+//! After conversion there is no "`LightGBM` PMML" or "`XGBoost` PMML" —
 //! `lightgbm2pmml`/`sklearn2pmml`/`r2pmml` all emit one PMML 4.4 `MiningModel`
 //! (typically `Segmentation` with `multipleModelMethod="sum"` over `TreeModel`s).
 //! The scoring engine never knows the original framework.
@@ -22,7 +22,7 @@
 //!
 //! The `GradientBoosterTest.pmml` fixture is used here because it *is* a GBDT
 //! ensemble (3 `RegressionModel` stumps summed → `modelChain` to probabilities)
-//! — structurally identical to a small LightGBM PMML. Replace the path with
+//! — structurally identical to a small `LightGBM` PMML. Replace the path with
 //! your own `lightgbm.pmml` / `xgboost.pmml`; the code does not change.
 
 use std::collections::HashMap;
@@ -31,6 +31,7 @@ use std::path::PathBuf;
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use pmmlruntime::Value;
 
+#[allow(clippy::too_many_lines)]
 fn print_output(out: &HashMap<String, Value>, ir: &pmmlruntime::ir::Ir) {
     // predictedValue is always present; other keys depend on Output/Targets
     for (k, v) in out {
@@ -47,6 +48,7 @@ fn print_output(out: &HashMap<String, Value>, ir: &pmmlruntime::ir::Ir) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().collect::<Vec<_>>();
     if args.len() < 2 {
@@ -116,14 +118,14 @@ fn main() -> anyhow::Result<()> {
             }
         }
         pmmlruntime::ir::ModelIr::GeneralRegression(_) => {
-            println!("  Model: GeneralRegressionModel")
+            println!("  Model: GeneralRegressionModel");
         }
         pmmlruntime::ir::ModelIr::Scorecard(_) => println!("  Model: Scorecard"),
         pmmlruntime::ir::ModelIr::Clustering(_) => println!("  Model: ClusteringModel"),
         pmmlruntime::ir::ModelIr::NaiveBayes(_) => println!("  Model: NaiveBayesModel"),
         pmmlruntime::ir::ModelIr::NearestNeighbor(_) => println!("  Model: NearestNeighborModel"),
         pmmlruntime::ir::ModelIr::SupportVectorMachine(_) => {
-            println!("  Model: SupportVectorMachineModel")
+            println!("  Model: SupportVectorMachineModel");
         }
         pmmlruntime::ir::ModelIr::NeuralNetwork(_) => println!("  Model: NeuralNetwork"),
         pmmlruntime::ir::ModelIr::Association(_) => println!("  Model: AssociationModel"),

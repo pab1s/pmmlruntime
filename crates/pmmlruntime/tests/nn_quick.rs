@@ -13,12 +13,12 @@ fn simple_nn() {
     m.insert("x1".to_string(), Value::Continuous(0.5));
     m.insert("x2".to_string(), Value::Continuous(0.5));
     let out = sess.run(m).expect("run nn");
-    println!("nn out: {:?}", out);
+    println!("nn out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     match pred {
         Value::Continuous(f) => {
             // hidden1 logistic(1.0) 0.731, hidden2 logistic(0.5) 0.622, output 1.353
-            assert!((f - 1.353).abs() < 0.05, "expected ~1.353 got {}", f);
+            assert!((f - 1.353).abs() < 0.05, "expected ~1.353 got {f}");
         }
         _ => panic!("expected continuous"),
     }

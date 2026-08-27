@@ -94,8 +94,7 @@ fn bayesian_continuous_target() {
     match pred0 {
         Value::Continuous(f) => assert!(
             (f - 10.0).abs() < 1e-9,
-            "D1=0 should predict C1=10, got {}",
-            f
+            "D1=0 should predict C1=10, got {f}"
         ),
         _ => panic!("expected continuous"),
     }
@@ -184,7 +183,7 @@ fn sequence_with_set_predicate() {
     let env = PmmlEnv::new();
     let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
     let sid_red = sess.symbol_id("red").unwrap();
-    let sid_blue = sess.symbol_id("blue").unwrap();
+    let _sid_blue = sess.symbol_id("blue").unwrap();
     // red should match sp0 (supersetOf red blue? For our isIn logic, red in [red,blue] => true) and predict red
     let mut input = HashMap::new();
     input.insert("color".to_string(), Value::Discrete(sid_red));

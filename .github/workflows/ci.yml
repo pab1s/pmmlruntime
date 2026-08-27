@@ -38,26 +38,32 @@ jobs:
       - run: cargo test --workspace -- --nocapture
       - run: cargo test -p pmmlruntime --test all_fixtures -- --nocapture
       - run: cargo test -p pmmlruntime --lib -- --nocapture
-      # L7: proptest depth>5k + hardening (XXE, depth 512, 100MB) is in `cargo test --workspace` via `hardening_l7` test
-      - run: cargo test -p pmmlruntime --test hardening_l7 -- --nocapture
+      # L7: proptest depth>5k + hardening (XXE, depth 512, 100MB) is in `cargo test --workspace` via `hardening` test
+      - run: cargo test -p pmmlruntime --test hardening -- --nocapture
   miri:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly
           components: miri, rust-src
+      # Override rust-toolchain.toml (stable) — miri requires nightly
+      - run: rustup override set nightly
       # E4/L7: leak sanitizer for Session / Ir / BumpArena / Lag buffer — must be 0 leaks
-      - run: cargo miri test -p pmmlruntime --lib -- --nocapture
-      - run: cargo miri test -p pmmlruntime --test hardening_l7 -- --nocapture
+      - run: cargo +nightly miri test -p pmmlruntime --lib -- --nocapture
+      - run: cargo +nightly miri test -p pmmlruntime --test hardening -- --nocapture
   fuzz:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - run: rustup override set nightly
       - run: cargo install cargo-fuzz
       # E3/L7: 1M execs, 60s max_total_time, validates reader hardening (depth 512, XXE, 100MB) — see fuzz/fuzz_targets/fuzz_unmarshal.rs
-      - run: cargo fuzz run fuzz_unmarshal -- -max_total_time=60 -rss_limit_mb=2048 -print_final_stats=1
+      - run: cargo +nightly fuzz run fuzz_unmarshal -- -max_total_time=60 -rss_limit_mb=2048 -print_final_stats=1
       - run: cargo test -p pmmlruntime --lib xml::reader::tests::xxe_blocked -- --nocapture
       - run: cargo test -p pmmlruntime --lib xml::reader::tests::depth_limit -- --nocapture
   bench:

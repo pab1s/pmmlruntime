@@ -1,4 +1,5 @@
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+use std::collections::HashMap;
 
 #[test]
 fn association_load() {
@@ -10,12 +11,12 @@ fn association_load() {
     match res {
         Ok(sess) => {
             println!("assoc load ok, active {}", sess.num_active_fields());
-            let out = sess.run(Default::default()).expect("run assoc");
-            println!("assoc out: {:?}", out);
+            let out = sess.run(HashMap::default()).expect("run assoc");
+            println!("assoc out: {out:?}");
             assert!(out.contains_key("predictedValue") || !out.is_empty());
         }
         Err(e) => {
-            println!("assoc load error: {}", e);
+            println!("assoc load error: {e}");
             panic!("should load");
         }
     }
@@ -31,12 +32,12 @@ fn ruleset_load() {
     match res {
         Ok(sess) => {
             println!("ruleset load ok, active {}", sess.num_active_fields());
-            let out = sess.run(Default::default()).expect("run ruleset");
-            println!("ruleset out: {:?}", out);
+            let out = sess.run(HashMap::default()).expect("run ruleset");
+            println!("ruleset out: {out:?}");
             assert!(!out.is_empty());
         }
         Err(e) => {
-            println!("ruleset load error: {}", e);
+            println!("ruleset load error: {e}");
             panic!("should load");
         }
     }

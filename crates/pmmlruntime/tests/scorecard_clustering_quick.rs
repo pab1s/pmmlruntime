@@ -30,20 +30,19 @@ fn scorecard_attribute_reason() {
         .symbol_names
         .iter()
         .find(|(_, s)| *s == "marketing")
-        .map(|(id, _)| *id)
-        .unwrap_or(pmmlruntime::base::SymbolId(0));
+        .map_or(pmmlruntime::base::SymbolId(0), |(id, _)| *id);
     m.insert("department".to_string(), Value::Discrete(marketing_sid));
     m.insert("age".to_string(), Value::Continuous(35.0));
     m.insert("income".to_string(), Value::Continuous(1500.0));
     let out = sess.run(m).expect("run scorecard");
-    println!("scorecard out: {:?}", out);
+    println!("scorecard out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     match pred {
         Value::Continuous(f) => {
             // For this fixture, initial 0 + dept marketing 19 + age 30-39? Actually age 35 => 12, income 1500 => 5 => total 36
             // But depends on fixture
             assert!(!f.is_nan());
-            println!("scorecard predicted {}", f);
+            println!("scorecard predicted {f}");
         }
         _ => panic!("expected continuous"),
     }
@@ -67,13 +66,13 @@ fn clustering_ranking() {
     let mut m = HashMap::new();
     m.insert("input".to_string(), Value::Continuous(2.8));
     let out = sess.run(m).expect("run clustering");
-    println!("clustering out: {:?}", out);
+    println!("clustering out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     // Should be discrete cluster name, e.g., positive
     match pred {
         Value::Discrete(_) => println!("clustering predicted discrete ok"),
         Value::Continuous(_) => println!("clustering predicted continuous (maybe index)"),
-        _ => panic!("expected discrete"),
+        Value::Missing => panic!("expected discrete"),
     }
     assert!(!pred.is_missing());
 }

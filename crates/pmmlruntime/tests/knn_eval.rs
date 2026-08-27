@@ -13,13 +13,13 @@ fn knn_tie_break() {
     let mut m = HashMap::new();
     m.insert("input".to_string(), Value::Continuous(2.5));
     let out = sess.run(m).expect("run knn");
-    println!("knn tie break out: {:?}", out);
+    println!("knn tie break out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     // For TieBreakTest, predictedValue should be medium
     match pred {
         Value::Discrete(sid) => {
             let s = sess.ir.symbol_names.get(sid).unwrap();
-            println!("pred discrete {}", s);
+            println!("pred discrete {s}");
             assert_eq!(s, "medium");
         }
         _ => panic!("expected discrete medium"),
@@ -51,11 +51,10 @@ fn knn_clustering_simple_matching() {
         .symbol_names
         .iter()
         .find(|(_, s)| *s == "s")
-        .map(|(id, _)| *id)
-        .unwrap_or(pmmlruntime::base::SymbolId(0));
+        .map_or(pmmlruntime::base::SymbolId(0), |(id, _)| *id);
     m.insert("marital status".to_string(), Value::Discrete(sid_s));
     m.insert("dependents".to_string(), Value::Continuous(0.0));
     let out = sess.run(m).expect("run knn clustering");
-    println!("knn clustering out: {:?}", out);
+    println!("knn clustering out: {out:?}");
     assert!(!out.is_empty());
 }

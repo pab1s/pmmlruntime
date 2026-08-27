@@ -23,11 +23,11 @@ fn regression_linear() {
     let mut m = HashMap::new();
     m.insert("input".to_string(), Value::Continuous(2.0));
     let out = sess.run(m).expect("run");
-    println!("out: {:?}", out);
+    println!("out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     match pred {
         Value::Continuous(f) => {
-            assert!((f - 4.0).abs() < 1e-6, "expected 4.0 got {}", f);
+            assert!((f - 4.0).abs() < 1e-6, "expected 4.0 got {f}");
         }
         _ => panic!("expected continuous"),
     }
@@ -57,13 +57,13 @@ fn mining_model_chain() {
     m.insert("temperature".to_string(), Value::Continuous(20.0));
     m.insert("cloudiness".to_string(), Value::Continuous(0.5));
     let out = sess.run(m).expect("run mining");
-    println!("mining out: {:?}", out);
+    println!("mining out: {out:?}");
     // PollenIndex should be around 0.3 + 0.8*prob_setosa + ... + 0.02*temp -0.1*cloudiness
     // For setosa petal 1.4/0.2 => prob setosa ~1, versicolor 0, virginica 0 => PollenIndex ~0.3+0.8+0.02*20 -0.1*0.5 = 0.3+0.8+0.4-0.05=1.45
     let pred = out
         .get("predictedValue")
         .or_else(|| out.get("PollenIndex"))
         .expect("predicted");
-    println!("pred mining: {:?}", pred);
+    println!("pred mining: {pred:?}");
     assert!(!pred.is_missing());
 }
