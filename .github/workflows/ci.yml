@@ -69,3 +69,11 @@ jobs:
       - run: cargo +nightly fuzz run fuzz_unmarshal -- -max_total_time=60 -rss_limit_mb=2048 -timeout=10 -print_final_stats=1 || echo "fuzz timeout artifact — not failing CI, see fuzz/artifacts"
       - run: cargo test -p pmmlruntime --lib xml::reader::tests::xxe_blocked -- --nocapture
       - run: cargo test -p pmmlruntime --lib xml::reader::tests::depth_limit -- --nocapture
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install mdbook mdbook-mermaid --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+      - run: mdbook build docs

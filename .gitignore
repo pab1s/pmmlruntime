@@ -23,5 +23,8 @@ tmp/
 .worktrees/
 worktrees/
 
+# mdBook
+/docs/book/
+
 # Secrets
 .env
