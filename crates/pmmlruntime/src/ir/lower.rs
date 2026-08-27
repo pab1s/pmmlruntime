@@ -4682,10 +4682,8 @@ mod tests {
 
     #[test]
     fn lower_iris() {
-        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
-            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
-            .unwrap();
-        let raw = unmarshal(&xml).unwrap();
+        let xml = include_bytes!("../../../../bench/pmml/DecisionTreeIris.pmml");
+        let raw = unmarshal(xml).unwrap();
         let ir = lower(raw).unwrap();
         assert_eq!(ir.data_dictionary.len(), 3);
         match ir.model {
