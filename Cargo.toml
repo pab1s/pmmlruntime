@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]
+members = ["crates/pmmlruntime"]
 exclude = ["fuzz"]
 resolver = "2"
 
@@ -18,7 +18,6 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 thiserror = "2.0"
 anyhow = "1.0"
-clap = { version = "4.5", features = ["derive"] }
 indexmap = "2.9"
 lasso = "0.7"
 bumpalo = { version = "3", features = ["collections"] }
@@ -33,8 +32,6 @@ libm = "0.2"
 ndarray = "0.16"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.11"
-criterion = { version = "0.5", features = ["html_reports"] }
-insta = "1"
 proptest = "1"
 pyo3 = { version = "0.22", features = ["extension-module"] }
 wide = { version = "0.7", features = [] }

@@ -16,9 +16,7 @@ pmmlruntime/
 ├─ engine      # Pure evaluation on &[Value]: mining_schema, 19 models, predicate, output, targets, transform/vm, simd.
 ├─ session     # Session API: PmmlEnv + Session + Batch + ExecutionProvider. Primary user API.
 ├─ ffi         # C ABI: opaque PmmlEnv/Session handles, PmmlCreate/Release.
-├─ python      # pyo3 0.22 extension-module (future PySession). Stub, feature-gated.
-├─ cli         # clap CLI: pmml-runtime inspect/run/verify.
-└─ bench       # criterion + large_trial (10k/100k/1M/10M Arrow scaling).
+└─ python      # pyo3 0.22 extension-module (future PySession). Stub, feature-gated.
 ```
 
 ```
@@ -27,7 +25,7 @@ use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 // re-exports also at crate root: use pmmlruntime::{Value, Session, PmmlEnv};
 ```
 
-Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=Apache-2.0`, `members = ["crates/pmmlruntime", "crates/pmml-cli", "crates/pmml-bench"]` (single lib + tools).
+Workspace `Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `license=Apache-2.0`, `members = ["crates/pmmlruntime"]` (single crate).
 
 ## 2. Data & control flow
 
@@ -106,13 +104,10 @@ See `docs/OWNERSHIP.tsv` for per-field `struct field type java_owner rust_owner 
 | Path | Target | Measured (release, Iris 5 nodes, i7-12700 1.78) | Technique |
 |---|---|---|---|
 | Cold `Session::from_bytes` | `68µs` | `68.8µs` `bench_all` | `quick-xml` 0.37 + `lower` + `verify_ir`, no JAXB Visitors |
-| Single `Session::run` | `≤800 ns` | `402 ns` criterion `30 samples` / `393 ns` bench_all 10k | `HashMap<String,Value>` → `with_value_buffer` stack 64 + `AHashMap::get(&str)` ahash `3×` + branchless flat `Vec<NodeIr>` |
+| Single `Session::run` | `≤800 ns` | `402 ns` `30 samples` / `393 ns` 10k | `HashMap<String,Value>` → `with_value_buffer` stack 64 + `AHashMap::get(&str)` ahash `3×` + branchless flat `Vec<NodeIr>` |
 | `run_batch` 1k sequential | `≤350µs` | `336µs` `1k` `2.97M rows/s` | `CpuSerial` loop `with_value_buffer` reuse, no rayon |
 | `run_batch_arrow` 1k | `≤250µs` | `249µs` `4.0M rows/s` | `RecordBatch` `Float64Array` col_map + `with_value_buffer`, no per-row HashMap |
 | `run_batch_arrow` 100k batched | `11× Java 696 ns` | `61 ns/row` `16.5M rows/s` `CpuBatched` | `rayon` `par_chunks(256)` over `par_chunks`, `thread_local Vec<Value>` |
-| `cargo bench --bench scoring` | — | `criterion` html `target/criterion` | `measurement-time 2 --warm-up-time 1` |
-
-Gate `cargo bench -p pmml-bench -- --sample-size 30` must be `≤800 ns` single, `≤500µs` batched (now passes via Arrow).
 
 ## 7. Important invariants — contributor must preserve
 
@@ -143,7 +138,7 @@ Gate `cargo bench -p pmml-bench -- --sample-size 30` must be `≤800 ns` single,
 | Batch | `Batch` trait `RowMajor Vec<HashMap>` + `Columnar RecordBatch` (provider picks) | Only Arrow | Single row `HashMap` 402ns < Arrow >1µs + schema agreement; `Collection`/`List` (Association) and Python `dict` map naturally to `HashMap` |
 | Model strategy | Option A port `pmml-model` to Rust (this repo) | Option B JNI bridge `jni` crate | Removes JVM forever, single binary, WASM-ready, Apache-2.0 not AGPL; JNI keeps XML correctness for free but needs JVM at runtime |
 | License | `Apache-2.0` (workspace) | `TBD` (README old) + upstream `AGPL-3.0` dual BSD | Transpilation ≠ relicense; green-field port can be Apache-2.0 before first code commit (now decided) |
-| Crate layout | single `pmmlruntime` with `base/xml/ir/engine/session` modules + tools `pmml-cli`/`pmml-bench` as separate workspace members | 9-crate workspace `pmml-core/xml/ir/evaluator/session/...` | Single crate: one `cargo add pmmlruntime`, one `cargo doc` page, <20k LOC; easier for users. Tools stay separate members (not `src/bin`) to avoid bloating lib with `clap`/`criterion`. |
+| Crate layout | single `pmmlruntime` with `base/xml/ir/engine/session` modules | 9-crate workspace `pmml-core/xml/ir/evaluator/session/...` | Single crate: one `cargo add pmmlruntime`, one `cargo doc` page, <20k LOC; easier for users. |
 | `base` naming | `base` (`crate::base::{Value,FieldId,PmmlError,DataType}`, internals `arena/field/value/error`) | `core` (shadows `::core`), `types`/`common` (too narrow, `arena` is not a type) | `base` avoids `::core` shadowing, already used after merge, covers `arena`+`error`+`field`+`value`; `types` would exclude `arena`/`error`, `common` is vague. Documented in `crates/pmmlruntime/src/base/mod.rs`. |
 
 Ver `OWNERSHIP.tsv` for per-field ownership; `BENCHMARK.md` for Java vs Rust tables; `PLAN.md` for Bun anchor `535k Zig` → `50k hand + 20k generated` mechanical.

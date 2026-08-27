@@ -21,7 +21,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-clap = { workspace = true }
 indexmap = { workspace = true }
 lasso = { workspace = true }
 bumpalo = { workspace = true }
@@ -36,8 +35,6 @@ libm = { workspace = true }
 ndarray = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
-criterion = { workspace = true }
-insta = { workspace = true }
 proptest = { workspace = true }
 pyo3 = { workspace = true, optional = true }
 wide = { workspace = true, optional = true }

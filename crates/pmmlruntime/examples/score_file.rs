@@ -257,10 +257,7 @@ fn main() -> anyhow::Result<()> {
         print_output(&out2, &sess.ir);
     }
 
-    println!("\nTip: LightGBM PMML is just a MiningModel. Score it with:");
-    println!(
-        "  cargo run -p pmml-cli -- run --model lightgbm.pmml --batch input.csv --output out.csv"
-    );
+    println!("\nTip: LightGBM PMML is just a MiningModel — same API, any PMML.");
     println!("See README.md \"Use it\" and docs/ARCHITECTURE.md for Batch/Arrow details.");
 
     // Touch unused args to avoid warning when --output not used in single-row mode

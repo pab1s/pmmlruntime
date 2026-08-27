@@ -42,7 +42,7 @@ You trained it in Python or R. You exported it as `model.pmml`. In production th
 | **Score 1k rows** | **336&nbsp;&micro;s** | 743&nbsp;&micro;s | **2.2×** |
 | **Score 100k batched** | **61&nbsp;ns / row** | 696&nbsp;ns / row | **11×** |
 
-> 68&nbsp;µs is `quick-xml` + `lower` + `verify` for `DecisionTreeIris.pmml` (2.9&nbsp;KB, 5 nodes). Java is `PMMLUtil.unmarshal` after 10k warmup. Full tables, method and `cargo bench` repro in [`docs/BENCHMARK.md`](./docs/BENCHMARK.md). Run `cargo bench -p pmml-bench --bench scoring` on your hardware.
+> 68&nbsp;µs is `quick-xml` + `lower` + `verify` for `DecisionTreeIris.pmml` (2.9&nbsp;KB, 5 nodes). Java is `PMMLUtil.unmarshal` after 10k warmup. Full tables and method in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ## Why this exists
 
@@ -128,29 +128,17 @@ let outs = sess.run_batch(rows)?;
 
 `CpuBatched` (`rayon` `par_chunks(256)`) for `>10k` rows; `<256` falls back to serial (no spawn overhead). See `docs/ARCHITECTURE.md` §4 and `BENCHMARK.md` §3.
 
-### 3. CLI — no Rust code
-
-```sh
-# inspect what the model expects
-cargo run -p pmml-cli -- inspect --model model.pmml
-# → DataDictionary, MiningSchema active/target, Output, Ir counts
-
-# single-file batch
-cargo run -p pmmlruntime --example score_file -- model.pmml input.csv --output out.csv
-cargo run -p pmml-cli -- run --model model.pmml --batch input.csv --output out.csv
-
-# verify (unmarshal → verify_raw → lower → verify_ir)
-cargo run -p pmml-cli -- verify --model model.pmml
-```
-
 Full annotated example: `crates/pmmlruntime/examples/score_file.rs`.
 
-## CLI & bindings
+```sh
+cargo run -p pmmlruntime --example score_file -- model.pmml input.csv --output out.csv
+```
+
+## Bindings
 
 | Surface | Status | Example |
 |---|---|---|
 | **Rust** | Stable | `cargo add pmmlruntime` |
-| **CLI** | Stable | `pmml-cli inspect/run/verify` |
 | **C ABI** | Stub → 0.2.0 | `pmml_runtime.h` via `cbindgen`, `PmmlEnv`/`PmmlSession` handles |
 | **Python** | Stub → 0.2.0 | `import pmml_runtime; pmml_runtime.hello()` (pyo3, `maturin`) |
 
@@ -207,10 +195,8 @@ Reference is the Java implementation measured after 10k warmup, 100k iters (`Sys
 
 ```
 crates/pmmlruntime   library (base/xml/ir/engine/session/ffi/python)
-crates/pmml-cli      CLI (inspect / run / verify)
-crates/pmml-bench    benchmarks + large_trial
 bench/pmml           52 PMML fixtures (DecisionTreeIris, GradientBooster, …)
-docs                 architecture, benchmarks, spec notes
+docs                 architecture & spec notes
 fuzz                 libFuzzer target (unmarshal + lower + Session)
 ```
 
@@ -220,8 +206,7 @@ fuzz                 libFuzzer target (unmarshal + lower + Session)
 git clone https://github.com/pab1s/pmmlruntime.git
 cd pmmlruntime
 cargo test --workspace          # 124 doc + 104 lib + 52 fixtures (51 OK + 1 SKIP) + 14 hardening
-cargo test -p pmmlruntime --test hardening_l7
-cargo bench -p pmml-bench --bench scoring -- --sample-size 30
+cargo test -p pmmlruntime --test hardening
 cargo fuzz run fuzz_unmarshal -- -max_total_time=60
 ```
 
