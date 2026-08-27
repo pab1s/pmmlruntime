@@ -296,11 +296,9 @@ fn session_is_send_sync_and_threaded_run() {
 
 #[test]
 fn batched_is_send_sync_sharding_no_alloc_per_row() {
-    let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
-        .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
-        .unwrap();
+    let xml = include_bytes!("../../../bench/pmml/DecisionTreeIris.pmml");
     let env = PmmlEnv::new();
-    let sess = Session::from_bytes(&env, &xml, SessionOptions::default()).unwrap();
+    let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
     let small_batch: Vec<HashMap<String, Value>> = (0..10)
         .map(|_| {
             let mut m = HashMap::new();
