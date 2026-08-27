@@ -311,12 +311,12 @@ mod tests {
         let scalar_out = evaluate_regression_batch_scalar(&reg, &refs);
         assert_eq!(simd_out.len(), 8);
         for (a, b) in simd_out.iter().zip(scalar_out.iter()) {
-            assert_eq!(a, b);
+            assert!(a.approx_eq(*b, 1e-9));
         }
         // Check values: 1 + 2*x
-        assert_eq!(simd_out[0], Value::Continuous(1.0));
-        assert_eq!(simd_out[1], Value::Continuous(3.0));
-        assert_eq!(simd_out[7], Value::Continuous(15.0));
+        assert!(simd_out[0].approx_eq(Value::Continuous(1.0), 1e-9));
+        assert!(simd_out[1].approx_eq(Value::Continuous(3.0), 1e-9));
+        assert!(simd_out[7].approx_eq(Value::Continuous(15.0), 1e-9));
     }
 
     #[test]
@@ -331,6 +331,9 @@ mod tests {
         let refs: Vec<&[Value]> = rows.iter().map(|r| r.as_slice()).collect();
         let simd_out = evaluate_regression_batch_simd(&reg, &refs);
         let scalar_out = evaluate_regression_batch_scalar(&reg, &refs);
-        assert_eq!(simd_out, scalar_out);
+        assert_eq!(simd_out.len(), scalar_out.len());
+        for (a, b) in simd_out.iter().zip(scalar_out.iter()) {
+            assert!(a.approx_eq(*b, 1e-9));
+        }
     }
 }

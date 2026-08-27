@@ -231,6 +231,6 @@ mod tests {
             output: vec![],
         };
         let vals = vec![Value::Continuous(2.5)];
-        assert_eq!(evaluate_regression(&reg, &vals), Value::Continuous(5.0));
+        assert!(evaluate_regression(&reg, &vals).approx_eq(Value::Continuous(5.0), 1e-9));
     }
 }

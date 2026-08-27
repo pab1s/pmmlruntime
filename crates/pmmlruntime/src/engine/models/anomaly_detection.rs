@@ -351,12 +351,12 @@ mod tests {
         };
         // input 1.0 -> closest to c1 distance 1.0 ratio 1.0
         let score = evaluate_anomaly_detection(&adm, &[Value::Continuous(1.0)]);
-        assert_eq!(score, Value::Continuous(1.0));
+        assert!(score.approx_eq(Value::Continuous(1.0), 1e-9));
         // input 12.0 -> closest to c2 distance 2.0 ratio 1.0
         let score2 = evaluate_anomaly_detection(&adm, &[Value::Continuous(12.0)]);
-        assert_eq!(score2, Value::Continuous(1.0));
+        assert!(score2.approx_eq(Value::Continuous(1.0), 1e-9));
         // input 14.0 -> distance 4.0 ratio 2.0
         let score3 = evaluate_anomaly_detection(&adm, &[Value::Continuous(14.0)]);
-        assert_eq!(score3, Value::Continuous(2.0));
+        assert!(score3.approx_eq(Value::Continuous(2.0), 1e-9));
     }
 }

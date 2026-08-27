@@ -269,11 +269,9 @@ fn session_drop_no_leak_under_miri() {
 
 #[test]
 fn session_is_send_sync_and_threaded_run() {
-    let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
-        .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
-        .expect("Iris fixture");
+    let xml = include_bytes!("../../../bench/pmml/DecisionTreeIris.pmml");
     let env = Arc::new(PmmlEnv::new());
-    let sess = Arc::new(Session::from_bytes(&env, &xml, SessionOptions::default()).unwrap());
+    let sess = Arc::new(Session::from_bytes(&env, xml, SessionOptions::default()).unwrap());
     let mut handles = Vec::new();
     for _ in 0..8 {
         let s = Arc::clone(&sess);

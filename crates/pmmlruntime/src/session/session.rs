@@ -715,12 +715,10 @@ mod tests {
 
     #[test]
     fn session_iris_tree() {
-        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
-            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
-            .unwrap();
+        let xml = include_bytes!("../../../../bench/pmml/DecisionTreeIris.pmml");
         let env = PmmlEnv::new();
         let opts = SessionOptions::default();
-        let sess = Session::from_bytes(&env, &xml, opts).unwrap();
+        let sess = Session::from_bytes(&env, xml, opts).unwrap();
         let mut input = HashMap::new();
         input.insert("Petal.Length".to_string(), Value::Continuous(1.4)); // setosa
         input.insert("Petal.Width".to_string(), Value::Continuous(0.2));
@@ -742,11 +740,9 @@ mod tests {
 
     #[test]
     fn session_iris_virginica() {
-        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
-            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
-            .unwrap();
+        let xml = include_bytes!("../../../../bench/pmml/DecisionTreeIris.pmml");
         let env = PmmlEnv::new();
-        let sess = Session::from_bytes(&env, &xml, SessionOptions::default()).unwrap();
+        let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
         let mut input = HashMap::new();
         input.insert("Petal.Length".to_string(), Value::Continuous(6.0));
         input.insert("Petal.Width".to_string(), Value::Continuous(2.0));
