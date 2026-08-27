@@ -15431,10 +15431,8 @@ mod tests {
 
     #[test]
     fn parse_iris() {
-        let xml = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
-            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
-            .unwrap();
-        let raw = unmarshal(&xml).unwrap();
+        let xml = include_bytes!("../../../../bench/pmml/DecisionTreeIris.pmml");
+        let raw = unmarshal(xml).unwrap();
         assert_eq!(raw.data_dictionary.len(), 3);
         assert!(raw.tree_model.is_some());
         let tm = raw.tree_model.unwrap();
