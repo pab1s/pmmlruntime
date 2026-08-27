@@ -18,7 +18,7 @@ pub mod providers;
 pub mod session;
 
 pub use env::PmmlEnv;
-pub use options::{ExecutionProviderKind, GraphOptimizationLevel, SessionOptions};
+pub use options::{GraphOptimizationLevel, SessionOptions};
 pub use session::Session;
 
 pub(crate) use session::with_value_buffer;

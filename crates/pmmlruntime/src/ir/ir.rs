@@ -1,15 +1,17 @@
 //! Optimized, post-lower intermediate representation for PMML 4.4.
 //!
-//! The hot path (`pmml-session` + `pmml-evaluator`) reads only [`Ir`] and its
-//! child structs. Cold-path parsing (`pmml-xml` → [`crate::xml::RawPmml`]) is
+//! Optimized, post-lower intermediate representation for PMML 4.4.
+//!
+//! The hot path (session + engine) reads only [`Ir`] and its
+//! child structs. Cold-path parsing (`xml` → [`crate::xml::RawPmml`]) is
 //! lowered once via [`crate::ir::lower::lower()`] into this representation.
 //!
 //! Key design choices:
 //! - Stable [`crate::base::FieldId`] / [`crate::base::SymbolId`] assigned by [`crate::ir::Interner`].
 //! - `TreeModel` nodes flattened to `Vec<NodeIr>` with root at index 0.
 //! - `DerivedField` / `TransformationDictionary` sorted topologically.
-//! - `DerivedFieldIr.bytecode` holds a `Vec<Op>` evaluated by `pmml-evaluator::vm`.
-//! - All types are `Clone` and `Send + Sync` (via `Arc<Ir>` in `pmml-session`).
+//! - `DerivedFieldIr.bytecode` holds a `Vec<Op>` evaluated by `engine::transform::vm`.
+//! - All types are `Clone` and `Send + Sync` (via `Arc<Ir>` in `session`).
 
 use crate::base::field::{DataType, OpType, ResultFeature};
 use crate::base::{FieldId, SymbolId};
@@ -118,7 +120,7 @@ impl Default for FieldMeta {
 
 /// Outlier handling for continuous fields, per `MiningField/@outliers`.
 ///
-/// Mirrors PMML XSD `OUTLIER-TREATMENT-METHOD`. Used by `pmml-evaluator` before
+/// Mirrors PMML XSD `OUTLIER-TREATMENT-METHOD`. Used by the engine before
 /// scoring to rewrite a value that lies outside `[low_value, high_value]`.
 ///
 /// See [`FieldMeta::outlier_treatment`], [`FieldMeta::low_value`], [`FieldMeta::high_value`].
@@ -247,7 +249,7 @@ pub struct DerivedFieldIr {
     pub data_type: DataType,
     /// `DerivedField/@optype`.
     pub op_type: OpType,
-    /// Bytecode evaluated by `pmml-evaluator::vm::eval` in sorted order.
+    /// Bytecode evaluated by `engine::transform::vm::eval` in sorted order.
     pub bytecode: Vec<Op>,
 }
 
@@ -277,7 +279,7 @@ pub enum LagAggregate {
 
 /// Bytecode for `Apply` / `MapValues` / `Discretize` and related expressions.
 ///
-/// Evaluated by `pmml-evaluator::vm::eval`. Operands refer to
+/// Evaluated by `engine::transform::vm::eval`. Operands refer to
 /// [`FieldId`] / [`SymbolId`] interned during lowering.
 #[derive(Debug, Clone)]
 pub enum Op {
@@ -297,7 +299,7 @@ pub enum Op {
     },
     /// Single-input map-values table (`MapValues` with one `FieldColumnPair`).
     ///
-    /// Evaluated via `pmml-evaluator` hash lookup on the input symbol.
+    /// Evaluated via engine hash lookup on the input symbol.
     MapValues {
         /// Sorted map from input symbol to output symbol.
         table: Vec<(SymbolId, SymbolId)>,

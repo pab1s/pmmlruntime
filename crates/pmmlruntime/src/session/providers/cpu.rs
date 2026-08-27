@@ -1,4 +1,4 @@
-//! `CpuBatchedProvider` — `rayon`-parallel sharding for large batches.
+//! `CpuProvider` — single CPU execution provider (auto serial / rayon).
 
 use super::ExecutionProvider;
 use crate::base::{Result, Value};
@@ -7,43 +7,37 @@ use crate::session::batch::{Batch, BatchCtx, BatchResult};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// Parallel CPU execution provider — shards `Batch` via `rayon::par_chunks(256)`.
+/// Unified CPU execution provider — auto-chooses serial vs `rayon` sharding.
 ///
-/// Each thread gets its own `&mut [Value]` slice (cloned from template) and `Arc<Ir>` is `Send+Sync`.
-/// Batched scoring shards by `chunk_size = 256.max(n / num_threads)` so large `n` scales linearly.
-/// For `n < 256` or `n < threads*4` it falls back to serial to avoid `rayon` overhead (`~400 ns` per row).
+/// For `n < 256` or `n < num_threads*4` it runs serially (same as old `CpuSerial`);
+/// otherwise it shards via `rayon::par_chunks(chunk_size)` where `chunk_size = 256.max(n / num_threads)`.
+///
+/// Each thread gets its own `&mut [Value]` slice via `with_value_buffer` and `Arc<Ir>` is `Send+Sync`.
 ///
 /// # Performance
 ///
-/// ~61 ns/row at 100k Arrow rows (Tree Iris) vs ~402 ns single-row. Small batches (`<256`) are serial,
-/// so callers don't pay thread-pool overhead for tiny requests.
-///
-/// # Concurrency
-///
-/// `Self` is `Send+Sync`; `eval_batch` uses `rayon` internally and each chunk calls
-/// `with_value_buffer` with its own thread-local buffer. Concurrent `eval_batch` calls
-/// from multiple threads are safe (nested `rayon` is work-stealing).
+/// ~402 ns per row single, ~61 ns/row at 100k Arrow rows. Small batches avoid `rayon` overhead.
 ///
 /// # Examples
 ///
 /// ```
-/// use pmmlruntime::session::providers::{CpuBatchedProvider, ExecutionProvider};
-/// let p = CpuBatchedProvider::new();
-/// assert_eq!(p.name(), "CPU_BATCHED");
+/// use pmmlruntime::session::providers::{CpuProvider, ExecutionProvider};
+/// let p = CpuProvider::new();
+/// assert_eq!(p.name(), "CPU");
 /// ```
-pub struct CpuBatchedProvider {
+pub struct CpuProvider {
     cached_map: OnceLock<HashMap<String, crate::base::FieldId>>,
 }
 
-impl CpuBatchedProvider {
-    /// Create a new batched provider (no allocation until first `eval_row` for `MiningModel`).
+impl CpuProvider {
+    /// Create a new CPU provider (no allocation until first `eval_row` for `MiningModel`).
     ///
     /// # Examples
     ///
     /// ```
-    /// use pmmlruntime::session::providers::{CpuBatchedProvider, ExecutionProvider};
-    /// let p = CpuBatchedProvider::new();
-    /// assert_eq!(p.name(), "CPU_BATCHED");
+    /// use pmmlruntime::session::providers::{CpuProvider, ExecutionProvider};
+    /// let p = CpuProvider::new();
+    /// assert_eq!(p.name(), "CPU");
     /// ```
     pub fn new() -> Self {
         Self {
@@ -62,38 +56,20 @@ impl CpuBatchedProvider {
     }
 }
 
-impl Default for CpuBatchedProvider {
+impl Default for CpuProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ExecutionProvider for CpuBatchedProvider {
+impl ExecutionProvider for CpuProvider {
     fn name(&self) -> &str {
-        "CPU_BATCHED"
+        "CPU"
     }
 
-    /// Evaluate a batch with parallel sharding (`rayon`) or serial fallback.
+    /// Evaluate a batch with auto serial / parallel sharding.
     ///
-    /// For `n < 256` or `n < num_threads*4` it runs serially (same as `CpuSerialProvider`);
-    /// otherwise it collects `0..n` indices, shards via `par_chunks(chunk_size)` where
-    /// `chunk_size = 256.max(n / num_threads)`, and for each chunk materializes rows via
-    /// `with_value_buffer` + `Batch::materialize_row` + `eval_row` / `GeneralRegression`.
-    ///
-    /// # Parameters
-    ///
-    /// - `ir`: model.
-    /// - `batch`: `&dyn Batch`.
-    /// - `ctx`: `BatchCtx` with `col_map` for `RecordBatch`.
-    ///
-    /// # Returns
-    ///
-    /// `BatchResult::Rows` in input order (chunks are flattened preserving order).
-    ///
-    /// # Errors
-    ///
-    /// Propagates `PmmlError` from `materialize_row` or `eval_row`. `GeneralRegression` with
-    /// probabilities never errors in practice (softmax on `Missing` yields `Missing`).
+    /// For `n < 256` or `n < num_threads*4` it runs serially; otherwise `par_chunks(chunk_size)`.
     fn eval_batch(&self, ir: &Ir, batch: &dyn Batch, ctx: &BatchCtx) -> Result<BatchResult> {
         use crate::base::field::ResultFeature;
         use crate::session::batch::BatchResult;
@@ -103,10 +79,7 @@ impl ExecutionProvider for CpuBatchedProvider {
         let needed = ctx.max_field_id.max(ir.num_fields() + 4);
         let n = batch.len();
         let num_threads = rayon::current_num_threads().max(1);
-        // Threshold: <256 or < threads*4 → serial fallback (rayon overhead >400ns work per row)
-        // This fixes 1k parallel slower than serial (BENCHMARK.md §3).
         if n < 256 || n < num_threads * 4 {
-            // serial fallback — same as CpuSerial
             let mut results = Vec::with_capacity(n);
             for row_idx in 0..n {
                 let out = crate::session::with_value_buffer(
@@ -201,7 +174,6 @@ impl ExecutionProvider for CpuBatchedProvider {
             }
             return Ok(BatchResult::Rows(results));
         }
-        // Parallel path — shard by chunks
         use rayon::prelude::*;
         let chunk_size = 256.max(n / num_threads);
         let indices: Vec<usize> = (0..n).collect();
@@ -310,15 +282,11 @@ impl ExecutionProvider for CpuBatchedProvider {
         Ok(BatchResult::Rows(results))
     }
 
-    /// Evaluate a single row (same dispatch as `CpuSerialProvider::eval_row`).
-    ///
-    /// Handles `DerivedFields` then `ModelIr` variant. For `MiningModel`/`GeneralRegression`
-    /// it uses the `OnceLock` cached `name_to_id` map.
+    /// Evaluate a single row.
     fn eval_row(&self, ir: &Ir, values: &mut [Value]) -> Result<Value> {
         if !ir.symbol_names.is_empty() {
             crate::engine::transform::vm::vm_set_symbol_map(ir.symbol_names.clone());
         }
-        // Derived fields first (if any) — per-row, thread-local values
         if !ir.derived_fields.is_empty() {
             crate::engine::eval_derived_fields(&ir.derived_fields, values)
                 .map_err(crate::base::error::PmmlError::InvalidValue)?;
@@ -383,25 +351,10 @@ impl ExecutionProvider for CpuBatchedProvider {
     }
 }
 
-impl CpuBatchedProvider {
+impl CpuProvider {
     /// Evaluate a batch in parallel, chunked at 1024 rows (or `num_cpus` sharded).
     ///
-    /// Provided for direct use; `Session::run_batch` is the public API and handles
-    /// input conversion + `rayon` sharding. This helper shows the intended inner loop
-    /// and is `allow(dead_code)` so it appears in docs without affecting coverage.
-    ///
-    /// # Parameters
-    ///
-    /// - `ir`: model.
-    /// - `batch_values`: `&mut [Vec<Value>]` each already sized to `max_field_id`.
-    ///
-    /// # Returns
-    ///
-    /// `Vec<Value>` predictions preserving order.
-    ///
-    /// # Errors
-    ///
-    /// Propagates `PmmlError` from `eval_row` (via `self.evaluate` alias).
+    /// Provided for direct use; `Session::run_batch` is the public API.
     #[allow(dead_code)]
     pub fn evaluate_batch_parallel(
         &self,

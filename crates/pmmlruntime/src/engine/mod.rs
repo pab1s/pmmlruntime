@@ -1,4 +1,4 @@
-//! Engine — pure PMML evaluation on `&[Value]` (formerly `pmml-evaluator`).
+//! Engine — pure PMML evaluation on `&[Value]`.
 
 #![allow(
     clippy::missing_errors_doc,

@@ -4,11 +4,9 @@
 //! `Value[FieldId]` via `with_value_buffer` and maps outputs; providers do `DerivedFields`
 //! + model dispatch.
 //!
-//! This separation lets `CpuSerial` (simple, debuggable) and `CpuBatched` (`rayon` sharding)
-//! share logic without duplicating `Session` output mapping.
+//! The unified `Cpu` provider auto-chooses serial vs `rayon` sharding based on batch size.
 
-pub mod cpu_batched;
-pub mod cpu_serial;
+pub mod cpu;
 
 use crate::base::{Result, Value};
 use crate::ir::Ir;
@@ -18,7 +16,7 @@ use crate::session::batch::{Batch, BatchCtx, BatchResult};
 ///
 /// Providers are `Send + Sync` so a single `Session` can be shared across threads.
 /// `Session` builds a [`BatchCtx`] (no per-row allocation) and delegates to `eval_batch`;
-/// for tiny batches (`<256` rows) even `CpuBatched` falls back to serial to avoid `rayon` overhead.
+/// for tiny batches (`<256` rows) the `Cpu` provider falls back to serial to avoid `rayon` overhead.
 ///
 /// # Contract for implementors
 ///
@@ -37,12 +35,12 @@ use crate::session::batch::{Batch, BatchCtx, BatchResult};
 /// # Examples
 ///
 /// ```
-/// use pmmlruntime::session::providers::{ExecutionProvider, CpuSerialProvider};
+/// use pmmlruntime::session::providers::{ExecutionProvider, CpuProvider};
 /// use pmmlruntime::base::Value;
 /// use pmmlruntime::ir::{Ir, ModelIr, TreeIr, MiningSchemaIr, MissingValueStrategy, NoTrueChildStrategy};
 /// use std::collections::HashMap;
 ///
-/// let provider = CpuSerialProvider::new();
+/// let provider = CpuProvider::new();
 /// assert_eq!(provider.name(), "CPU");
 /// ```
 pub trait ExecutionProvider: Send + Sync {
@@ -67,7 +65,7 @@ pub trait ExecutionProvider: Send + Sync {
     fn eval_row(&self, ir: &Ir, values: &mut [Value]) -> Result<Value>;
     /// Evaluate a full `Batch` (row-major or columnar) → `BatchResult::Rows`.
     ///
-    /// Default impl loops over `batch` via `eval_row`; `CpuBatched` overrides with `rayon`.
+    /// Default impl loops over `batch` via `eval_row`; `Cpu` overrides with `rayon` when beneficial.
     ///
     /// # Parameters
     ///
@@ -85,7 +83,7 @@ pub trait ExecutionProvider: Send + Sync {
     fn eval_batch(&self, ir: &Ir, batch: &dyn Batch, ctx: &BatchCtx) -> Result<BatchResult>;
     /// Preferred batch layout for this provider (hint for `Session` to avoid conversion).
     ///
-    /// `CpuSerial` and `CpuBatched` both return `Columnar` because Arrow zero-copy wins at large `n`,
+    /// `Cpu` returns `Columnar` because Arrow zero-copy wins at large `n`,
     /// but they accept `RowMajor` as well. `Session` keeps `Batch` trait so callers aren't forced into Arrow.
     fn preferred_format(&self) -> crate::session::batch::BatchFormat {
         crate::session::batch::BatchFormat::Columnar
@@ -98,5 +96,4 @@ pub trait ExecutionProvider: Send + Sync {
     }
 }
 
-pub use cpu_batched::CpuBatchedProvider;
-pub use cpu_serial::CpuSerialProvider;
+pub use cpu::CpuProvider;

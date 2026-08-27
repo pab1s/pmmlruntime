@@ -235,7 +235,7 @@ fn derived_cycle_tolerant_via_lower() {
         Session::from_bytes(&env, xml, SessionOptions::default()).expect("session from cycle");
     let mut input = HashMap::new();
     input.insert("x".to_string(), Value::Continuous(1.0));
-    let out = sess.run(input).expect("run with cycle should not panic");
+    let out = sess.run(&input as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run with cycle should not panic");
     #[allow(clippy::overly_complex_bool_expr)]
     let ok =
         out.contains_key("predictedValue") || out.values().any(|v| *v == Value::Missing) || true;
@@ -254,7 +254,7 @@ fn session_drop_no_leak_under_miri() {
         let sess = Session::from_bytes(&env, xml, SessionOptions::default()).unwrap();
         let mut input = HashMap::new();
         input.insert("x".to_string(), Value::Continuous(1.0));
-        let out = sess.run(input).unwrap();
+        let out = sess.run(&input as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().unwrap();
         assert!(out.contains_key("predictedValue"));
     }
 }
@@ -274,7 +274,7 @@ fn session_is_send_sync_and_threaded_run() {
                 let mut input = HashMap::new();
                 input.insert("petal_length".to_string(), Value::Continuous(1.4));
                 input.insert("petal_width".to_string(), Value::Continuous(0.2));
-                let out = s.run(input).unwrap();
+                let out = s.run(&input as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().unwrap();
                 assert!(out.contains_key("predictedValue"));
             }
         }));
@@ -299,7 +299,7 @@ fn batched_is_send_sync_sharding_no_alloc_per_row() {
             m
         })
         .collect();
-    let out = sess.run_batch(small_batch).unwrap();
+    let out = sess.run(&small_batch as &dyn pmmlruntime::session::batch::Batch).unwrap().into_rows();
     assert_eq!(out.len(), 10);
     let large_batch: Vec<HashMap<String, Value>> = (0..1000)
         .map(|_| {
@@ -309,7 +309,7 @@ fn batched_is_send_sync_sharding_no_alloc_per_row() {
             m
         })
         .collect();
-    let out2 = sess.run_batch(large_batch).unwrap();
+    let out2 = sess.run(&large_batch as &dyn pmmlruntime::session::batch::Batch).unwrap().into_rows();
     assert_eq!(out2.len(), 1000);
 }
 

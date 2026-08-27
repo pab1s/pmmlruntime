@@ -25,7 +25,7 @@ fn all_fixtures_load() {
             match res {
                 Ok(sess) => {
                     // Try to run with empty input (should not panic)
-                    let out = sess.run(HashMap::default());
+                    let out = sess.run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch);
                     match out {
                         Ok(_) => {
                             println!("OK {}", path.display());

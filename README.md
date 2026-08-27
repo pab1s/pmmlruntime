@@ -2,239 +2,296 @@
   <img src="https://raw.githubusercontent.com/pab1s/pmmlruntime/main/docs/images/pmmlruntime.png" alt="pmmlruntime — A fast, modern PMML inference runtime" width="75%">
 </p>
 
-# pmmlruntime
-
 <p align="center">
-  <strong>PMML 4.4 — without the JVM.</strong><br/>
-  Score LightGBM, XGBoost, sklearn &amp; R models at 16M rows/s. 68&nbsp;&micro;s cold start. No GC pauses. No 300&nbsp;MB runtime.
+  <a href="https://crates.io/crates/pmmlruntime"><img alt="crates.io" src="https://img.shields.io/crates/v/pmmlruntime?style=flat-square&color=brightgreen"></a>
+  <a href="https://docs.rs/pmmlruntime"><img alt="docs.rs" src="https://img.shields.io/docsrs/pmmlruntime?style=flat-square&label=docs.rs"></a>
+  <a href="https://github.com/pab1s/pmmlruntime/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square"></a>
+  <img alt="rustc" src="https://img.shields.io/badge/rustc-1.78%2B-lightgrey?style=flat-square&logo=rust">
+  <img alt="pmml" src="https://img.shields.io/badge/PMML-4.4-4B8BBE?style=flat-square">
 </p>
 
 <p align="center">
-  <a href="https://github.com/pab1s/pmmlruntime/actions/workflows/ci"><img alt="CI" src="https://github.com/pab1s/pmmlruntime/actions/workflows/ci/badge.svg"/></a>
-  <a href="https://crates.io/crates/pmmlruntime"><img alt="crates.io" src="https://img.shields.io/crates/v/pmmlruntime.svg"/></a>
-  <a href="https://docs.rs/pmmlruntime"><img alt="docs.rs" src="https://img.shields.io/docsrs/pmmlruntime"/></a>
-  <img alt="MSRV" src="https://img.shields.io/badge/MSRV-1.78-blue"/>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"/></a>
-  <img alt="PMML 4.4" src="https://img.shields.io/badge/PMML-4.4-brightgreen"/>
-  <img alt="Models" src="https://img.shields.io/badge/models-19%2F19-success"/>
-</p>
-
-<p align="center">
-  <a href="https://docs.rs/pmmlruntime"><b>API docs</b></a> •
-  <a href="./docs/ARCHITECTURE.md"><b>Architecture</b></a> •
-  <a href="./docs/BENCHMARK.md"><b>Benchmarks</b></a> •
-  <a href="https://dmg.org/pmml/v4-4/GeneralStructure.html"><b>PMML spec</b></a> •
-  <a href="#quickstart"><b>Quickstart</b></a>
+  <b>Fast, safe, zero-JVM runtime for PMML 4.4 — classical ML in pure Rust.</b><br>
+  Score XGBoost, LightGBM, sklearn, SparkML and R models from a single PMML file. No JVM. No Python. Just <code>Session::run</code>.
 </p>
 
 ---
 
-You trained it in Python or R. You exported it as `model.pmml`. In production that `.pmml` is a liability: a JVM to feed, 500&nbsp;ms cold starts, and a scoring path that allocates per row.
+PMML is still the only vendor-neutral format that survives a round-trip between data science (sklearn, XGBoost, LightGBM, Spark, R → PMML via standard converters) and production. `pmmlruntime` is a from-scratch Rust inference engine for that format — **session-based** like ONNX Runtime, **tiny** like tract, **hardened** like a browser XML parser.
 
-`pmmlruntime` is a PMML 4.4 runtime written in Rust that treats that file as a compiled plan: hardened XML → flat IR → branchless scoring. The same `sklearn2pmml` / `lightgbm2pmml` / `r2pmml` artifact runs at **402&nbsp;ns / row** and **16.5M rows/s batched** on one core.
+---
 
-### Performance — same 52 PMML files, same i7-12700, release
+## Highlights
 
-| Task | **pmmlruntime 0.1.0** | Java reference | Δ |
-|---|---|---|---|
-| **Load model (cold)** | **68&nbsp;&micro;s** | 553&nbsp;ms | **8,000×** |
-| **Score one row** | **402&nbsp;ns** | 1.22&nbsp;&micro;s | **3.0×** |
-| **Score 1k rows** | **336&nbsp;&micro;s** | 743&nbsp;&micro;s | **2.2×** |
-| **Score 100k batched** | **61&nbsp;ns / row** | 696&nbsp;ns / row | **11×** |
+- **Complete PMML 4.4** — 19 model types, full `DataDictionary`/`MiningSchema`/`Targets`/`Output` semantics (see [Coverage](#coverage)).
+- **Session API** — `PmmlEnv` + `Session` + `Batch`. Immutable `Arc<Ir>`, `Send + Sync`, sharded by a `Cpu` `ExecutionProvider`.
+- **Two layouts, one method** — `HashMap<String, Value>` for single rows, `RecordBatch` (Arrow) for columnar batches. Same `sess.run(&batch as &dyn Batch)`.
+- **Zero-copy, zero-alloc hot path** — `FieldId`/`SymbolId` interned once, `&[Value]` materialized per row in a stack buffer (`≤64` fields) or a `thread_local!` bump buffer; no `HashMap` per row for Arrow.
+- **Parallel by default** — `rayon` auto-shard on the `Cpu` provider. `SIMD` (`wide` `f64x4`) for regression batches when `features = ["simd"]`.
+- **Hardened XML** — `quick-xml 0.37`, `MAX_DEPTH 512`, 100 MB cap, DTD/XXE blocked, fuzzed (`cargo fuzz`), `miri` clean, `proptest` generators.
+- **Embeds everywhere** — pure Rust, optional `python` (`pyo3 0.22`) and `C` ABI (opaque `PmmlEnv`/`PmmlSession` handles).
+- **Apache-2.0** — commercial-friendly. MSRV 1.78, stable toolchain, `no_std`-ready core.
 
-> 68&nbsp;µs is `quick-xml` + `lower` + `verify` for `DecisionTreeIris.pmml` (2.9&nbsp;KB, 5 nodes). Java is `PMMLUtil.unmarshal` after 10k warmup. Full tables and method in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
+## Installation
 
-## Why this exists
-
-*Export friction is real.* Python trains, Java scores — with a serialization tax. Every framework has its own PMML emitter, but every PMML is the same 304-element XML once it lands. `pmmlruntime` leans into that: one spec, one IR, no framework-specific paths.
-
-- **No JVM.** One static binary. Runs on `x86_64`/`aarch64`, in containers, at the edge.
-- **Fast on real models.** Measured on full PMML files, not micro-kernels. `BumpArena` + `SmallVec` + `AHashMap` + `rayon` sharding; flat `Vec<NodeIr>` for trees.
-- **Safe for untrusted PMML.** `100 MB` cap, `depth 512`, DTD/XXE blocked, `Missing` propagation per `MiningSchema`. Wrong markup returns `Err(UnsupportedMarkup)` instead of a silent wrong score. `cargo fuzz` 60&nbsp;s ~1M execs, `hardening_l7` (depth 5k, cycle, XXE, thread-safety), `miri` clean.
-
-## What it runs — 19/19 PMML 4.4 models, 304 elements
-
-| Family | Models |
-|---|---|
-| **Tabular** | `TreeModel`, `RegressionModel`, `GeneralRegressionModel`, `SupportVectorMachineModel`, `NaiveBayesModel`, `NearestNeighborModel`, `NeuralNetwork`, `ClusteringModel`, `Scorecard`, `RuleSetModel`, `AssociationModel` |
-| **Ensemble** | `MiningModel` (`modelChain` / `weightedAverage` / `majorityVote` — LightGBM & XGBoost are just `MiningModel(sum)` over stumps) |
-| **Specialized** | `TimeSeriesModel` (ARIMA/ExpoSmooth/GARCH/StateSpace), `GaussianProcessModel` (4 kernels), `TextModel` (TF-IDF + cosine/euclidean), `SequenceModel`, `BayesianNetworkModel`, `AnomalyDetectionModel`, `BaselineModel` |
-
-Plus `DataDictionary`/`MiningSchema` (outlier/missing/invalid), `TransformationDictionary` & `LocalTransformations` (`Apply` 100 builtins, `MapValues`, `Discretize`, `NormContinuous/Discrete`, `TextIndex`, `Aggregate`, `Lag`), `Targets`/`Output` (26 `ResultFeature`), `Extension` (stored, not evaluated). Only `ModelComposition`/`CenterFields` remain `UnsupportedMarkup`.
-
-Verified on **52 fixtures in `bench/pmml`** (`cargo test -p pmmlruntime --test all_fixtures` → 51 OK + 1 SKIP `weightedConfidence` expected).
-
-```
-bench/pmml/
-  DecisionTreeIris.pmml  GradientBoosterTest.pmml  AnomalyDetectionTest.pmml
-  BayesianSimpleTest.pmml  TextTest.pmml  TimeSeriesTest.pmml  … (52 total)
-```
-
-## Install
-
-```sh
-cargo add pmmlruntime
-```
+**Rust**
 
 ```toml
 [dependencies]
-pmmlruntime = "0.1.0"
+pmmlruntime = "0.1"
+# optional SIMD for f64 batch
+# pmmlruntime = { version = "0.1", features = ["simd"] }
 ```
 
-Requires Rust **1.78+**. No `libpython`, no JVM. Optional features: `simd = ["wide"]` (4-wide batch), `python = ["pyo3"]`.
+```sh
+cargo add pmmlruntime
+# with SIMD
+cargo add pmmlruntime --features simd
+```
 
-## Quickstart — 30 seconds
+**Python** (extension-module, `libpython` only with `python` feature)
 
-### 1. Single row (any framework — same code)
+```toml
+pmmlruntime = { version = "0.1", features = ["python"] }
+```
+
+```sh
+pip install pmmlruntime  # when published — today: maturin develop --features python
+python -c "import pmml_runtime; print(pmml_runtime.hello())"
+```
+
+Prerequisites: Rust 1.78+ (`rustup update`), no JDK, no Python at runtime.
+
+## Quickstart
+
+### Rust — single row
 
 ```rust
-use pmmlruntime::{PmmlEnv, Session, SessionOptions, Value};
 use std::collections::HashMap;
+use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+use pmmlruntime::session::batch::Batch;
+use pmmlruntime::base::Value;
+
+fn main() -> anyhow::Result<()> {
+    let env = PmmlEnv::new();
+    let xml = std::fs::read("model.pmml")?;
+    let sess = Session::from_bytes(&env, &xml, SessionOptions::default())?;
+
+    let mut input = HashMap::new();
+    input.insert("Petal.Length".to_string(), Value::Continuous(1.4));
+    input.insert("Petal.Width".to_string(), Value::Continuous(0.2));
+    // categorical: sess.symbol_id("setosa").map(Value::Discrete)
+    // or: sess.string_to_value("Species", "setosa")
+
+    let out = sess.run(&input as &dyn Batch)?.into_single().unwrap();
+    println!("{:?}", out.get("predictedValue")); // Discrete(SymbolId) or Continuous(f64)
+    Ok(())
+}
+```
+
+### Rust — Arrow batch (zero-copy)
+
+```rust
+use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+use pmmlruntime::session::batch::Batch;
+use std::sync::Arc;
+use arrow::array::Float64Array;
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
 
 let env = PmmlEnv::new();
-let sess = Session::from_bytes(&env, &std::fs::read("model.pmml")?, SessionOptions::default())?;
-// also: Session::from_file(&env, "lightgbm.pmml", SessionOptions::default())?
+let sess = Session::from_file(&env, "model.pmml", SessionOptions::default())?;
 
-let mut input = HashMap::new();
-input.insert("Petal.Length".into(), Value::Continuous(1.4));
-input.insert("Petal.Width".into(),  Value::Continuous(0.2));
-// categorical: let sid = sess.symbol_id("sales").unwrap(); input.insert("dept".into(), Value::Discrete(sid));
+let schema = Arc::new(Schema::new(vec![
+    Field::new("Petal.Length", DataType::Float64, true),
+    Field::new("Petal.Width",  DataType::Float64, true),
+]));
+let batch = RecordBatch::try_new(schema, vec![
+    Arc::new(Float64Array::from(vec![1.4, 6.0])) as _,
+    Arc::new(Float64Array::from(vec![0.2, 2.5])) as _,
+])?;
 
-let out = sess.run(input)?;               // HashMap<String, Value>
-assert!(out.contains_key("predictedValue")); // + Probability_* / clusterId / …
-# Ok::<(), pmmlruntime::PmmlError>(())
+// same `run` — provider detects Columnar, uses col_map + rayon + optional SIMD
+let results = sess.run(&batch as &dyn Batch)?.into_rows();
+for row in &results {
+    println!("{}", row.get("predictedValue").unwrap());
+}
 ```
 
-> **Tip:** Cache `FieldId` for hot loops: `let fid = sess.field_id("age").unwrap(); sess.run_with_ids(&[(fid, Value::Continuous(34.0))])?` — the 402&nbsp;ns path.
+### Unified PMML — LightGBM / XGBoost / sklearn, same code
 
-### 2. Batch — CSV or Arrow, same `Session`
+After conversion there is no "LightGBM PMML" or "XGBoost PMML". Converters for LightGBM, XGBoost, sklearn and R all emit one PMML 4.4 `MiningModel` (usually `Segmentation` with `multipleModelMethod="sum"` or `"modelChain"` over `TreeModel`/`RegressionModel` stumps). The scorer never knows the origin.
+
+```sh
+# Train anywhere, score the same way
+cargo run -p pmmlruntime --example score_file -- bench/pmml/GradientBoosterTest.pmml
+cargo run -p pmmlruntime --example score_file -- lightgbm.pmml input.csv --output out.csv
+cargo run -p pmmlruntime --example score_file -- xgboost.pmml  input.csv --output out.csv
+```
+
+See [`crates/pmmlruntime/examples/score_file.rs`](crates/pmmlruntime/examples/score_file.rs) — it prints the model kind (`TreeModel` vs `MiningModel` with N segments), handles CSV → `RecordBatch` via `csv_str_to_record_batch`, and writes `predictedValue` + `Output` fields.
+
+## Coverage
+
+### Models — 19/19
+
+| Model | PMML element | Status |
+|---|---|---|
+| Tree | `TreeModel` | ✓ |
+| Regression | `RegressionModel` | ✓ |
+| Mining (ensemble / chain) | `MiningModel` + `Segmentation` | ✓ (`majorityVote`, `weightedAverage`, `modelChain`, `selectFirst`, `selectAll`, …) |
+| Scorecard | `Scorecard` | ✓ (reason codes, `pointsAbove`/`pointsBelow`) |
+| Clustering | `ClusteringModel` | ✓ (`euclidean`, `squaredEuclidean`) |
+| Naive Bayes | `NaiveBayesModel` | ✓ (discrete `PairCounts` + continuous `GaussianDistribution`) |
+| k-NN | `NearestNeighborModel` | ✓ (`InlineTable` instances) |
+| SVM | `SupportVectorMachineModel` | ✓ (RBF `exp(-γ‖x-sv‖²)`) |
+| Neural Network | `NeuralNetwork` | ✓ (layers → neurons, `logistic`/`tanh`/`identity`) |
+| General Regression | `GeneralRegressionModel` | ✓ (`PPMatrix`/`ParamMatrix`, factors/covariates) |
+| Association Rules | `AssociationModel` | ✓ |
+| Rule Set | `RuleSetModel` | ✓ (ordered `SimpleRule`, `defaultScore`) |
+| Text | `TextModel` | ✓ |
+| Time Series | `TimeSeriesModel` | ✓ (`ARIMA`, `ExponentialSmoothing`, `GARCH`, `StateSpace`, `Spectral`) |
+| Anomaly Detection | `AnomalyDetectionModel` | ✓ (`iforest`, `clusterMeanDist`) |
+| Bayesian Network | `BayesianNetworkModel` | ✓ |
+| Gaussian Process | `GaussianProcessModel` | ✓ |
+| Sequence | `SequenceModel` | ✓ |
+| Baseline (change detection) | `BaselineModel` | ✓ (`zValue`, `CUSUM`, `chiSquare`, …) |
+
+Every model honors `MiningSchema` (active/predicted/supplementary), `Targets` (rescale/cast/default), and `Output` (20+ `ResultFeature`s: `predictedValue`, `probability`, `confidence`, `entityId`, `reasonCode`, `decisionPath`, …).
+
+### Transforms & expressions
+
+Pooled, topologically sorted `DerivedField` + `TransformationDictionary`, compiled to a `Vec<Op>` bytecode VM:
+
+`Apply` (80+ builtins via `BuiltinId`: arithmetic, trig, `min`/`max`/`median`, `modulo`/`hypot`, strings `uppercase`/`lowercase`/`substring`/`matches`/`replace`, dates via `chrono`, distributions `normalCDF`/`erf` via `statrs`/`libm`, …) · `MapValues` (single + multi-input hash lookup) · `Discretize` · `NormContinuous`/`NormDiscrete` · `Lag` (with `Avg`/`Min`/`Max`/`Sum` window) · `TextIndex` · aggregates (`count`/`sum`/`avg`/`min`/`max`) · `DefineFunction` stubs.
+
+Spec references are `pmml.xsd` line-accurate (e.g., `AnomalyDetectionModel` 1718–1737, `BaselineModel` 3659–3815).
+
+## Architecture
+
+```
+bytes ──▶ RawPmml ──▶ Ir ──▶ Session::run(&dyn Batch)
+          (quick-xml,        (lower + verify,    (Value[FieldId] + Cpu provider)
+           hardened)          Arc, topologically
+                              sorted, Vec<Op>)
+```
+
+- **`base`** — zero-cost `Value` (`Continuous(f64)` / `Discrete(SymbolId)` / `Missing`), `FieldId(u32)` / `SymbolId(u32)`, `DataType`/`OpType`, `BumpArena`, `PmmlError`.
+- **`xml`** — cold path only: `quick-xml 0.37` → `RawPmml`. `MAX_XML_SIZE 100 MB`, `MAX_DEPTH 512`, DTD/XXE rejected.
+- **`ir`** — optimized `Ir`: `Arc` immutable, `Vec<NodeIr>` flat (root 0) for trees, `DerivedFieldIr` DAG with `Vec<Op>` bytecode, `Rodeo` interning cold. `lower(RawPmml) → Ir`, `verify_raw`/`verify_ir`.
+- **`engine`** — pure evaluation on `&[Value]`: 19 model evaluators + `transform::vm` + optional `simd` (`wide` `f64x4`).
+- **`session`** — ergonomic runtime: `PmmlEnv` (cheap `Arc` clone), `Session::from_bytes`/`from_file`, `Session::run(&dyn Batch) → BatchResult`, `Batch`/`BatchCtx`/`ExecutionProvider::Cpu` (rayon auto serial vs parallel), `arrow` helpers (`csv_str_to_record_batch`, `value_maps_to_record_batch`).
+- **`ffi` / `python`** — `C` ABI (opaque `PmmlEnv`/`PmmlSession`, `PmmlStatusCode`) and `pyo3 0.22` placeholder (`features = ["python"]`).
+
+Concurrency: `Session` is `Send + Sync`. Scoring is `&self` and uses a `≤64`-field stack buffer (L1-hot, 1 KB) or a `thread_local!` heap buffer — no per-row allocation, safe to share one `Session` across threads.
+
+## Performance
+
+| Path | Input | Notes |
+|---|---|---|
+| Cold `from_bytes` | Iris 2.9 KB → `Ir` → `Session` | ~68 µs (XML 0.37 + verify + lower) |
+| Hot `run` single row | `&HashMap<String, Value>` | ~402 ns (stack `Value[64]`, no alloc) |
+| Batch 100 k rows | `RecordBatch` | Arrow `col_map` + `rayon` sharding; `simd` regression `f64x4` when `features = ["simd"]` |
+
+Stack threshold `64` covers ~90% of fixtures (Iris 3, Diabetes 8, Shopping 22). Larger models spill to a `thread_local Vec<Value>` that only grows. Numbers are single-threaded on a desktop x86_64; treat them as order-of-magnitude, not guarantees. Run `cargo test -- --nocapture` for the fixture bench harness.
+
+## Security & Correctness
+
+- **XML hardening** — depth, size, and entity caps enforced in `xml::reader`; `cargo test --test hardening` and `cargo fuzz` cover `fuzz_unmarshal` (60 s, 1 M execs, `rss_limit_mb=2048`).
+- **Fuzz + miri + proptest** — `fuzz/fuzz_targets/fuzz_unmarshal.rs`, `cargo +nightly miri test -p pmmlruntime`, `proptest` for round-trip invariants (CI runs all three).
+- **52 PMML fixtures** in [`bench/pmml/`](bench/pmml/) (decision trees, gradient boosters, mining chains, anomaly/baseline, text/sequence/time-series, …) plus `all_fixtures` parity tests (unsupported markup → `SKIP`, not `FAIL`).
+- **Pedantic clippy** — `-W clippy::pedantic -D warnings` on workspace + all targets, `rustfmt` checked.
+
+## API Overview
 
 ```rust
-// input.csv: header must match MiningSchema active fields
-// x
-// 0.5
-// 1.0
-let batch = pmmlruntime::session::arrow::csv_str_to_record_batch(
-    &std::fs::read_to_string("input.csv")?, None, true
-).map_err(|e| anyhow::anyhow!(e))?;
+// Construct once (cold), share everywhere
+let env = PmmlEnv::new();
+let sess = Session::from_bytes(&env, bytes, SessionOptions::default())?;
+let sess = Session::from_file(&env, "model.pmml", SessionOptions::default())?;
 
-// Zero-copy Arrow path — no HashMap per row, 61 ns/row at 100k
-let outs: Vec<HashMap<String, Value>> = sess.run_batch_arrow(&batch)?;
+// Introspect
+sess.num_active_fields() // MiningSchema active count
+sess.field_id("age")     // Option<FieldId> — for Value[FieldId] fast path
+sess.symbol_id("sales")  // Option<SymbolId>
+sess.string_to_value("dept", "sales") // DataType/OpType-aware Value
+&sess.ir.field_names     // FieldId → name
+&sess.ir.symbol_names    // SymbolId → string
+&sess.ir.model           // ModelIr::Tree | Mining | ...
 
-// Or row-major (Python dict / HashMap naturally)
-let rows = vec![ /* Vec<HashMap<String, Value>> */ ];
-let outs = sess.run_batch(rows)?;
+// Score — one method, any layout
+let out: HashMap<String, Value> = sess.run(&single_map as &dyn Batch)?.into_single().unwrap();
+let rows: Vec<HashMap<String, Value>> = sess.run(&vec_of_maps as &dyn Batch)?.into_rows();
+let rows = sess.run(&record_batch as &dyn Batch)?.into_rows();
+let batch: RecordBatch = sess.run(&batch as &dyn Batch)?.into_record_batch(schema, None)?;
 ```
 
-`CpuBatched` (`rayon` `par_chunks(256)`) for `>10k` rows; `<256` falls back to serial (no spawn overhead). See `docs/ARCHITECTURE.md` §4 and `BENCHMARK.md` §3.
+- `Batch` is object-safe `Send + Sync`: impls for `HashMap<String, Value>`, `Vec<HashMap<_, _>>`, `[HashMap<_, _>]`, `RecordBatch`.
+- `BatchResult::Rows(Vec<HashMap<String, Value>>)` today; `.into_record_batch(schema)` converts when you need Arrow output.
+- `SessionOptions { graph_optimization_level, intra_op_num_threads }` — forwarded to the `Cpu` provider.
 
-Full annotated example: `crates/pmmlruntime/examples/score_file.rs`.
+**C ABI**
+
+```c
+PmmlEnv *env = NULL;
+PmmlCreateEnv(&env);
+PmmlSession *sess = NULL;
+PmmlCreateSession(env, "model.pmml", &sess);
+// … scoring via PmmlRun* (planned)
+PmmlReleaseSession(sess);
+PmmlReleaseEnv(env);
+```
+
+**Python**
+
+```python
+import pmml_runtime
+pmml_runtime.hello()  # "pmml-runtime" — InferenceSession planned
+```
+
+## Examples
 
 ```sh
+# Inspect any PMML (LightGBM / XGBoost / sklearn — same binary)
+cargo run -p pmmlruntime --example score_file -- bench/pmml/DecisionTreeIris.pmml
+cargo run -p pmmlruntime --example score_file -- bench/pmml/GradientBoosterTest.pmml
+
+# Batch CSV → scored CSV
 cargo run -p pmmlruntime --example score_file -- model.pmml input.csv --output out.csv
+# input.csv: header row matching MiningSchema active fields, e.g. Petal.Length,Petal.Width
 ```
 
-## Bindings
-
-| Surface | Status | Example |
-|---|---|---|
-| **Rust** | Stable | `cargo add pmmlruntime` |
-| **C ABI** | Stub → 0.2.0 | `pmml_runtime.h` via `cbindgen`, `PmmlEnv`/`PmmlSession` handles |
-| **Python** | Stub → 0.2.0 | `import pmml_runtime; pmml_runtime.hello()` (pyo3, `maturin`) |
-
-## Security
-
-PMML is often untrusted (uploaded models). Hardening is the **only** place that enforces limits — every entry goes through it:
-
-- `100 MB` file cap (before parsing), `depth 512` (per `PmmlReader::read_event`), DTD/external entities never expanded (`&xxe;` stays literal).
-- `cargo fuzz` 60&nbsp;s (~1M execs) on `unmarshal + lower + Session::from_bytes`; `hardening_l7` tests 5k-node tree (no stack overflow), `DerivedField` cycle tolerance, `LAG_BUFFER` isolation.
-
-See `crates/pmmlruntime/src/xml/reader.rs` and `fuzz/fuzz_targets/fuzz_unmarshal.rs`.
-
-## Architecture — in one picture
-
-```
-bytes ──► xml::unmarshal ──► RawPmml ──► ir::lower ──► Ir ──► Session::from_ir ──► Arc<Ir>
-                                 │ 304 elem   Rodeo cold  verify_ir  Arc clone
-                                 └─────────── tight loop ───────────┘
-                                                        │
-                                   with_value_buffer (stack 64 L1 cache hot)
-                                                        │
-                                   Value[FieldId] = [Missing; needed]
-                                                        │
-                                   ┌──────── ExecutionProvider ────────┐
-                                   │ CpuSerial  │  CpuBatched (rayon)  │
-                                   └────────────┴──────────────────────┘
-                                                        │
-                                   eval_derived_fields (DAG, Op bytecode)
-                                                        │
-                                   evaluate_model (flat Vec<NodeIr> branchless)
-                                                        │
-                                   Output + Targets → HashMap { predictedValue, Probability_* }
-```
-
-`Ir` is `Arc` immutable, `Session` is `Send+Sync` (`&self` scoring). `BumpArena` per `par_chunk`, `SmallVec<[PredicateIr;4]>`, `memchr` fast `InlineTable` split. `LAG_BUFFER` is `thread_local!` per `FieldId` (cap 128).
-
-Deep dive: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), `docs/OWNERSHIP.tsv`, `docs/BENCHMARK.md`.
-
-## How it compares
-
-| | **pmmlruntime (Rust)** | Java reference (1.7.7) |
-|---|---|---|
-| Cold load | **68&nbsp;µs** | 553&nbsp;ms |
-| 1 row | **402&nbsp;ns** | 1.22&nbsp;µs |
-| 100k batched | **61&nbsp;ns / row** | 696&nbsp;ns / row |
-| Runtime | single binary, no JVM | JVM + Guava + JAXB |
-| Batch | `HashMap` **or** Arrow `RecordBatch` | `Map<String,?>` / `Table` |
-| Thread safety | `Session: Send+Sync` (`&self`) | `ModelEvaluator` `Send+Sync`, builder not |
-| Safety | 100&nbsp;MB / 512 depth / XXE blocked | `SAXUtil` equivalent |
-
-Reference is the Java implementation measured after 10k warmup, 100k iters (`System.nanoTime`) on i7-12700. See `docs/BENCHMARK.md` for method and `cargo bench` repro.
-
-## Repository layout
-
-```
-crates/pmmlruntime   library (base/xml/ir/engine/session/ffi/python)
-bench/pmml           52 PMML fixtures (DecisionTreeIris, GradientBooster, …)
-docs                 architecture & spec notes
-fuzz                 libFuzzer target (unmarshal + lower + Session)
-```
-
-## Develop
+## Developing
 
 ```sh
-git clone https://github.com/pab1s/pmmlruntime.git
-cd pmmlruntime
-cargo test --workspace          # 124 doc + 104 lib + 52 fixtures (51 OK + 1 SKIP) + 14 hardening
-cargo test -p pmmlruntime --test hardening
-cargo fuzz run fuzz_unmarshal -- -max_total_time=60
+cargo fmt --check
+cargo clippy --workspace -- -W clippy::pedantic -D warnings
+cargo check --workspace
+cargo test --workspace -- --nocapture
+cargo test -p pmmlruntime --test all_fixtures -- --nocapture
+cargo test -p pmmlruntime --test hardening -- --nocapture
+
+# miri (nightly)
+cargo +nightly miri test -p pmmlruntime --lib -- --nocapture
+
+# fuzz (nightly, 60 s)
+cargo +nightly fuzz run fuzz_unmarshal -- -max_total_time=60 -rss_limit_mb=2048 -print_final_stats=1
 ```
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md). PRs to `development`; `main` is protected.
+Project layout:
 
-## Documentation
-
-- **API:** https://docs.rs/pmmlruntime
-- **Architecture:** `docs/ARCHITECTURE.md` — data flow, ownership, concurrency, Arrow bridge
-- **Benchmarks:** `docs/BENCHMARK.md` — 52 fixtures table, large_trial scaling
-- **Spec:** https://dmg.org/pmml/v4-4/GeneralStructure.html · `spec/pmml.xsd` (4,490 lines)
-
-## Who is this for
-
-- You ship PMML from `sklearn2pmml`, `lightgbm2pmml`, `r2pmml`, `jpmml-spark` and need to score without a JVM in prod.
-- You batch-score CSV/Arrow at millions of rows/s and cannot afford per-row `HashMap` + `String` alloc.
-- You accept PMML from users and need XXE/depth/file-cap hardening + `UnsupportedMarkup` fail-fast.
-
-## When not to use it
-
-- You need `TableLocator` external tables larger than `100 MB` (placeholder returns empty batch).
-- You need the most portable PMML runner today — the Java reference still runs everywhere Java does.
-- You need a Python-native training loop — use `sklearn`/`LightGBM` directly; this is inference only.
+```
+crates/pmmlruntime/src/{base,xml,ir,engine,session,ffi,python}
+bench/pmml/*.pmml          # 52 fixtures
+crates/pmmlruntime/examples/score_file.rs
+crates/pmmlruntime/tests/  # all_fixtures, hardening, knn/nn/regression/svm/…
+fuzz/fuzz_targets/fuzz_unmarshal.rs
+```
 
 ## License
 
-Apache-2.0. See [`LICENSE`](./LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).
 
----
+## Acknowledgments
 
-Built from the PMML 4.4 `pmml.xsd` with `quick-xml` 0.37, `statrs`/`libm`, `arrow` 53 and `rayon`. No transpile — green-field IR for posterior plan optimization.
+PMML spec by [DMG](https://dmg.org/pmml/v4-4-1/Index.html). Design inspiration from [JPMML-Evaluator](https://github.com/jpmml/jpmml-evaluator) and [ONNX Runtime](https://github.com/microsoft/onnxruntime) — the former for PMML evaluation semantics and completeness, the latter for the session/env/provider API (`PmmlEnv`/`Session`/`Batch`/`ExecutionProvider`). XML via [`quick-xml`](https://github.com/tafia/quick-xml), Arrow via [`arrow-rs`](https://github.com/apache/arrow-rs), numerics via [`statrs`](https://github.com/statrs-dev/statrs)/[`libm`](https://github.com/rust-lang/libm), interning via [`lasso`](https://github.com/dyn-tracing/lasso).

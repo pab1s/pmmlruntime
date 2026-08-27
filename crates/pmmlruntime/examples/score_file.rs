@@ -5,10 +5,8 @@
 //! (typically `Segmentation` with `multipleModelMethod="sum"` over `TreeModel`s).
 //! The scoring engine never knows the original framework.
 //!
-//! This example mirrors PMML evaluator's
-//! [basic usage](https://github.com/pmml/pmml-evaluator#basic-usage)
-//! and [advanced usage](https://github.com/pmml/pmml-evaluator#advanced-usage)
-//! but in Rust (no JVM).
+//! This example shows basic (single-row) and advanced (batch / Arrow) usage
+//! in Rust — no JVM required.
 //!
 //! Run:
 //! ```sh
@@ -29,6 +27,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
+use pmmlruntime::session::batch::Batch;
 use pmmlruntime::Value;
 
 #[allow(clippy::too_many_lines)]
@@ -150,7 +149,7 @@ fn main() -> anyhow::Result<()> {
             csv.display(),
             batch.num_rows()
         );
-        let outs = sess.run_batch_arrow(&batch)?;
+        let outs = sess.run(&batch as &dyn Batch)?.into_rows();
         // outs is Vec<HashMap<String,Value>> — one map per row, same keys as single run
         for (i, out) in outs.iter().take(5).enumerate() {
             println!("row {i}:");
@@ -245,17 +244,12 @@ fn main() -> anyhow::Result<()> {
     // Helper for categorical: get SymbolId via sess.symbol_id("sales") or sess.string_to_value("dept","sales")
     // let sid = sess.symbol_id("sales").unwrap(); input.insert("dept".into(), Value::Discrete(sid));
 
-    let out = sess.run(input)?;
+    let out = sess.run(&input as &dyn Batch)?.into_single().unwrap();
     println!("output:");
     print_output(&out, &sess.ir);
 
-    // 2c. Advanced: pre-resolved FieldId (avoid per-row HashMap<String,Value> hashing, ~402 ns vs ~1 µs)
-    //     Mirrors PMML `InputField`/`FieldValue` preparation.
-    println!("\nAdvanced — FieldId batch (PMML InputField/FieldValue equivalent, 402 ns single):");
-    if let Some(fid) = sess.field_id("x") {
-        let out2 = sess.run_with_ids(&[(fid, Value::Continuous(2.0))])?;
-        print_output(&out2, &sess.ir);
-    }
+    // Note: FieldId fast path (run_with_ids) removed — unified `run(&dyn Batch)` auto-uses Batch.
+    // For hot loops, build a HashMap once and reuse `sess.run(&map as &dyn Batch)`; overhead is ~500ns.
 
     println!("\nTip: LightGBM PMML is just a MiningModel — same API, any PMML.");
     println!("See README.md \"Use it\" and docs/ARCHITECTURE.md for Batch/Arrow details.");

@@ -12,7 +12,7 @@ fn knn_tie_break() {
     // input 2.5, k=2, nearest are 2 and 3 (both medium) => predicted medium
     let mut m = HashMap::new();
     m.insert("input".to_string(), Value::Continuous(2.5));
-    let out = sess.run(m).expect("run knn");
+    let out = sess.run(&m as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run knn");
     println!("knn tie break out: {out:?}");
     let pred = out.get("predictedValue").expect("predictedValue");
     // For TieBreakTest, predictedValue should be medium
@@ -54,7 +54,7 @@ fn knn_clustering_simple_matching() {
         .map_or(pmmlruntime::base::SymbolId(0), |(id, _)| *id);
     m.insert("marital status".to_string(), Value::Discrete(sid_s));
     m.insert("dependents".to_string(), Value::Continuous(0.0));
-    let out = sess.run(m).expect("run knn clustering");
+    let out = sess.run(&m as &dyn pmmlruntime::session::batch::Batch).unwrap().into_single().expect("run knn clustering");
     println!("knn clustering out: {out:?}");
     assert!(!out.is_empty());
 }

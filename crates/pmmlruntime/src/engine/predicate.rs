@@ -14,7 +14,7 @@
 //!
 //! # Relationship to other modules
 //!
-//! `pmml-evaluator::models::tree` traverses `Vec<NodeIr>` and tests each child's
+//! `engine::models::tree` traverses `Vec<NodeIr>` and tests each child's
 //! [`PredicateIr`] via [`eval_predicate`]; `models::mining` tests segment
 //! predicates; `models::scorecard` and `models::rule_set` contain duplicated
 //! copies for bootstrapping and are migrating to this shared helper.

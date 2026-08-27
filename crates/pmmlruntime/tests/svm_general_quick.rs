@@ -15,7 +15,7 @@ fn general_regression_load() {
                 sess.num_active_fields()
             );
             // Try to run with dummy values
-            let out = sess.run(HashMap::default());
+            let out = sess.run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch);
             println!("general regression run: {out:?}");
             assert!(out.is_ok() || out.is_err());
         }
@@ -36,7 +36,7 @@ fn svm_load() {
     match res {
         Ok(sess) => {
             println!("svm load ok, active {}", sess.num_active_fields());
-            let out = sess.run(HashMap::default());
+            let out = sess.run(&HashMap::default() as &dyn pmmlruntime::session::batch::Batch);
             println!("svm run: {out:?}");
         }
         Err(e) => println!("svm load error: {e}"),
