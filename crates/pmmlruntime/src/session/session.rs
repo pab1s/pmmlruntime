@@ -570,7 +570,7 @@ impl Session {
         self.provider.eval_batch(&self.ir, batch, &ctx)
     }
 
-    /// Resolve a field name to its stable [`FieldId`] for zero-copy [`run_with_ids`](Self::run_with_ids).
+    /// Resolve a field name to its stable [`FieldId`] for use with [`run`](Self::run).
     ///
     /// # Parameters
     ///
