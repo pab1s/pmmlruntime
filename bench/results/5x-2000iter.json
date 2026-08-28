@@ -1,0 +1,931 @@
+{
+  "DecisionTreeIris.pmml": {
+    "rust": [
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 56101,
+            "per_row_ns": 561,
+            "size": 100,
+            "throughput_rows_s": 1782472
+          },
+          {
+            "batch_mean_ns": 459749,
+            "per_row_ns": 459,
+            "size": 1000,
+            "throughput_rows_s": 2175097
+          },
+          {
+            "batch_mean_ns": 3983269,
+            "per_row_ns": 398,
+            "size": 10000,
+            "throughput_rows_s": 2510500
+          }
+        ],
+        "cold_max_ns": 230759,
+        "cold_mean_ns": 67401,
+        "cold_median_ns": 57360,
+        "cold_min_ns": 52891,
+        "cold_std_ns": 37766,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 384,
+        "hot_single_std_ns": 86,
+        "hot_single_total_ns": 767186,
+        "model": "DecisionTreeIris.pmml",
+        "size_kb": 2.8466796875
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 58824,
+            "per_row_ns": 588,
+            "size": 100,
+            "throughput_rows_s": 1699964
+          },
+          {
+            "batch_mean_ns": 482340,
+            "per_row_ns": 482,
+            "size": 1000,
+            "throughput_rows_s": 2073223
+          },
+          {
+            "batch_mean_ns": 4031670,
+            "per_row_ns": 403,
+            "size": 10000,
+            "throughput_rows_s": 2480361
+          }
+        ],
+        "cold_max_ns": 200246,
+        "cold_mean_ns": 48279,
+        "cold_median_ns": 39043,
+        "cold_min_ns": 36804,
+        "cold_std_ns": 35190,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 427,
+        "hot_single_std_ns": 47,
+        "hot_single_total_ns": 854742,
+        "model": "DecisionTreeIris.pmml",
+        "size_kb": 2.8466796875
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 60812,
+            "per_row_ns": 608,
+            "size": 100,
+            "throughput_rows_s": 1644403
+          },
+          {
+            "batch_mean_ns": 512643,
+            "per_row_ns": 512,
+            "size": 1000,
+            "throughput_rows_s": 1950673
+          },
+          {
+            "batch_mean_ns": 4268949,
+            "per_row_ns": 426,
+            "size": 10000,
+            "throughput_rows_s": 2342496
+          }
+        ],
+        "cold_max_ns": 247017,
+        "cold_mean_ns": 73162,
+        "cold_median_ns": 62160,
+        "cold_min_ns": 58021,
+        "cold_std_ns": 40452,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 452,
+        "hot_single_std_ns": 55,
+        "hot_single_total_ns": 904203,
+        "model": "DecisionTreeIris.pmml",
+        "size_kb": 2.8466796875
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 59231,
+            "per_row_ns": 592,
+            "size": 100,
+            "throughput_rows_s": 1688302
+          },
+          {
+            "batch_mean_ns": 471353,
+            "per_row_ns": 471,
+            "size": 1000,
+            "throughput_rows_s": 2121549
+          },
+          {
+            "batch_mean_ns": 4945520,
+            "per_row_ns": 494,
+            "size": 10000,
+            "throughput_rows_s": 2022031
+          }
+        ],
+        "cold_max_ns": 242096,
+        "cold_mean_ns": 69183,
+        "cold_median_ns": 58941,
+        "cold_min_ns": 55676,
+        "cold_std_ns": 39911,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 611,
+        "hot_single_std_ns": 88,
+        "hot_single_total_ns": 1222313,
+        "model": "DecisionTreeIris.pmml",
+        "size_kb": 2.8466796875
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 60958,
+            "per_row_ns": 609,
+            "size": 100,
+            "throughput_rows_s": 1640473
+          },
+          {
+            "batch_mean_ns": 490481,
+            "per_row_ns": 490,
+            "size": 1000,
+            "throughput_rows_s": 2038812
+          },
+          {
+            "batch_mean_ns": 4193282,
+            "per_row_ns": 419,
+            "size": 10000,
+            "throughput_rows_s": 2384766
+          }
+        ],
+        "cold_max_ns": 250591,
+        "cold_mean_ns": 60841,
+        "cold_median_ns": 40914,
+        "cold_min_ns": 38557,
+        "cold_std_ns": 46848,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 440,
+        "hot_single_std_ns": 43,
+        "hot_single_total_ns": 879271,
+        "model": "DecisionTreeIris.pmml",
+        "size_kb": 2.8466796875
+      }
+    ],
+    "jpmml_interpreted": [
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 8365072,
+        "cold_mean_ns": 54479031,
+        "cold_std_ns": 199492926,
+        "hot_single_mean_ns": 4572,
+        "hot_single_std_ns": 7114,
+        "hot_single_total_ns": 9145359,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 9101952,
+        "cold_mean_ns": 56350485,
+        "cold_std_ns": 206729321,
+        "hot_single_mean_ns": 4470,
+        "hot_single_std_ns": 1392,
+        "hot_single_total_ns": 8941546,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 7729419,
+        "cold_mean_ns": 57526251,
+        "cold_std_ns": 212006487,
+        "hot_single_mean_ns": 4461,
+        "hot_single_std_ns": 1310,
+        "hot_single_total_ns": 8922086,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 8867012,
+        "cold_mean_ns": 54368828,
+        "cold_std_ns": 197036068,
+        "hot_single_mean_ns": 4773,
+        "hot_single_std_ns": 1971,
+        "hot_single_total_ns": 9546298,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 9723178,
+        "cold_mean_ns": 57629635,
+        "cold_std_ns": 207589317,
+        "hot_single_mean_ns": 4534,
+        "hot_single_std_ns": 1433,
+        "hot_single_total_ns": 9068148,
+        "hot_single_iters": 2000
+      }
+    ],
+    "jpmml_transpiled": [
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 169084817,
+        "cold_mean_ns": 268646343,
+        "cold_std_ns": 395221556,
+        "hot_single_mean_ns": 4655,
+        "hot_single_std_ns": 1853,
+        "hot_single_total_ns": 9311256,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 151836322,
+        "cold_mean_ns": 275046032,
+        "cold_std_ns": 427661413,
+        "hot_single_mean_ns": 4014,
+        "hot_single_std_ns": 1100,
+        "hot_single_total_ns": 8028688,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 140282815,
+        "cold_mean_ns": 262426270,
+        "cold_std_ns": 406350055,
+        "hot_single_mean_ns": 7136,
+        "hot_single_std_ns": 4544,
+        "hot_single_total_ns": 14272345,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 132606286,
+        "cold_mean_ns": 267030197,
+        "cold_std_ns": 418623916,
+        "hot_single_mean_ns": 5642,
+        "hot_single_std_ns": 1842,
+        "hot_single_total_ns": 11284441,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "DecisionTreeIris.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.85,
+        "active_fields": 2,
+        "cold_median_ns": 147130406,
+        "cold_mean_ns": 275028681,
+        "cold_std_ns": 449313420,
+        "hot_single_mean_ns": 5636,
+        "hot_single_std_ns": 9105,
+        "hot_single_total_ns": 11272420,
+        "hot_single_iters": 2000
+      }
+    ]
+  },
+  "GradientBoosterTest.pmml": {
+    "rust": [
+      {
+        "active_fields": 1,
+        "batches": [
+          {
+            "batch_mean_ns": 35613,
+            "per_row_ns": 356,
+            "size": 100,
+            "throughput_rows_s": 2807925
+          },
+          {
+            "batch_mean_ns": 271095,
+            "per_row_ns": 271,
+            "size": 1000,
+            "throughput_rows_s": 3688739
+          },
+          {
+            "batch_mean_ns": 2724460,
+            "per_row_ns": 272,
+            "size": 10000,
+            "throughput_rows_s": 3670452
+          }
+        ],
+        "cold_max_ns": 260508,
+        "cold_mean_ns": 66116,
+        "cold_median_ns": 54101,
+        "cold_min_ns": 52103,
+        "cold_std_ns": 44799,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 357,
+        "hot_single_std_ns": 376,
+        "hot_single_total_ns": 713616,
+        "model": "GradientBoosterTest.pmml",
+        "size_kb": 2.587890625
+      },
+      {
+        "active_fields": 1,
+        "batches": [
+          {
+            "batch_mean_ns": 37675,
+            "per_row_ns": 376,
+            "size": 100,
+            "throughput_rows_s": 2654245
+          },
+          {
+            "batch_mean_ns": 298235,
+            "per_row_ns": 298,
+            "size": 1000,
+            "throughput_rows_s": 3353058
+          },
+          {
+            "batch_mean_ns": 2982421,
+            "per_row_ns": 298,
+            "size": 10000,
+            "throughput_rows_s": 3352980
+          }
+        ],
+        "cold_max_ns": 258224,
+        "cold_mean_ns": 61536,
+        "cold_median_ns": 39894,
+        "cold_min_ns": 35123,
+        "cold_std_ns": 54068,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 375,
+        "hot_single_std_ns": 64,
+        "hot_single_total_ns": 749903,
+        "model": "GradientBoosterTest.pmml",
+        "size_kb": 2.587890625
+      },
+      {
+        "active_fields": 1,
+        "batches": [
+          {
+            "batch_mean_ns": 40150,
+            "per_row_ns": 401,
+            "size": 100,
+            "throughput_rows_s": 2490629
+          },
+          {
+            "batch_mean_ns": 337784,
+            "per_row_ns": 337,
+            "size": 1000,
+            "throughput_rows_s": 2960468
+          },
+          {
+            "batch_mean_ns": 3198963,
+            "per_row_ns": 319,
+            "size": 10000,
+            "throughput_rows_s": 3126012
+          }
+        ],
+        "cold_max_ns": 266909,
+        "cold_mean_ns": 71597,
+        "cold_median_ns": 59760,
+        "cold_min_ns": 57616,
+        "cold_std_ns": 45051,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 575,
+        "hot_single_std_ns": 99,
+        "hot_single_total_ns": 1149524,
+        "model": "GradientBoosterTest.pmml",
+        "size_kb": 2.587890625
+      },
+      {
+        "active_fields": 1,
+        "batches": [
+          {
+            "batch_mean_ns": 35335,
+            "per_row_ns": 353,
+            "size": 100,
+            "throughput_rows_s": 2829977
+          },
+          {
+            "batch_mean_ns": 275721,
+            "per_row_ns": 275,
+            "size": 1000,
+            "throughput_rows_s": 3626852
+          },
+          {
+            "batch_mean_ns": 2696361,
+            "per_row_ns": 269,
+            "size": 10000,
+            "throughput_rows_s": 3708701
+          }
+        ],
+        "cold_max_ns": 270154,
+        "cold_mean_ns": 67025,
+        "cold_median_ns": 54469,
+        "cold_min_ns": 51744,
+        "cold_std_ns": 46882,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 513,
+        "hot_single_std_ns": 113,
+        "hot_single_total_ns": 1025539,
+        "model": "GradientBoosterTest.pmml",
+        "size_kb": 2.587890625
+      },
+      {
+        "active_fields": 1,
+        "batches": [
+          {
+            "batch_mean_ns": 38211,
+            "per_row_ns": 382,
+            "size": 100,
+            "throughput_rows_s": 2617020
+          },
+          {
+            "batch_mean_ns": 305088,
+            "per_row_ns": 305,
+            "size": 1000,
+            "throughput_rows_s": 3277735
+          },
+          {
+            "batch_mean_ns": 3067673,
+            "per_row_ns": 306,
+            "size": 10000,
+            "throughput_rows_s": 3259798
+          }
+        ],
+        "cold_max_ns": 254964,
+        "cold_mean_ns": 68538,
+        "cold_median_ns": 49004,
+        "cold_min_ns": 37910,
+        "cold_std_ns": 58345,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 370,
+        "hot_single_std_ns": 36,
+        "hot_single_total_ns": 740970,
+        "model": "GradientBoosterTest.pmml",
+        "size_kb": 2.587890625
+      }
+    ],
+    "jpmml_interpreted": [
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 9164112,
+        "cold_mean_ns": 55969571,
+        "cold_std_ns": 201825308,
+        "hot_single_mean_ns": 10673,
+        "hot_single_std_ns": 7754,
+        "hot_single_total_ns": 21347053,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 9470238,
+        "cold_mean_ns": 60564460,
+        "cold_std_ns": 222189904,
+        "hot_single_mean_ns": 13070,
+        "hot_single_std_ns": 8155,
+        "hot_single_total_ns": 26140741,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 11855327,
+        "cold_mean_ns": 64260298,
+        "cold_std_ns": 231389618,
+        "hot_single_mean_ns": 12318,
+        "hot_single_std_ns": 8619,
+        "hot_single_total_ns": 24636838,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 10675595,
+        "cold_mean_ns": 56658503,
+        "cold_std_ns": 205279029,
+        "hot_single_mean_ns": 12314,
+        "hot_single_std_ns": 7572,
+        "hot_single_total_ns": 24628677,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 10213555,
+        "cold_mean_ns": 62767832,
+        "cold_std_ns": 228627206,
+        "hot_single_mean_ns": 12959,
+        "hot_single_std_ns": 4029,
+        "hot_single_total_ns": 25918581,
+        "hot_single_iters": 2000
+      }
+    ],
+    "jpmml_transpiled": [
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 19191218,
+        "cold_mean_ns": 67189563,
+        "cold_std_ns": 207267268,
+        "hot_single_mean_ns": 13095,
+        "hot_single_std_ns": 88925,
+        "hot_single_total_ns": 26190802,
+        "hot_single_iters": 2000,
+        "_fallback": true
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 21876493,
+        "cold_mean_ns": 74180964,
+        "cold_std_ns": 226265961,
+        "hot_single_mean_ns": 16558,
+        "hot_single_std_ns": 97218,
+        "hot_single_total_ns": 33116965,
+        "hot_single_iters": 2000,
+        "_fallback": true
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 25070248,
+        "cold_mean_ns": 80560250,
+        "cold_std_ns": 248860967,
+        "hot_single_mean_ns": 13697,
+        "hot_single_std_ns": 115785,
+        "hot_single_total_ns": 27394195,
+        "hot_single_iters": 2000,
+        "_fallback": true
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 18340403,
+        "cold_mean_ns": 68092673,
+        "cold_std_ns": 210811896,
+        "hot_single_mean_ns": 12045,
+        "hot_single_std_ns": 84571,
+        "hot_single_total_ns": 24090269,
+        "hot_single_iters": 2000,
+        "_fallback": true
+      },
+      {
+        "model": "GradientBoosterTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.59,
+        "active_fields": 1,
+        "cold_median_ns": 22655106,
+        "cold_mean_ns": 74738806,
+        "cold_std_ns": 228360097,
+        "hot_single_mean_ns": 20739,
+        "hot_single_std_ns": 112102,
+        "hot_single_total_ns": 41478180,
+        "hot_single_iters": 2000,
+        "_fallback": true
+      }
+    ]
+  },
+  "AlternateBinaryTargetCategoryTest.pmml": {
+    "rust": [
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 65465,
+            "per_row_ns": 654,
+            "size": 100,
+            "throughput_rows_s": 1527529
+          },
+          {
+            "batch_mean_ns": 455047,
+            "per_row_ns": 455,
+            "size": 1000,
+            "throughput_rows_s": 2197573
+          },
+          {
+            "batch_mean_ns": 3965651,
+            "per_row_ns": 396,
+            "size": 10000,
+            "throughput_rows_s": 2521653
+          }
+        ],
+        "cold_max_ns": 189242,
+        "cold_mean_ns": 38013,
+        "cold_median_ns": 28969,
+        "cold_min_ns": 27707,
+        "cold_std_ns": 34826,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 645,
+        "hot_single_std_ns": 1369,
+        "hot_single_total_ns": 1290585,
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "size_kb": 2.1298828125
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 67864,
+            "per_row_ns": 678,
+            "size": 100,
+            "throughput_rows_s": 1473517
+          },
+          {
+            "batch_mean_ns": 467322,
+            "per_row_ns": 467,
+            "size": 1000,
+            "throughput_rows_s": 2139849
+          },
+          {
+            "batch_mean_ns": 4107021,
+            "per_row_ns": 410,
+            "size": 10000,
+            "throughput_rows_s": 2434854
+          }
+        ],
+        "cold_max_ns": 196953,
+        "cold_mean_ns": 40563,
+        "cold_median_ns": 30132,
+        "cold_min_ns": 28927,
+        "cold_std_ns": 36318,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 622,
+        "hot_single_std_ns": 76,
+        "hot_single_total_ns": 1243505,
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "size_kb": 2.1298828125
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 73666,
+            "per_row_ns": 736,
+            "size": 100,
+            "throughput_rows_s": 1357474
+          },
+          {
+            "batch_mean_ns": 529095,
+            "per_row_ns": 529,
+            "size": 1000,
+            "throughput_rows_s": 1890019
+          },
+          {
+            "batch_mean_ns": 4287177,
+            "per_row_ns": 428,
+            "size": 10000,
+            "throughput_rows_s": 2332536
+          }
+        ],
+        "cold_max_ns": 191633,
+        "cold_mean_ns": 39409,
+        "cold_median_ns": 29943,
+        "cold_min_ns": 28153,
+        "cold_std_ns": 35131,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 637,
+        "hot_single_std_ns": 113,
+        "hot_single_total_ns": 1273156,
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "size_kb": 2.1298828125
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 73861,
+            "per_row_ns": 738,
+            "size": 100,
+            "throughput_rows_s": 1353890
+          },
+          {
+            "batch_mean_ns": 524637,
+            "per_row_ns": 524,
+            "size": 1000,
+            "throughput_rows_s": 1906077
+          },
+          {
+            "batch_mean_ns": 4370631,
+            "per_row_ns": 437,
+            "size": 10000,
+            "throughput_rows_s": 2287999
+          }
+        ],
+        "cold_max_ns": 166157,
+        "cold_mean_ns": 29353,
+        "cold_median_ns": 21424,
+        "cold_min_ns": 20278,
+        "cold_std_ns": 31476,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 685,
+        "hot_single_std_ns": 54,
+        "hot_single_total_ns": 1369090,
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "size_kb": 2.1298828125
+      },
+      {
+        "active_fields": 2,
+        "batches": [
+          {
+            "batch_mean_ns": 70303,
+            "per_row_ns": 703,
+            "size": 100,
+            "throughput_rows_s": 1422411
+          },
+          {
+            "batch_mean_ns": 447194,
+            "per_row_ns": 447,
+            "size": 1000,
+            "throughput_rows_s": 2236163
+          },
+          {
+            "batch_mean_ns": 4062355,
+            "per_row_ns": 406,
+            "size": 10000,
+            "throughput_rows_s": 2461626
+          }
+        ],
+        "cold_max_ns": 194134,
+        "cold_mean_ns": 39888,
+        "cold_median_ns": 30325,
+        "cold_min_ns": 28339,
+        "cold_std_ns": 35687,
+        "hot_single_iters": 2000,
+        "hot_single_mean_ns": 989,
+        "hot_single_std_ns": 341,
+        "hot_single_total_ns": 1978773,
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "size_kb": 2.1298828125
+      }
+    ],
+    "jpmml_interpreted": [
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 8263860,
+        "cold_mean_ns": 58163052,
+        "cold_std_ns": 216240515,
+        "hot_single_mean_ns": 3495,
+        "hot_single_std_ns": 2475,
+        "hot_single_total_ns": 6991558,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 9644733,
+        "cold_mean_ns": 61434193,
+        "cold_std_ns": 228934687,
+        "hot_single_mean_ns": 4203,
+        "hot_single_std_ns": 7315,
+        "hot_single_total_ns": 8407196,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 9026524,
+        "cold_mean_ns": 60385169,
+        "cold_std_ns": 228223412,
+        "hot_single_mean_ns": 3650,
+        "hot_single_std_ns": 1529,
+        "hot_single_total_ns": 7300160,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 8125738,
+        "cold_mean_ns": 59437718,
+        "cold_std_ns": 224772276,
+        "hot_single_mean_ns": 3315,
+        "hot_single_std_ns": 1267,
+        "hot_single_total_ns": 6631332,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "interpreted",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 8017620,
+        "cold_mean_ns": 59176659,
+        "cold_std_ns": 221203697,
+        "hot_single_mean_ns": 3010,
+        "hot_single_std_ns": 1258,
+        "hot_single_total_ns": 6021544,
+        "hot_single_iters": 2000
+      }
+    ],
+    "jpmml_transpiled": [
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 130513614,
+        "cold_mean_ns": 254635962,
+        "cold_std_ns": 387052388,
+        "hot_single_mean_ns": 3119,
+        "hot_single_std_ns": 1004,
+        "hot_single_total_ns": 6239311,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 151974872,
+        "cold_mean_ns": 264769631,
+        "cold_std_ns": 413285670,
+        "hot_single_mean_ns": 3559,
+        "hot_single_std_ns": 721,
+        "hot_single_total_ns": 7118064,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 148525904,
+        "cold_mean_ns": 284001506,
+        "cold_std_ns": 442401922,
+        "hot_single_mean_ns": 3293,
+        "hot_single_std_ns": 826,
+        "hot_single_total_ns": 6587885,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 151879078,
+        "cold_mean_ns": 264286724,
+        "cold_std_ns": 401697733,
+        "hot_single_mean_ns": 3140,
+        "hot_single_std_ns": 863,
+        "hot_single_total_ns": 6281810,
+        "hot_single_iters": 2000
+      },
+      {
+        "model": "AlternateBinaryTargetCategoryTest.pmml",
+        "mode": "transpiled",
+        "size_kb": 2.13,
+        "active_fields": 2,
+        "cold_median_ns": 153137679,
+        "cold_mean_ns": 264220113,
+        "cold_std_ns": 402092470,
+        "hot_single_mean_ns": 3117,
+        "hot_single_std_ns": 1433,
+        "hot_single_total_ns": 6235951,
+        "hot_single_iters": 2000
+      }
+    ]
+  }
+}
