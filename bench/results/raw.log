@@ -1,0 +1,95 @@
+
+=== DecisionTreeIris.pmml ===
+ Run 1/5
+  Rust hot 384 ns cold 57.4 us
+  JPMML-I hot 4572 ns cold 8365.1 us
+  JPMML-T hot 4655 ns cold 169084.8 us
+ Run 2/5
+  Rust hot 427 ns cold 39.0 us
+  JPMML-I hot 4470 ns cold 9102.0 us
+  JPMML-T hot 4014 ns cold 151836.3 us
+ Run 3/5
+  Rust hot 452 ns cold 62.2 us
+  JPMML-I hot 4461 ns cold 7729.4 us
+  JPMML-T hot 7136 ns cold 140282.8 us
+ Run 4/5
+  Rust hot 611 ns cold 58.9 us
+  JPMML-I hot 4773 ns cold 8867.0 us
+  JPMML-T hot 5642 ns cold 132606.3 us
+ Run 5/5
+  Rust hot 440 ns cold 40.9 us
+  JPMML-I hot 4534 ns cold 9723.2 us
+  JPMML-T hot 5636 ns cold 147130.4 us
+
+=== GradientBoosterTest.pmml ===
+ Run 1/5
+  Rust hot 357 ns cold 54.1 us
+  JPMML-I hot 10673 ns cold 9164.1 us
+  JPMML-T fallback (not transpilable) hot 13095 ns
+ Run 2/5
+  Rust hot 375 ns cold 39.9 us
+  JPMML-I hot 13070 ns cold 9470.2 us
+  JPMML-T fallback (not transpilable) hot 16558 ns
+ Run 3/5
+  Rust hot 575 ns cold 59.8 us
+  JPMML-I hot 12318 ns cold 11855.3 us
+  JPMML-T fallback (not transpilable) hot 13697 ns
+ Run 4/5
+  Rust hot 513 ns cold 54.5 us
+  JPMML-I hot 12314 ns cold 10675.6 us
+  JPMML-T fallback (not transpilable) hot 12045 ns
+ Run 5/5
+  Rust hot 370 ns cold 49.0 us
+  JPMML-I hot 12959 ns cold 10213.6 us
+  JPMML-T fallback (not transpilable) hot 20739 ns
+
+=== AlternateBinaryTargetCategoryTest.pmml ===
+ Run 1/5
+  Rust hot 645 ns cold 29.0 us
+  JPMML-I hot 3495 ns cold 8263.9 us
+  JPMML-T hot 3119 ns cold 130513.6 us
+ Run 2/5
+  Rust hot 622 ns cold 30.1 us
+  JPMML-I hot 4203 ns cold 9644.7 us
+  JPMML-T hot 3559 ns cold 151974.9 us
+ Run 3/5
+  Rust hot 637 ns cold 29.9 us
+  JPMML-I hot 3650 ns cold 9026.5 us
+  JPMML-T hot 3293 ns cold 148525.9 us
+ Run 4/5
+  Rust hot 685 ns cold 21.4 us
+  JPMML-I hot 3315 ns cold 8125.7 us
+  JPMML-T hot 3140 ns cold 151879.1 us
+ Run 5/5
+  Rust hot 989 ns cold 30.3 us
+  JPMML-I hot 3010 ns cold 8017.6 us
+  JPMML-T hot 3117 ns cold 153137.7 us
+
+## DecisionTreeIris.pmml
+rust                 cold 51.7 ± 10.8 us | hot 463 ± 87 ns (n=5)
+  batch   100 per_row 592 ± 20 ns
+  batch  1000 per_row 483 ± 20 ns
+  batch 10000 per_row 428 ± 39 ns
+jpmml_interpreted    cold 8757.3 ± 754.0 us | hot 4562 ± 127 ns (n=5)
+jpmml_transpiled     cold 148188.1 ± 13751.2 us | hot 5417 ± 1183 ns (n=5)
+  Speedup vs interpreted: 9.9x
+  Speedup vs transpiled: 11.7x
+
+## GradientBoosterTest.pmml
+rust                 cold 51.4 ± 7.5 us | hot 438 ± 99 ns (n=5)
+  batch   100 per_row 374 ± 20 ns
+  batch  1000 per_row 297 ± 27 ns
+  batch 10000 per_row 293 ± 22 ns
+jpmml_interpreted    cold 10275.8 ± 1065.8 us | hot 12267 ± 958 ns (n=5)
+jpmml_transpiled     cold 21426.7 ± 2716.1 us | hot 15227 ± 3506 ns (n=5)
+  Speedup vs interpreted: 28.0x
+
+## AlternateBinaryTargetCategoryTest.pmml
+rust                 cold 28.2 ± 3.8 us | hot 716 ± 155 ns (n=5)
+  batch   100 per_row 702 ± 37 ns
+  batch  1000 per_row 484 ± 39 ns
+  batch 10000 per_row 415 ± 17 ns
+jpmml_interpreted    cold 8615.7 ± 698.1 us | hot 3535 ± 443 ns (n=5)
+jpmml_transpiled     cold 147206.2 ± 9488.7 us | hot 3246 ± 190 ns (n=5)
+  Speedup vs interpreted: 4.9x
+  Speedup vs transpiled: 4.5x
