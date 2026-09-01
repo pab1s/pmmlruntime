@@ -22,11 +22,12 @@ struct Exception : std::runtime_error {
     Exception(PmmlErrorCode c, const std::string& msg) : std::runtime_error(msg), code(c) {}
 };
 
-inline void check(PmmlStatus* s, const PmmlApi* api) {
+inline void check(PmmlStatus* s, const PmmlApi*) {
     if (!s) return;
-    auto code = api->GetErrorCode(s);
-    std::string msg = api->GetErrorMessage(s);
-    api->ReleaseStatus(s);
+    auto code = PmmlGetErrorCode(s);
+    const char* m = PmmlGetErrorMessage(s);
+    std::string msg = m ? m : "unknown";
+    PmmlReleaseStatus(s);
     throw Exception(code, msg);
 }
 
