@@ -28,3 +28,4 @@ worktrees/
 
 # Secrets
 .env
+python/_native/target/
