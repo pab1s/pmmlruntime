@@ -1,0 +1,10 @@
+{
+  "name": "pmmlruntime-node",
+  "version": "0.1.0",
+  "description": "PMML 4.4 without the JVM — Node binding over C PmmlApi (like onnxruntime-node)",
+  "main": "index.js",
+  "napi": { "name": "pmmlruntime-node", "triples": { "defaults": true } },
+  "optionalDependencies": {
+  },
+  "scripts": { "build": "napi build --platform --release", "test": "node test.js" }
+}

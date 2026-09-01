@@ -1,0 +1,18 @@
+[package]
+name = "pmmlruntime-node"
+version = "0.1.0"
+edition = "2021"
+description = "pmmlruntime Node NAPI shim over include/pmml_runtime.h PmmlApi (like onnxruntime/js/node)"
+license = "Apache-2.0"
+# NOT in workspace (root Cargo.toml exclude)
+
+[lib]
+crate-type = ["cdylib"]
+name = "pmmlruntime_node"
+
+[dependencies]
+napi = { version = "2", features = ["napi4"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"

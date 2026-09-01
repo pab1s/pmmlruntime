@@ -1,0 +1,7 @@
+{
+  "name": "pmmlruntime-web",
+  "version": "0.1.0",
+  "description": "PMML 4.4 without the JVM — Web WASM over C PmmlApi (like onnxruntime-web)",
+  "main": "pmmlruntime_web.js",
+  "scripts": { "build": "wasm-pack build --target web", "test": "wasm-pack test --node" }
+}
