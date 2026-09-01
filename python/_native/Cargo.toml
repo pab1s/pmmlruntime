@@ -12,9 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
-# Core is linked via C ABI (libpmmlruntime.so + PmmlGetApi), not as Rust dep, to keep C as single source of truth.
-# For local dev without built C lib, fallback path dep can be enabled:
-# pmmlruntime = { path = "../../crates/pmmlruntime" }  # dev-only, not for release wheels
+pmmlruntime = { path = "../../crates/pmmlruntime" }
 
 [profile.release]
 lto = true
