@@ -1,0 +1,6 @@
+{
+  "name": "pmmlruntime",
+  "version": "0.1.0",
+  "description": "PMML 4.4 without the JVM — JavaScript (Node NAPI + Web WASM) over C PmmlApi",
+  "workspaces": ["node", "web"]
+}
