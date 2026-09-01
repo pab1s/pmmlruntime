@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/pmmlruntime"]
-exclude = ["fuzz"]
+exclude = ["fuzz", "python/_native", "javascript/node", "javascript/web", "java/native"]
 resolver = "2"
 
 [workspace.package]
