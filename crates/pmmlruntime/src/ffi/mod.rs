@@ -6,6 +6,26 @@
 //!
 //! Handles are opaque: `*mut PmmlEnv` is actually `Box<EnvHandle>` etc.
 //! Status is heap-allocated `PmmlStatus` — NULL means OK (OrtStatus pattern).
+//!
+//! # Main types
+//!
+//! - [`PmmlApi`] — versioned function table (see `PmmlGetApi`)
+//! - [`PmmlEnv`]/[`PmmlSession`]/[`PmmlSessionOptions`] — opaque handles
+//! - [`PmmlStatus`] — error out-param, `NULL` is success, caller must `PmmlReleaseStatus`
+//! - [`PmmlValue`] — C value (`Missing`/`Continuous`/`Discrete`)
+//!
+//! # Safety
+//!
+//! All `extern "C"` functions are `unsafe`. Callers must ensure `*mut`
+//! args are valid, NUL-terminated `*const c_char` where required, and
+//! `PmmlStatus` is released. See each function's `# Safety` section.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use std::ffi::CString;
+//! // C: const PmmlApi* api = PmmlGetApi(1); api->CreateEnv(...)
+//! ```
 
 #![allow(non_snake_case, clippy::not_unsafe_ptr_arg_deref, clippy::missing_safety_doc)]
 
@@ -21,36 +41,87 @@ use crate::session::{PmmlEnv as RustEnv, Session, SessionOptions};
 // Enums — must match include/pmml_runtime.h
 // ---------------------------------------------------------------------------
 
+/// Graph optimization level for `PmmlSessionOptions`, mirrors `ORT`.
+///
+/// Controls how much the [`crate::ir::Ir`] is optimized before execution.
+/// Maps to [`crate::session::GraphOptimizationLevel`] via
+/// `SessionOptionsHandle::to_rust`.
+///
+/// # Examples
+///
+/// ```rust
+/// use pmmlruntime::ffi::PmmlGraphOptimizationLevel;
+/// let lvl = PmmlGraphOptimizationLevel::EnableBasic;
+/// assert_eq!(lvl as i32, 1);
+/// ```
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PmmlGraphOptimizationLevel {
+    /// Disable all optimizations (interpreter, minimal cold overhead).
     DisableAll = 0,
+    /// Basic bytecode optimization — default.
     EnableBasic = 1,
+    /// Extended optimizations (SIMD, batch) — reserved, currently no-op.
     EnableExtended = 2,
+    /// All optimizations including future JIT — reserved, currently no-op.
     EnableAll = 3,
 }
 
+/// Log level for `PmmlEnv` and `PmmlSessionOptions`, mirrors `ORT`.
+///
+///
+/// # Examples
+///
+/// ```
+/// use pmmlruntime::ffi::PmmlLogLevel;
+/// assert_eq!(PmmlLogLevel::Warning as i32, 2);
+/// ```
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PmmlLogLevel {
+    /// Verbose (trace).
     Verbose = 0,
+    /// Info.
     Info = 1,
+    /// Warning — default.
     Warning = 2,
+    /// Error.
     Error = 3,
+    /// Fatal.
     Fatal = 4,
 }
 
+/// Error code returned via [`PmmlStatus`], mirrors `ORT` status.
+///
+/// `Ok` (0) means success (`NULL` `PmmlStatus`). Other codes map from
+/// [`crate::base::PmmlError`] via `From<&PmmlError>`.
+///
+/// # Examples
+///
+/// ```
+/// use pmmlruntime::ffi::PmmlErrorCode;
+/// assert_eq!(PmmlErrorCode::Ok as i32, 0);
+/// ```
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PmmlErrorCode {
+    /// Success — `NULL` status pointer.
     Ok = 0,
+    /// Invalid argument (NULL pointer, out of range).
     InvalidArgument = 1,
+    /// I/O error (file read).
     Io = 2,
+    /// XML parse error.
     Parse = 3,
+    /// Valid PMML but unsupported markup.
     UnsupportedMarkup = 4,
+    /// Invalid value (type mismatch, coercion failure).
     InvalidValue = 5,
+    /// Validation error (depth >512, file >100 MB, empty schema).
     Validation = 6,
+    /// Out of memory.
     Oom = 7,
+    /// Unknown error (`anyhow::Error` wrapper).
     Unknown = 8,
 }
 
@@ -70,41 +141,99 @@ impl From<&PmmlError> for PmmlErrorCode {
     }
 }
 
+/// Tag for [`PmmlValue`], indicating which union field is active.
+///
+/// Mirrors `ORT` value tagging. `Missing` is explicit, not `NULL`, to keep
+/// the C ABI `Copy` and avoid double wrapping.
+///
+/// # Examples
+///
+/// ```
+/// use pmmlruntime::ffi::PmmlValueTag;
+/// assert_eq!(PmmlValueTag::Missing as i32, 0);
+/// ```
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PmmlValueTag {
+    /// Missing / invalid after `MiningSchema` handling.
     Missing = 0,
+    /// Continuous `f64` in `PmmlValueData::continuous`.
     Continuous = 1,
+    /// Discrete interned `SymbolId(u32)` in `PmmlValueData::discrete`.
     Discrete = 2,
 }
 
+/// Union for [`PmmlValue`] payload.
+///
+/// Active field is determined by [`PmmlValueTag`]. `Copy` so it can live in
+/// the C ABI stack. Access via `unsafe` per `PmmlValueTag`.
+///
+/// # Safety
+///
+/// Reading `continuous` when `tag != Continuous` or `discrete` when
+/// `tag != Discrete` is undefined behavior in C. Rust callers must match
+/// on [`PmmlValueTag`] before accessing.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union PmmlValueData {
+    /// Active when `tag == Continuous`.
     pub continuous: f64,
+    /// Active when `tag == Discrete`; stores `SymbolId.0`.
     pub discrete: u32,
 }
 
+/// C value for scoring, tagged union of `Missing`/`Continuous`/`Discrete`.
+///
+/// Bridges [`crate::base::Value`] over the C ABI. Construct via
+/// [`PmmlValue::missing`]/[`PmmlValue::continuous`]/[`PmmlValue::discrete`].
+/// `Copy` so callers can stack-allocate `PmmlValue[num]` arrays for `Run`/`RunBatch`.
+///
+/// # Examples
+///
+/// ```
+/// use pmmlruntime::ffi::{PmmlValue, PmmlValueTag};
+/// let v = PmmlValue::continuous(1.5);
+/// assert_eq!(v.tag, PmmlValueTag::Continuous);
+/// ```
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PmmlValue {
+    /// Discriminant for `data`.
     pub tag: PmmlValueTag,
+    /// Payload; active field set by `tag`.
     pub data: PmmlValueData,
 }
 
 impl PmmlValue {
+    /// Creates a `Missing` value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pmmlruntime::ffi::{PmmlValue, PmmlValueTag};
+    /// let v = PmmlValue::missing();
+    /// assert_eq!(v.tag, PmmlValueTag::Missing);
+    /// ```
     pub fn missing() -> Self {
         Self {
             tag: PmmlValueTag::Missing,
             data: PmmlValueData { discrete: 0 },
         }
     }
+    /// Creates a `Continuous(f64)` value.
+    ///
+    /// Takes the `v` finite `f64` and returns a [`PmmlValue`] with
+    /// `tag == Continuous` and `data.continuous == v`.
     pub fn continuous(v: f64) -> Self {
         Self {
             tag: PmmlValueTag::Continuous,
             data: PmmlValueData { continuous: v },
         }
     }
+    /// Creates a `Discrete(SymbolId)` value.
+    ///
+    /// Takes the `id` (`SymbolId.0`) and returns a [`PmmlValue`] with
+    /// `tag == Discrete` and `data.discrete == id`.
     pub fn discrete(id: u32) -> Self {
         Self {
             tag: PmmlValueTag::Discrete,
@@ -135,26 +264,47 @@ fn value_to_pmml_value(v: Value) -> PmmlValue {
 // Opaque handles
 // ---------------------------------------------------------------------------
 
+/// Opaque handle for `PmmlEnv` (C ABI).
+///
+/// Actually `Box<EnvHandle>`; fields are private. Created by `PmmlApi::CreateEnv`
+/// and freed by `ReleaseEnv`. Do not dereference in C.
 #[repr(C)]
 pub struct PmmlEnv {
     _private: [u8; 0],
 }
+/// Opaque handle for `PmmlSession`.
+///
+/// Actually `Box<SessionHandle>`; caches `CString`s for `GetInputName` etc.
+/// Pointers remain valid until `ReleaseSession`.
 #[repr(C)]
 pub struct PmmlSession {
     _private: [u8; 0],
 }
+/// Opaque handle for `PmmlSessionOptions`.
+///
+/// Actually `Box<SessionOptionsHandle>`; builder for `Session` creation.
 #[repr(C)]
 pub struct PmmlSessionOptions {
     _private: [u8; 0],
 }
+/// Opaque handle for `PmmlRunOptions`.
+///
+/// Actually `Box<RunOptionsHandle>`; per-run `tag`/`log_level`.
 #[repr(C)]
 pub struct PmmlRunOptions {
     _private: [u8; 0],
 }
+/// Opaque handle for `PmmlIoBinding`.
+///
+/// Actually `Box<IoBindingHandle>`; binds inputs/outputs for `RunWithBinding`.
 #[repr(C)]
 pub struct PmmlIoBinding {
     _private: [u8; 0],
 }
+/// Opaque handle for `PmmlStatus`.
+///
+/// Heap-allocated error; `NULL` means `Ok`. Caller must `PmmlReleaseStatus`.
+/// Contains [`PmmlErrorCode`] and message.
 #[repr(C)]
 pub struct PmmlStatus {
     _private: [u8; 0],
@@ -250,10 +400,14 @@ fn status_invalid_arg(msg: impl Into<String>) -> *mut PmmlStatus {
 // Arrow forward decls (opaque)
 // ---------------------------------------------------------------------------
 
+/// Opaque handle for `ArrowArray` (C Data Interface).
+///
+/// Forward-declared for `RunArrow`/`BindInputArrow`; actual layout is `arrow-rs` FFI.
 #[repr(C)]
 pub struct ArrowArray {
     _private: [u8; 0],
 }
+/// Opaque handle for `ArrowSchema` (C Data Interface).
 #[repr(C)]
 pub struct ArrowSchema {
     _private: [u8; 0],
@@ -263,6 +417,12 @@ pub struct ArrowSchema {
 // Api table
 // ---------------------------------------------------------------------------
 
+/// Versioned function table returned by [`PmmlGetApi`].
+///
+/// Mirrors `OrtApi` — callers fetch `&PmmlApi` once and call through it.
+/// `version == 1` is the only stable version; future versions add fields
+/// at the end. All function pointers are `Option` so a newer caller can
+/// detect missing slot as `None`.
 #[repr(C)]
 pub struct PmmlApi {
     pub version: u32,
@@ -819,6 +979,15 @@ unsafe extern "C" fn api_SetRunLogLevel(opts: *mut PmmlRunOptions, lvl: PmmlLogL
 // Status API (standalone, not in table)
 // ---------------------------------------------------------------------------
 
+/// Returns the [`PmmlErrorCode`] for a `PmmlStatus`.
+///
+/// Takes the `status` pointer returned by any `PmmlApi` call; `NULL` means
+/// [`PmmlErrorCode::Ok`]. Does not free `status`; caller must still
+/// `PmmlReleaseStatus`.
+///
+/// # Safety
+///
+/// `status` if non-null must be a valid `*const PmmlStatus` from `make_status`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlGetErrorCode(status: *const PmmlStatus) -> PmmlErrorCode {
     if status.is_null() { return PmmlErrorCode::Ok; }
@@ -826,6 +995,14 @@ pub unsafe extern "C" fn PmmlGetErrorCode(status: *const PmmlStatus) -> PmmlErro
     h.code
 }
 
+/// Returns the error message `*const c_char` for a `PmmlStatus`.
+///
+/// Takes the `status` pointer; returns `NULL` if `status` is `NULL`.
+/// The returned pointer is valid until `PmmlReleaseStatus(status)`.
+///
+/// # Safety
+///
+/// `status` if non-null must be valid `*const PmmlStatus`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlGetErrorMessage(status: *const PmmlStatus) -> *const c_char {
     if status.is_null() { return ptr::null(); }
@@ -833,6 +1010,15 @@ pub unsafe extern "C" fn PmmlGetErrorMessage(status: *const PmmlStatus) -> *cons
     h.message.as_ptr()
 }
 
+/// Frees a `PmmlStatus` heap allocation.
+///
+/// Takes the `status` `*mut PmmlStatus` from any failing API call; `NULL` is
+/// a no-op. Must be called exactly once per non-null status.
+///
+/// # Safety
+///
+/// `status` if non-null must be the box pointer from `make_status` and not
+/// be used after this call.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlReleaseStatus(status: *mut PmmlStatus) {
     if status.is_null() { return; }
@@ -882,6 +1068,16 @@ static PMML_API: PmmlApi = PmmlApi {
     SetRunLogLevel: Some(api_SetRunLogLevel),
 };
 
+/// Returns the global [`PmmlApi`] table for `version`.
+///
+/// Takes the `version` (`1` is current). Returns `NULL` if `version` is
+/// unsupported. The returned pointer is `'static` and does not need freeing.
+///
+/// # Examples
+///
+/// ```c
+/// // C: const PmmlApi* api = PmmlGetApi(1);
+/// ```
 #[no_mangle]
 pub extern "C" fn PmmlGetApi(version: u32) -> *const PmmlApi {
     if version == 1 {
@@ -895,6 +1091,18 @@ pub extern "C" fn PmmlGetApi(version: u32) -> *const PmmlApi {
 // Deprecated shims (0.1 compat) — call through table
 // ---------------------------------------------------------------------------
 
+/// Creates a `PmmlEnv` — deprecated shim for 0.1 compat.
+///
+/// Takes the `env_out` out-param (non-null). Returns `PmmlErrorCode` as `i32`.
+/// Prefer `PmmlGetApi(1)->CreateEnv` via the table.
+///
+/// # Safety
+///
+/// `env_out` must be valid non-null `*mut *mut PmmlEnv`.
+///
+/// # Deprecated
+///
+/// Use `PmmlApi::CreateEnv` via `PmmlGetApi`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlCreateEnv(env_out: *mut *mut PmmlEnv) -> i32 {
     if env_out.is_null() { return PmmlErrorCode::InvalidArgument as i32; }
@@ -910,6 +1118,13 @@ pub unsafe extern "C" fn PmmlCreateEnv(env_out: *mut *mut PmmlEnv) -> i32 {
     PmmlErrorCode::Ok as i32
 }
 
+/// Releases a `PmmlEnv` — deprecated shim.
+///
+/// Takes the `env` pointer from `PmmlCreateEnv`; `NULL` is a no-op.
+///
+/// # Safety
+///
+/// `env` if non-null must be from `PmmlCreateEnv`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
     let api = PmmlGetApi(1);
@@ -917,6 +1132,15 @@ pub unsafe extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
     if let Some(f) = (*api).ReleaseEnv { f(env) }
 }
 
+/// Creates a `PmmlSession` from file — deprecated shim.
+///
+/// Takes the `env`, NUL-terminated `path`, and `session_out` out-param.
+/// Returns `PmmlErrorCode` as `i32`.
+///
+/// # Safety
+///
+/// `env`, `path`, `session_out` must be valid non-null pointers; `path`
+/// must be NUL-terminated.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlCreateSession(env: *mut PmmlEnv, path: *const c_char, session_out: *mut *mut PmmlSession) -> i32 {
     if env.is_null() || path.is_null() || session_out.is_null() { return PmmlErrorCode::InvalidArgument as i32; }
@@ -930,6 +1154,13 @@ pub unsafe extern "C" fn PmmlCreateSession(env: *mut PmmlEnv, path: *const c_cha
     PmmlErrorCode::Ok as i32
 }
 
+/// Releases a `PmmlSession` — deprecated shim.
+///
+/// Takes the `session` pointer; `NULL` is no-op.
+///
+/// # Safety
+///
+/// `session` if non-null must be from `PmmlCreateSession`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlReleaseSession(session: *mut PmmlSession) {
     let api = PmmlGetApi(1);

@@ -21,7 +21,16 @@ use crate::base::Value;
 use crate::ir::{GaussianKernelIr, GaussianProcessIr};
 use std::collections::HashMap;
 
-/// Evaluate a [`GaussianProcessIr`] against a dense `values` array.
+/// Evaluates a [`GaussianProcessIr`] against a dense `values` array.
+///
+/// Takes the `model` and `values` buffer indexed by [`FieldId`](crate::base::FieldId).
+/// Builds the query vector from `model.mining_schema.active_fields`, computes kernel
+/// `k(x, x_i)` via [`GaussianKernelIr`] (`RadialBasis`/`ARD`/`Absolute`/`Generalized`),
+/// and returns a weighted-average `Continuous` for regression or a weighted-vote
+/// `Discrete` for classification, or [`Value::Missing`] when inputs are `Missing`,
+/// `Discrete`, or no finite weight exists.
+///
+/// Returns the predicted [`Value`](crate::base::Value) per the model's `functionName`.
 pub fn evaluate_gaussian_process(model: &GaussianProcessIr, values: &[Value]) -> Value {
     if model.training_vectors.is_empty() || model.training_targets.is_empty() {
         return Value::Missing;

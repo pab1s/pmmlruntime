@@ -1,4 +1,23 @@
-//! XML — hardened `quick-xml` 0.37 unmarshaling to `RawPmml`.
+//! XML — hardened `quick-xml` 0.37 → `RawPmml` unmarshaling.
+//!
+//! Cold path only; `Session` never calls this on `run`. Enforces `MAX_DEPTH 512`,
+//! `100 MB` cap, and blocks `DTD`/`XXE` per [`reader::PmmlReader`]. `RawPmml` is
+//! then lowered to [`crate::ir::Ir`] via [`crate::ir::lower::lower`].
+//!
+//! # Main types
+//!
+//! - [`PmmlReader`] — hardened reader (see [`crate::xml::reader`])
+//! - [`RawPmml`] — direct PMML infoset (see [`mod@crate::xml::unmarshal`])
+//! - [`new_reader`] — creates a hardened `quick-xml` reader
+//!
+//! # Examples
+//!
+//! ```rust
+//! use pmmlruntime::xml::reader::new_reader;
+//! let xml = br#"<PMML version="4.4"></PMML>"#;
+//! let mut r = new_reader(xml);
+//! assert!(r.is_ok());
+//! ```
 
 #![allow(
     clippy::never_loop,
