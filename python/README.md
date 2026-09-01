@@ -24,6 +24,6 @@ b = sess.io_binding(); b.bind_input("x", 1.0); b.bind_output("predictedValue"); 
 
 * Build: `cargo build -p pmmlruntime --features capi` → `libpmmlruntime.so`; `python/_native` links it via `PmmlGetApi` and `py.allow_threads` around every `Run*`.
 * Arrow: `pyarrow.Table._export_to_c` / `_import_from_c` → `ArrowArray`/`ArrowSchema` → `PmmlApi.RunArrow`.
-* Stubbed on `feat/c-binding`; real impl on `feat/python-binding`.
+* Install: `pip install -e python/` (dev) or `maturin develop` inside `python/`.
 
 See `docs/BINDINGS.md`.

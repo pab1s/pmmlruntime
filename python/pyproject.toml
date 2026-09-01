@@ -1,0 +1,36 @@
+[build-system]
+requires = ["maturin>=1.7", "setuptools>=42"]
+build-backend = "maturin"
+
+[project]
+name = "pmmlruntime"
+version = "0.1.0"
+description = "PMML 4.4 runtime — without the JVM (Python binding over C PmmlApi)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Pablo Olivares", email = "pablolivares1502@gmail.com" }]
+keywords = ["pmml", "onnxruntime", "inference"]
+classifiers = [
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+]
+dependencies = ["numpy>=1.21", "pyarrow>=12"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pyarrow>=12", "scikit-learn"]
+
+[project.urls]
+Homepage = "https://github.com/pab1s/pmmlruntime"
+Repository = "https://github.com/pab1s/pmmlruntime"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "pmmlruntime._native"
+bindings = "pyo3"
+manifest-path = "_native/Cargo.toml"
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

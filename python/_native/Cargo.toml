@@ -1,0 +1,21 @@
+[package]
+name = "pmmlruntime-native"
+version = "0.1.0"
+edition = "2021"
+description = "pmmlruntime Python native extension — thin shim over include/pmml_runtime.h PmmlApi (like onnxruntime pybind over C API)"
+license = "Apache-2.0"
+# NOT in workspace members (see root Cargo.toml exclude) — like onnxruntime/python at repo root
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+# Core is linked via C ABI (libpmmlruntime.so + PmmlGetApi), not as Rust dep, to keep C as single source of truth.
+# For local dev without built C lib, fallback path dep can be enabled:
+# pmmlruntime = { path = "../../crates/pmmlruntime" }  # dev-only, not for release wheels
+
+[profile.release]
+lto = true
+codegen-units = 1
