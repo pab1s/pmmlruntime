@@ -14,6 +14,10 @@ keywords = ["pmml", "scoring", "machine-learning"]
 categories = ["science"]
 include = ["src/**/*", "examples/**/*", "tests/**/*", "Cargo.toml", "../../README.md", "../../LICENSE"]
 
+[lib]
+name = "pmmlruntime"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
 [dependencies]
 quick-xml = { workspace = true }
 serde = { workspace = true }
