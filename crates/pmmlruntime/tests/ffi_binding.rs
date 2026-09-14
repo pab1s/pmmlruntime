@@ -30,3 +30,25 @@ fn ffi_iobinding_roundtrip() {
         (api.ReleaseEnv.unwrap())(env);
     }
 }
+
+#[test]
+fn ffi_runbatch_rowcount() {
+    unsafe {
+        let api = &*pmmlruntime::ffi::PmmlGetApi(1);
+        let log_id = std::ffi::CString::new("test").unwrap();
+        let mut env: *mut pmmlruntime::ffi::PmmlEnv = std::ptr::null_mut();
+        assert!((api.CreateEnv.unwrap())(pmmlruntime::ffi::PmmlLogLevel::Warning, log_id.as_ptr(), &mut env).is_null());
+        let bytes = std::fs::read("bench/pmml/DecisionTreeIris.pmml").or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml")).unwrap();
+        let mut sess: *mut pmmlruntime::ffi::PmmlSession = std::ptr::null_mut();
+        assert!((api.CreateSessionFromArray.unwrap())(env as *const _, bytes.as_ptr() as *const _, bytes.len(), std::ptr::null(), &mut sess).is_null());
+        let n0 = std::ffi::CString::new("Petal.Length").unwrap();
+        let in_names = [n0.as_ptr()];
+        let flat = [pmmlruntime::ffi::PmmlValue::continuous(1.4), pmmlruntime::ffi::PmmlValue::continuous(6.0)];
+        let mut out = [pmmlruntime::ffi::PmmlValue::missing(); 4];
+        let mut cap = out.len();
+        assert!((api.RunBatch.unwrap())(sess, std::ptr::null(), in_names.as_ptr(), flat.as_ptr(), 2, 1, out.as_mut_ptr(), &mut cap).is_null());
+        assert_eq!(cap, 2);
+        (api.ReleaseSession.unwrap())(sess);
+        (api.ReleaseEnv.unwrap())(env);
+    }
+}

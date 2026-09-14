@@ -866,7 +866,8 @@ unsafe extern "C" fn api_RunBatch(
         Err(e) => return status_from_error(e),
     };
     let rows = result.into_rows();
-    // For now, flat out is predictedValue only (single output per row)
+    // v1 contract: RunBatch returns one PmmlValue per row = predictedValue (single output).
+    // For multi-output, callers loop Run per row. Signature stable (no ABI break).
     for (i, row) in rows.iter().enumerate() {
         let v = row.get("predictedValue").copied().unwrap_or(Value::Missing);
         unsafe { *out_flat.add(i) = value_to_pmml_value(v) };

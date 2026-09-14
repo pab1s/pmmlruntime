@@ -133,6 +133,7 @@ typedef struct PmmlApi {
                        PmmlValue* output_values);
 
     /* Batch — RowMajor (flat) and Arrow columnar (zero-copy). Like ORT IoBinding but simpler for tabular. */
+    /* v1 contract: RunBatch returns one PmmlValue per row = predictedValue; for multi-output loop Run per row. */
     PmmlStatus* (*RunBatch)(PmmlSession* sess, const PmmlRunOptions* run_opts,
                             const char* const* input_names, const PmmlValue* flat_values, size_t n_rows, size_t n_cols,
                             /* out */ PmmlValue* out_flat, size_t* out_rows_inout);
