@@ -265,7 +265,7 @@ impl InferenceSession {
             }
             return Ok(pylist.unbind().into());
         }
-        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("input_feed must be dict or list[dict] (pyarrow Table via RunArrow TODO)"))
+        Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>("input_feed must be dict or list[dict]; pyarrow Table lands with RunArrow (C v2), use to_pylist() meanwhile"))
     }
 
     fn run_with_iobinding(&self, _py: Python<'_>, _binding: Bound<'_, PyAny>) -> PyResult<PyObject> {
