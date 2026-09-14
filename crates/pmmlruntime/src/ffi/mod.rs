@@ -926,7 +926,6 @@ unsafe extern "C" fn api_RunWithBinding(sess: *mut PmmlSession, _run_opts: *cons
     let h = unsafe { &mut *(sess as *mut SessionHandle) };
     let b = unsafe { &mut *(binding as *mut IoBindingHandle) };
     let map = b.inputs.clone();
-    use crate::session::batch::Batch;
     let result = match h.session.run(&map as &dyn crate::session::batch::Batch) {
         Ok(r) => r,
         Err(e) => return status_from_error(e),
