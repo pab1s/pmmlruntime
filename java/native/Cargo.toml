@@ -12,6 +12,7 @@ name = "pmmlruntime_jni"
 
 [dependencies]
 jni = "0.21"
+pmmlruntime = { path = "../../crates/pmmlruntime" }
 
 [profile.release]
 lto = true
