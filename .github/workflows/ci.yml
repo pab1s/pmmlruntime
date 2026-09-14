@@ -77,3 +77,34 @@ jobs:
       - run: cargo install mdbook mdbook-mermaid --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
       - run: mdbook build docs
+  bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Task 8: C ABI gate — versioned PmmlApi table stays at v1 (asserts api.version == 1)
+      - run: cargo test -p pmmlruntime --test ffi_binding -- --nocapture
+      # Task 8: Python binding over C PmmlApi (maturin; forward-compat flag for pyo3 0.22 on newer Pythons)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "maturin>=1.7" "numpy>=1.21" "pyarrow>=12" "pytest>=7"
+      - run: pip install -e python/
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+      - run: python -m pytest python/tests/ -q
+      # Task 8: Java binding (NativeLoader falls back to java/native/target/debug|release, no extra flags)
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: cargo build --manifest-path java/native/Cargo.toml
+      - run: mvn -f java/pom.xml test
+      # Task 8: Node binding (napi build, then test.js over bench PMML)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npx -y @napi-rs/cli build --platform --release
+        working-directory: javascript/node
+      - run: node test.js
+        working-directory: javascript/node
