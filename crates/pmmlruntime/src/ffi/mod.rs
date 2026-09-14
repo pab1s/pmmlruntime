@@ -884,8 +884,10 @@ unsafe extern "C" fn api_RunArrow(
     _out_array: *mut ArrowArray,
     _out_schema: *mut ArrowSchema,
 ) -> *mut PmmlStatus {
-    // TODO: implement Arrow C Data Interface zero-copy via arrow-rs ffi
-    make_status(PmmlErrorCode::Unknown, "RunArrow: not yet implemented (stub)")
+    if _sess.is_null() || _in_array.is_null() || _in_schema.is_null() || _out_array.is_null() || _out_schema.is_null() {
+        return status_invalid_arg("RunArrow: null arg");
+    }
+    make_status(PmmlErrorCode::UnsupportedMarkup, "RunArrow: Arrow columnar not yet in v1, use RunBatch")
 }
 
 unsafe extern "C" fn api_CreateIoBinding(sess: *mut PmmlSession, out: *mut *mut PmmlIoBinding) -> *mut PmmlStatus {
@@ -910,8 +912,10 @@ unsafe extern "C" fn api_BindInput(b: *mut PmmlIoBinding, name: *const c_char, v
 }
 
 unsafe extern "C" fn api_BindInputArrow(b: *mut PmmlIoBinding, _name: *const c_char, _array: *const ArrowArray, _schema: *const ArrowSchema) -> *mut PmmlStatus {
-    let _ = b;
-    make_status(PmmlErrorCode::Unknown, "BindInputArrow: not yet implemented")
+    if b.is_null() || _name.is_null() || _array.is_null() || _schema.is_null() {
+        return status_invalid_arg("BindInputArrow: null arg");
+    }
+    make_status(PmmlErrorCode::UnsupportedMarkup, "BindInputArrow: Arrow columnar not yet in v1, use RunBatch")
 }
 
 unsafe extern "C" fn api_BindOutput(b: *mut PmmlIoBinding, name: *const c_char) -> *mut PmmlStatus {

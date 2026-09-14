@@ -52,3 +52,14 @@ fn ffi_runbatch_rowcount() {
         (api.ReleaseEnv.unwrap())(env);
     }
 }
+
+#[test]
+fn ffi_runarrow_null_guard() {
+    unsafe {
+        let api = &*pmmlruntime::ffi::PmmlGetApi(1);
+        let s = (api.RunArrow.unwrap())(std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null_mut(), std::ptr::null_mut());
+        assert!(!s.is_null());
+        assert_eq!(pmmlruntime::ffi::PmmlGetErrorCode(s), pmmlruntime::ffi::PmmlErrorCode::InvalidArgument);
+        pmmlruntime::ffi::PmmlReleaseStatus(s);
+    }
+}

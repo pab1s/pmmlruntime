@@ -139,6 +139,7 @@ typedef struct PmmlApi {
                             /* out */ PmmlValue* out_flat, size_t* out_rows_inout);
 
     /* Arrow — zero-copy (Arrow C Data Interface). Caller owns input ArrowArray/Schema; callee fills output. */
+    /* v1 contract: not yet implemented — returns PMML_ERR_UNSUPPORTED_MARKUP, use RunBatch; null arg returns PMML_ERR_INVALID_ARGUMENT. */
     PmmlStatus* (*RunArrow)(PmmlSession* sess, const PmmlRunOptions* run_opts,
                             const struct ArrowArray* input_array, const struct ArrowSchema* input_schema,
                             struct ArrowArray* out_array, struct ArrowSchema* out_schema);
