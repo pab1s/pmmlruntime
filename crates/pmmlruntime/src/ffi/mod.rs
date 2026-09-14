@@ -367,9 +367,9 @@ struct RunOptionsHandle {
 }
 
 struct IoBindingHandle {
-    // For now, simple map + outputs. Future: Arrow buffers.
     inputs: HashMap<String, Value>,
     outputs: Vec<String>,
+    last: Option<Vec<HashMap<String, Value>>>,
 }
 
 struct StatusHandle {
@@ -889,7 +889,7 @@ unsafe extern "C" fn api_RunArrow(
 
 unsafe extern "C" fn api_CreateIoBinding(sess: *mut PmmlSession, out: *mut *mut PmmlIoBinding) -> *mut PmmlStatus {
     if sess.is_null() || out.is_null() { return status_invalid_arg("CreateIoBinding: null"); }
-    let h = Box::new(IoBindingHandle { inputs: HashMap::new(), outputs: Vec::new() });
+    let h = Box::new(IoBindingHandle { inputs: HashMap::new(), outputs: Vec::new(), last: None });
     unsafe { *out = Box::into_raw(h) as *mut PmmlIoBinding };
     let _ = sess;
     ptr::null_mut()
@@ -924,29 +924,39 @@ unsafe extern "C" fn api_BindOutput(b: *mut PmmlIoBinding, name: *const c_char) 
 unsafe extern "C" fn api_RunWithBinding(sess: *mut PmmlSession, _run_opts: *const PmmlRunOptions, binding: *mut PmmlIoBinding) -> *mut PmmlStatus {
     if sess.is_null() || binding.is_null() { return status_invalid_arg("RunWithBinding: null"); }
     let h = unsafe { &mut *(sess as *mut SessionHandle) };
-    let b = unsafe { &*(binding as *mut IoBindingHandle) };
+    let b = unsafe { &mut *(binding as *mut IoBindingHandle) };
     let map = b.inputs.clone();
     use crate::session::batch::Batch;
     let result = match h.session.run(&map as &dyn crate::session::batch::Batch) {
         Ok(r) => r,
         Err(e) => return status_from_error(e),
     };
-    // Store back into binding's outputs? For now we stash in inputs as last result? We need a place to retrieve via CopyBindingOutputsToCpu.
-    // Instead, misuse binding's inputs to hold output flat: we keep result rows in a thread-local? Simpler: store result in binding's outputs vector as formatted?
-    // For scaffold, store result's predictedValue into a static? Instead, extend IoBindingHandle to hold last result.
-    // We add a hidden field via extra allocation: use a global static mutex for last result per binding? For now, leak via Box::leak alternative is to extend struct.
-    // Quick hack: we transmute binding to hold result in a separate global map keyed by binding pointer.
-    // Instead, define IoBindingHandle with last_result field.
-    // We'll need to mutate struct definition — but we already defined it without. Patch by using unsafe extra storage.
-    // For now, store result's row into the binding's inputs under special key "__last_result".
-    // Proper impl will change IoBindingHandle to have Option<BatchResult>.
-    // This stub just returns OK — caller should use Run directly until IoBinding is fully implemented.
-    let _ = result;
+    b.last = Some(result.into_rows());
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_CopyBindingOutputsToCpu(_binding: *mut PmmlIoBinding, _out_flat: *mut PmmlValue, _out_count: *mut usize) -> *mut PmmlStatus {
-    make_status(PmmlErrorCode::Unknown, "CopyBindingOutputsToCpu: not yet implemented")
+unsafe extern "C" fn api_CopyBindingOutputsToCpu(binding: *mut PmmlIoBinding, out_flat: *mut PmmlValue, out_count: *mut usize) -> *mut PmmlStatus {
+    if binding.is_null() || out_flat.is_null() || out_count.is_null() { return status_invalid_arg("CopyBindingOutputsToCpu: null"); }
+    let b = unsafe { &*(binding as *mut IoBindingHandle) };
+    let rows = match b.last.as_ref() {
+        Some(r) => r,
+        None => return status_invalid_arg("CopyBindingOutputsToCpu: no run yet"),
+    };
+    if rows.is_empty() { return status_invalid_arg("CopyBindingOutputsToCpu: empty result"); }
+    let row = &rows[0];
+    let want: Vec<String> = if b.outputs.is_empty() {
+        row.keys().cloned().collect()
+    } else {
+        b.outputs.clone()
+    };
+    let capacity = unsafe { *out_count };
+    if capacity < want.len() { return status_invalid_arg("CopyBindingOutputsToCpu: buffer too small"); }
+    for (i, name) in want.iter().enumerate() {
+        let v = row.get(name).copied().unwrap_or(Value::Missing);
+        unsafe { *out_flat.add(i) = value_to_pmml_value(v) };
+    }
+    unsafe { *out_count = want.len() };
+    ptr::null_mut()
 }
 
 unsafe extern "C" fn api_CreateRunOptions(out: *mut *mut PmmlRunOptions) -> *mut PmmlStatus {
