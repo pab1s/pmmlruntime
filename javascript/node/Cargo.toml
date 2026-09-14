@@ -13,6 +13,7 @@ name = "pmmlruntime_node"
 [dependencies]
 napi = { version = "2", features = ["napi4"] }
 napi-derive = "2"
+pmmlruntime = { path = "../../crates/pmmlruntime" }
 
 [build-dependencies]
 napi-build = "2"
