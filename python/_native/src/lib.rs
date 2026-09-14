@@ -75,11 +75,16 @@ impl InferenceSession {
         providers: Option<Bound<'_, PyAny>>,
         provider_options: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let _ = sess_options;
+        // providers / provider_options intentionally ignored (CPU-only runtime).
         let _ = providers;
         let _ = provider_options;
+        // Honor SessionOptions graph level when a PySessionOptions is passed; else default.
+        let opts: RustSessionOptions = sess_options
+            .as_ref()
+            .and_then(|o| o.extract::<PyRef<PySessionOptions>>().ok().map(|r| r.inner.clone()))
+            .unwrap_or_default();
         let env = PmmlEnv::new();
-        let opts = RustSessionOptions::default();
+        // (opts moved into Session::from_* below)
         let session = if let Ok(s) = path_or_bytes.extract::<String>() {
             let p = Path::new(&s);
             if p.exists() {
@@ -109,9 +114,12 @@ impl InferenceSession {
     #[staticmethod]
     #[pyo3(signature = (bytes, sess_options=None))]
     fn from_bytes(bytes: Vec<u8>, sess_options: Option<Bound<'_, PyAny>>) -> PyResult<Self> {
-        let _ = sess_options;
+        // Honor SessionOptions graph level when provided; else default.
+        let opts: RustSessionOptions = sess_options
+            .as_ref()
+            .and_then(|o| o.extract::<PyRef<PySessionOptions>>().ok().map(|r| r.inner.clone()))
+            .unwrap_or_default();
         let env = PmmlEnv::new();
-        let opts = RustSessionOptions::default();
         let sess = Session::from_bytes(&env, &bytes, opts).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Ok(Self { session: sess, _env: env })
     }
@@ -206,8 +214,9 @@ impl InferenceSession {
         input_feed: Bound<'_, PyAny>,
         run_options: Option<Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
+        // run_options intentionally ignored (no per-run knobs yet).
         let _ = run_options;
-        let _ = output_names;
+        let wanted: Option<std::collections::HashSet<String>> = output_names.map(|v| v.into_iter().collect());
         if let Ok(dict) = input_feed.downcast::<PyDict>() {
             let mut map = HashMap::new();
             for (k, v) in dict.iter() {
@@ -223,6 +232,7 @@ impl InferenceSession {
             for row in rows {
                 let d = PyDict::new_bound(py);
                 for (k, v) in row {
+                    if let Some(ref w) = wanted { if !w.contains(&k) { continue; } }
                     d.set_item(k, value_to_pyobject(py, v, &self.session))?;
                 }
                 pylist.append(d)?;
@@ -248,6 +258,7 @@ impl InferenceSession {
             for row in rows {
                 let d = PyDict::new_bound(py);
                 for (k, v) in row {
+                    if let Some(ref w) = wanted { if !w.contains(&k) { continue; } }
                     d.set_item(k, value_to_pyobject(py, v, &self.session))?;
                 }
                 pylist.append(d)?;
@@ -266,7 +277,7 @@ impl InferenceSession {
     }
 }
 
-#[pyclass]
+#[pyclass(name = "SessionOptions")]
 struct PySessionOptions {
     inner: RustSessionOptions,
 }
