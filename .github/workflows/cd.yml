@@ -130,17 +130,21 @@ jobs:
           manylinux: ${{ matrix.manylinux || 'auto' }}
           working-directory: python
           args: --release --out dist
+      # The manylinux wheel step runs in a container, so python/dist is root owned by
+      # now and the host cannot write into it. The sdist gets its own directory.
       - name: Build sdist
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           working-directory: python
-          args: --manifest-path _native/Cargo.toml --out dist
+          args: --manifest-path _native/Cargo.toml --out sdist
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
-          path: python/dist/*
+          path: |
+            python/dist/*
+            python/sdist/*
 
   pypi-publish:
     needs: pypi
