@@ -47,7 +47,7 @@ jobs:
       MIRIFLAGS: "-Zmiri-tree-borrows -Zmiri-ignore-leaks"
       # proptest reaches its persistence file through getcwd(), which Miri
       # blocks under isolation. Seeds are not needed here.
-      PROPTEST_DISABLE_FAILURE_PERSISTENCE: "1"
+      PROPTEST_DISABLE_FAILURE_PERSISTENCE: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
