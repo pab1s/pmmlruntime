@@ -28,6 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: python3 scripts/check-versions.py
       - run: cargo check --workspace
   test:
     runs-on: ubuntu-latest
@@ -43,7 +44,10 @@ jobs:
   miri:
     runs-on: ubuntu-latest
     env:
-      MIRIFLAGS: "-Zmiri-tree-borrows -Zmiri-ignore-leaks"
+      # isolation-error=warn lets blocked syscalls return an error instead of
+      # aborting: proptest resolves its seed file through getcwd(), warns, and
+      # carries on without persistence. Isolation itself stays on.
+      MIRIFLAGS: "-Zmiri-tree-borrows -Zmiri-ignore-leaks -Zmiri-isolation-error=warn"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -77,3 +81,41 @@ jobs:
       - run: cargo install mdbook mdbook-mermaid --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
       - run: mdbook build docs
+  bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Task 8: C ABI gate — versioned PmmlApi table stays at v1 (asserts api.version == 1)
+      - run: cargo test -p pmmlruntime --test ffi_binding -- --nocapture
+      # Task 8: Python binding over C PmmlApi (maturin; forward-compat flag for pyo3 0.22 on newer Pythons)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "maturin>=1.7" "numpy>=1.21" "pyarrow>=12" "pytest>=7"
+      - run: pip install -e python/
+      - run: python -m pytest python/tests/ -q
+      # Task 8: Java binding (NativeLoader falls back to java/native/target/debug|release, no extra flags)
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: cargo build --manifest-path java/native/Cargo.toml
+      - run: mvn -f java/pom.xml test
+      # Task 8: Node binding (napi build, then test.js over bench PMML)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npx -y -p @napi-rs/cli napi build --platform --release
+        working-directory: javascript/node
+      - run: node test.js
+        working-directory: javascript/node
+      # Web build: the wasm package publishes to npm from the same tag
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: |
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - run: wasm-pack build --target web --release
+        working-directory: javascript/web

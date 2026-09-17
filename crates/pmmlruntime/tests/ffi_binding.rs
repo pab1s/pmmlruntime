@@ -1,0 +1,114 @@
+// This test drives the C ABI by hand, so it casts raw pointers on purpose.
+#![allow(clippy::borrow_as_ptr, clippy::ptr_as_ptr, clippy::ptr_cast_constness)]
+
+use pmmlruntime::ffi::{PmmlGetApi, PmmlLogLevel, PmmlValue};
+use std::ffi::CString;
+#[test]
+fn ffi_iobinding_roundtrip() {
+    unsafe {
+        let api = &*PmmlGetApi(1);
+        assert_eq!(api.version, 1);
+        let log_id = CString::new("test").unwrap();
+        let mut env: *mut pmmlruntime::ffi::PmmlEnv = std::ptr::null_mut();
+        assert!(
+            (api.CreateEnv.unwrap())(PmmlLogLevel::Warning, log_id.as_ptr(), &mut env).is_null()
+        );
+        let bytes = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+            .unwrap();
+        let mut sess: *mut pmmlruntime::ffi::PmmlSession = std::ptr::null_mut();
+        assert!((api.CreateSessionFromArray.unwrap())(
+            env as *const _,
+            bytes.as_ptr() as *const _,
+            bytes.len(),
+            std::ptr::null(),
+            &mut sess
+        )
+        .is_null());
+        let mut b: *mut pmmlruntime::ffi::PmmlIoBinding = std::ptr::null_mut();
+        assert!((api.CreateIoBinding.unwrap())(sess, &mut b).is_null());
+        let k = CString::new("Petal.Length").unwrap();
+        let v = PmmlValue::continuous(1.4);
+        assert!((api.BindInput.unwrap())(b, k.as_ptr(), v).is_null());
+        let ko = CString::new("predictedValue").unwrap();
+        assert!((api.BindOutput.unwrap())(b, ko.as_ptr()).is_null());
+        assert!((api.RunWithBinding.unwrap())(sess, std::ptr::null(), b).is_null());
+        let mut out = [PmmlValue::missing(); 4];
+        let mut n = out.len();
+        assert!((api.CopyBindingOutputsToCpu.unwrap())(b, out.as_mut_ptr(), &mut n).is_null());
+        assert!(n >= 1);
+        (api.ReleaseIoBinding.unwrap())(b);
+        (api.ReleaseSession.unwrap())(sess);
+        (api.ReleaseEnv.unwrap())(env);
+    }
+}
+
+#[test]
+fn ffi_runbatch_rowcount() {
+    unsafe {
+        let api = &*pmmlruntime::ffi::PmmlGetApi(1);
+        let log_id = std::ffi::CString::new("test").unwrap();
+        let mut env: *mut pmmlruntime::ffi::PmmlEnv = std::ptr::null_mut();
+        assert!((api.CreateEnv.unwrap())(
+            pmmlruntime::ffi::PmmlLogLevel::Warning,
+            log_id.as_ptr(),
+            &mut env
+        )
+        .is_null());
+        let bytes = std::fs::read("bench/pmml/DecisionTreeIris.pmml")
+            .or_else(|_| std::fs::read("../../bench/pmml/DecisionTreeIris.pmml"))
+            .unwrap();
+        let mut sess: *mut pmmlruntime::ffi::PmmlSession = std::ptr::null_mut();
+        assert!((api.CreateSessionFromArray.unwrap())(
+            env as *const _,
+            bytes.as_ptr() as *const _,
+            bytes.len(),
+            std::ptr::null(),
+            &mut sess
+        )
+        .is_null());
+        let n0 = std::ffi::CString::new("Petal.Length").unwrap();
+        let in_names = [n0.as_ptr()];
+        let flat = [
+            pmmlruntime::ffi::PmmlValue::continuous(1.4),
+            pmmlruntime::ffi::PmmlValue::continuous(6.0),
+        ];
+        let mut out = [pmmlruntime::ffi::PmmlValue::missing(); 4];
+        let mut cap = out.len();
+        assert!((api.RunBatch.unwrap())(
+            sess,
+            std::ptr::null(),
+            in_names.as_ptr(),
+            flat.as_ptr(),
+            2,
+            1,
+            out.as_mut_ptr(),
+            &mut cap
+        )
+        .is_null());
+        assert_eq!(cap, 2);
+        (api.ReleaseSession.unwrap())(sess);
+        (api.ReleaseEnv.unwrap())(env);
+    }
+}
+
+#[test]
+fn ffi_runarrow_null_guard() {
+    unsafe {
+        let api = &*pmmlruntime::ffi::PmmlGetApi(1);
+        let s = (api.RunArrow.unwrap())(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        assert!(!s.is_null());
+        assert_eq!(
+            pmmlruntime::ffi::PmmlGetErrorCode(s),
+            pmmlruntime::ffi::PmmlErrorCode::InvalidArgument
+        );
+        pmmlruntime::ffi::PmmlReleaseStatus(s);
+    }
+}

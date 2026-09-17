@@ -1,0 +1,18 @@
+[package]
+name = "pmmlruntime-jni"
+version = "0.1.1"
+edition = "2021"
+description = "pmmlruntime JNI shim over include/pmml_runtime.h PmmlApi (like onnxruntime/java jni over OrtApi)"
+license = "Apache-2.0"
+# NOT in workspace (root Cargo.toml exclude) — like onnxruntime/java's own build
+
+[lib]
+crate-type = ["cdylib"]
+name = "pmmlruntime_jni"
+
+[dependencies]
+jni = "0.21"
+pmmlruntime = { path = "../../crates/pmmlruntime" }
+
+[profile.release]
+lto = true

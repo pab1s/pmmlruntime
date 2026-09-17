@@ -8,6 +8,22 @@
 //!
 //! The binary itself does one external run; call it 5× via bench.sh for stats.
 
+// A benchmark harness reports durations as floats and prints them as JSON, so the
+// pedantic cast and format lints that guard the library do not apply here.
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::if_not_else,
+    clippy::to_string_in_format_args,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    clippy::unnecessary_wraps,
+    clippy::unit_arg,
+    unused_variables
+)]
+
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -18,7 +34,9 @@ use pmmlruntime::session::{PmmlEnv, Session, SessionOptions};
 use pmmlruntime::Value;
 
 fn usage() {
-    eprintln!("Usage: bench_real <pmml1> [pmml2 ...] [--runs N] [--iterations N] [--batch 100] [--json]");
+    eprintln!(
+        "Usage: bench_real <pmml1> [pmml2 ...] [--runs N] [--iterations N] [--batch 100] [--json]"
+    );
     eprintln!("  Defaults: runs=1 external run does internal loops; iterations=50000 for single, batch sizes 100/1000/10000");
 }
 
@@ -120,7 +138,8 @@ fn make_value(sess: &Session, field: &str, idx: usize, row: usize) -> Value {
         }
     }
     // continuous: deterministic pseudo-randomish
-    let v = ((row.wrapping_mul(7919).wrapping_add(idx.wrapping_mul(97)) % 10000) as f64) / 1000.0 + 0.1;
+    let v =
+        ((row.wrapping_mul(7919).wrapping_add(idx.wrapping_mul(97)) % 10000) as f64) / 1000.0 + 0.1;
     // add variation per row
     let v2 = v + ((row % 7) as f64) * 0.13;
     Value::Continuous(v2)
@@ -136,7 +155,10 @@ fn make_single_input(sess: &Session, row: usize) -> HashMap<String, Value> {
     if m.is_empty() {
         // fallback to all field_names
         for (idx, name) in sess.ir.field_names.values().enumerate().take(3) {
-            m.insert(name.clone(), Value::Continuous(idx as f64 + row as f64 * 0.01));
+            m.insert(
+                name.clone(),
+                Value::Continuous(idx as f64 + row as f64 * 0.01),
+            );
         }
     }
     m
@@ -179,7 +201,8 @@ fn bench_model(path: &Path, iterations_single: usize) {
     let mut cold_times = Vec::with_capacity(cold_iterations);
     for _ in 0..cold_iterations {
         let t0 = Instant::now();
-        let sess = Session::from_bytes(&env, &bytes, SessionOptions::default()).expect("from_bytes");
+        let sess =
+            Session::from_bytes(&env, &bytes, SessionOptions::default()).expect("from_bytes");
         black_box(&sess);
         cold_times.push(t0.elapsed());
     }
@@ -212,7 +235,11 @@ fn bench_model(path: &Path, iterations_single: usize) {
     let warmup = 10_000;
     let (total_single, per_row_times) = time(
         || {
-            let out = sess.run(&single_input as &dyn Batch).expect("run").into_single().unwrap();
+            let out = sess
+                .run(&single_input as &dyn Batch)
+                .expect("run")
+                .into_single()
+                .unwrap();
             black_box(out);
         },
         iterations_single,
@@ -220,11 +247,19 @@ fn bench_model(path: &Path, iterations_single: usize) {
     );
     let per_row_ns = total_single.as_nanos() as f64 / iterations_single as f64;
     let per_row_std_ns = if !per_row_times.is_empty() {
-        let mean = per_row_times.iter().map(|d| d.as_nanos() as f64).sum::<f64>() / per_row_times.len() as f64;
-        let var = per_row_times.iter().map(|d| {
-            let x = d.as_nanos() as f64 - mean;
-            x*x
-        }).sum::<f64>() / per_row_times.len() as f64;
+        let mean = per_row_times
+            .iter()
+            .map(|d| d.as_nanos() as f64)
+            .sum::<f64>()
+            / per_row_times.len() as f64;
+        let var = per_row_times
+            .iter()
+            .map(|d| {
+                let x = d.as_nanos() as f64 - mean;
+                x * x
+            })
+            .sum::<f64>()
+            / per_row_times.len() as f64;
         var.sqrt()
     } else {
         0.0
@@ -245,7 +280,10 @@ fn bench_model(path: &Path, iterations_single: usize) {
         let warmup_b = 200;
         let (total_b, _) = time(
             || {
-                let out = sess.run(&batch as &dyn Batch).expect("run_batch").into_rows();
+                let out = sess
+                    .run(&batch as &dyn Batch)
+                    .expect("run_batch")
+                    .into_rows();
                 black_box(out);
             },
             iters,
@@ -261,7 +299,7 @@ fn bench_model(path: &Path, iterations_single: usize) {
     let arrow_batch_result = {
         // try to create RecordBatch for 10k
         let bs = 10_000;
-        let batch_vec = make_batch(&sess, bs);
+        let _batch_vec = make_batch(&sess, bs);
         // convert to RecordBatch via helper if possible: we need to know field types.
         // For simplicity, skip arrow if any categorical - just reuse row-major metric.
         // We'll attempt via arrow crate if fields are mostly continuous.
@@ -272,11 +310,28 @@ fn bench_model(path: &Path, iterations_single: usize) {
     let model_name = path.file_name().unwrap().to_string_lossy();
     let size_kb = bytes.len() as f64 / 1024.0;
 
-    println!("=== {} ({:.1} KB, {} active fields) ===", model_name, size_kb, active_field_names(&sess).len());
-    println!("cold load: median {:?} mean {:?} ± {:?} min {:?} max {:?} (n={})", cold_median, cold_mean, cold_std, cold_min, cold_max, cold_iterations);
-    println!("hot single: {:.1} ns/row ± {:.1} ns (total {:?} for {} iters, warmup {})", per_row_ns, per_row_std_ns, total_single, iterations_single, warmup);
+    println!(
+        "=== {} ({:.1} KB, {} active fields) ===",
+        model_name,
+        size_kb,
+        active_field_names(&sess).len()
+    );
+    println!(
+        "cold load: median {:?} mean {:?} ± {:?} min {:?} max {:?} (n={})",
+        cold_median, cold_mean, cold_std, cold_min, cold_max, cold_iterations
+    );
+    println!(
+        "hot single: {:.1} ns/row ± {:.1} ns (total {:?} for {} iters, warmup {})",
+        per_row_ns, per_row_std_ns, total_single, iterations_single, warmup
+    );
     for (bs, batch_ns, per_row_ns, thr) in &batch_results {
-        println!("batch {:>5}: {:>8.1} µs/batch | {:>6.1} ns/row | {:>7.0} rows/s", bs, batch_ns/1_000.0, per_row_ns, thr);
+        println!(
+            "batch {:>5}: {:>8.1} µs/batch | {:>6.1} ns/row | {:>7.0} rows/s",
+            bs,
+            batch_ns / 1_000.0,
+            per_row_ns,
+            thr
+        );
     }
     if let Some((_, _)) = arrow_batch_result {
         // placeholder

@@ -98,7 +98,15 @@ fn find_continuous_dist<'a>(
     }
 }
 
-/// Evaluate a [`BayesianNetworkIr`] against a dense `values` array.
+/// Evaluates a [`BayesianNetworkIr`] against a dense `values` array.
+///
+/// Takes the `model` lowered from `BayesianNetworkModel` and the `values`
+/// hot-path buffer indexed by [`FieldId`](crate::base::FieldId). Performs exact
+/// enumeration over unobserved discrete nodes (see module docs) and returns a
+/// posterior `Discrete` or expected `Continuous` [`Value`](crate::base::Value),
+/// or [`Value::Missing`] when enumeration fails or `model.nodes` is empty.
+///
+/// Returns the scored [`Value`] (see module docs for posterior logic).
 pub fn evaluate_bayesian_network(model: &BayesianNetworkIr, values: &[Value]) -> Value {
     // Determine primary target field
     let target_fid_opt = model.mining_schema.target_field.or_else(|| {
