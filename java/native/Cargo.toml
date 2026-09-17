@@ -1,6 +1,6 @@
 [package]
 name = "pmmlruntime-jni"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "pmmlruntime JNI shim over include/pmml_runtime.h PmmlApi (like onnxruntime/java jni over OrtApi)"
 license = "Apache-2.0"

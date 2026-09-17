@@ -12,6 +12,7 @@ build-dir = "book"
 additional-css = []
 git-repository-url = "https://github.com/pab1s/pmmlruntime"
 edit-url-template = "https://github.com/pab1s/pmmlruntime/edit/main/docs/src/{path}"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [preprocessor.mermaid]
 command = "mdbook-mermaid"

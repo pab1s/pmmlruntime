@@ -5,13 +5,25 @@
 
   <groupId>com.pmmlruntime</groupId>
   <artifactId>pmmlruntime</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <packaging>jar</packaging>
 
   <name>pmmlruntime</name>
   <description>PMML 4.4 without the JVM — Java binding over C PmmlApi (like com.microsoft.onnxruntime:onnxruntime)</description>
   <url>https://github.com/pab1s/pmmlruntime</url>
   <licenses><license><name>Apache-2.0</name><url>https://www.apache.org/licenses/LICENSE-2.0</url></license></licenses>
+  <developers>
+    <developer>
+      <id>pab1s</id>
+      <name>Pablo Olivares</name>
+      <email>pablolivares1502@gmail.com</email>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git:git://github.com/pab1s/pmmlruntime.git</connection>
+    <developerConnection>scm:git:ssh://github.com/pab1s/pmmlruntime.git</developerConnection>
+    <url>https://github.com/pab1s/pmmlruntime</url>
+  </scm>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -40,4 +52,67 @@
       <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.1.2</version></plugin>
     </plugins>
   </build>
+
+  <!-- Release build: ships the JNI libraries under src/main/resources/native/<os>-<arch>/
+       (copied in by .github/workflows/cd.yml), attaches sources and javadoc jars, signs
+       with GPG, and uploads to Maven Central through the Central Portal.
+
+       Required secrets: MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD (portal token),
+       GPG_PRIVATE_KEY, GPG_PASSPHRASE.
+
+         mvn -f java/pom.xml -Prelease deploy
+  -->
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions>
+              <execution><id>attach-sources</id><goals><goal>jar-no-fork</goal></goals></execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.6.3</version>
+            <configuration>
+              <additionalOptions>-Xdoclint:none</additionalOptions>
+            </configuration>
+            <executions>
+              <execution><id>attach-javadocs</id><goals><goal>jar</goal></goals></execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.4</version>
+            <configuration>
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
+            <executions>
+              <execution><id>sign-artifacts</id><phase>verify</phase><goals><goal>sign</goal></goals></execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.7.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+              <waitUntil>published</waitUntil>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

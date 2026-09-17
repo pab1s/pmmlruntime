@@ -1,4 +1,4 @@
-# Architecture — pmmlruntime `0.1.0`
+# Architecture - pmmlruntime `0.1.0`
 
 > Single crate. `base -> xml -> ir -> engine -> session -> ffi/python`. Cold path builds `Ir`; hot path scores `Value` slices.
 
@@ -38,13 +38,13 @@ Single crate `pmmlruntime` (`Cargo.toml` `resolver=2`, `edition=2021`, `rust-ver
 
 ```
 crates/pmmlruntime/src/
-├─ base/         # zero-cost types, arena, errors — no XML, no IR
+├─ base/         # zero-cost types, arena, errors - no XML, no IR
 │  ├─ value.rs   # Value / FieldId / SymbolId
 │  ├─ field.rs   # DataType / OpType / MiningFunction / ResultFeature
 │  ├─ arena.rs   # BumpArena
 │  └─ error.rs   # PmmlError
 ├─ xml/          # cold only
-│  ├─ reader.rs  # PmmlReader — hardened quick-xml
+│  ├─ reader.rs  # PmmlReader - hardened quick-xml
 │  └─ unmarshal.rs # -> RawPmml (304 PMML elements, 1:1 with pmml.xsd)
 ├─ ir/           # lower + verify + Interner
 │  ├─ ir.rs      # Ir, FieldMeta, Op, ModelIr (19 variants)
@@ -62,12 +62,12 @@ crates/pmmlruntime/src/
 │  ├─ batch.rs   # Batch / BatchCtx / BatchResult
 │  ├─ arrow.rs   # RecordBatch helpers
 │  ├─ input.rs   # string_to_value
-│  └─ providers/ # cpu.rs — unified Cpu provider
+│  └─ providers/ # cpu.rs - unified Cpu provider
 ├─ ffi/          # C ABI
 └─ python/       # pyo3 placeholder (feature-gated)
 ```
 
-## 2. Data & control flow — cold vs hot
+## 2. Data & control flow - cold vs hot
 
 ```mermaid
 flowchart LR
@@ -123,7 +123,7 @@ sequenceDiagram
     S-->>U: predictedValue
 ```
 
-## 3. Value representation — why `Value` slices
+## 3. Value representation - why `Value` slices
 
 ```mermaid
 classDiagram
@@ -148,9 +148,9 @@ classDiagram
     SymbolId --> Value : Discrete payload
 ```
 
-* `FieldId(u32)` assigned by `Interner` cold — dense `0..num_fields`. Hot path is `values[fid.as_usize()]` single bounds check.
+* `FieldId(u32)` assigned by `Interner` cold - dense `0..num_fields`. Hot path is `values[fid.as_usize()]` single bounds check.
 * `SymbolId(u32)` for every discrete string. Forward map `String -> SymbolId` cold; dense `Vec<String>` for reverse (cache-line friendly).
-* `Value::Missing` is explicit, not `Option<Value>` — avoids double wrap, keeps `Copy`, keeps branchless `Missing` propagation (`Op::JumpIfMissing`).
+* `Value::Missing` is explicit, not `Option<Value>` - avoids double wrap, keeps `Copy`, keeps branchless `Missing` propagation (`Op::JumpIfMissing`).
 
 ## 4. Session construction
 
@@ -169,7 +169,7 @@ flowchart TD
 
 `max_field_id = max(FieldId)+1 max(16)`. `needed = max(max_field_id, num_fields+4).max(16)` passed to `with_value_buffer`.
 
-## 5. Batch abstraction — one method, two layouts
+## 5. Batch abstraction - one method, two layouts
 
 ```mermaid
 flowchart TD
@@ -200,10 +200,10 @@ flowchart LR
 
 ### `BatchResult`
 
-* `Rows(Vec<HashMap<String,Value>>)` — always for `Session::run`, regardless of input layout. Most callers use `into_single` / `into_rows`.
-* `Columnar(RecordBatch)` — only when explicitly converting via `into_record_batch(schema)`.
+* `Rows(Vec<HashMap<String,Value>>)` - always for `Session::run`, regardless of input layout. Most callers use `into_single` / `into_rows`.
+* `Columnar(RecordBatch)` - only when explicitly converting via `into_record_batch(schema)`.
 
-## 6. Execution provider — unified `Cpu`
+## 6. Execution provider - unified `Cpu`
 
 ```mermaid
 flowchart TD
@@ -221,7 +221,7 @@ flowchart TD
 
 * `CpuProvider` is the only provider today; `preferred_format = Columnar` hint but handles both.
 * `eval_row` is single-row VM: derived fields → model → output/targets.
-* `eval_batch` auto-shards. Threshold `lt 256` avoids `rayon` spawn cost (~100 µs > 400 ns × 256 rows). Previously split `cpu_serial.rs`/`cpu_batched.rs` — now merged into `providers/cpu.rs`.
+* `eval_batch` auto-shards. Threshold `lt 256` avoids `rayon` spawn cost (~100 µs > 400 ns × 256 rows). Previously split `cpu_serial.rs`/`cpu_batched.rs` - now merged into `providers/cpu.rs`.
 * `rayon` global pool (future: per-`PmmlEnv` pool).
 
 ## 7. Concurrency & memory
@@ -243,7 +243,7 @@ flowchart TB
     SessionBox --> Lag
 ```
 
-* `Session: Send+Sync`. `run(&self)` never takes `&mut` — it borrows `Arc<Ir>` and builds `BatchCtx` on stack, then `with_value_buffer` gives each thread its own `mut Value` slice.
+* `Session: Send+Sync`. `run(&self)` never takes `&mut` - it borrows `Arc<Ir>` and builds `BatchCtx` on stack, then `with_value_buffer` gives each thread its own `mut Value` slice.
 * `STACK_VALUES_THRESHOLD = 64` covers ~90% fixtures (Iris 3, Diabetes 8, Shopping 22). Larger models spill to `thread_local Vec`.
 * `BumpArena` is `Send` (owns `Bump`) moved into rayon threads; `miri` clean, no leak.
 * `LAG_BUFFER` is `thread_local` so `Lag` doesn't cross batches.
@@ -264,7 +264,7 @@ sequenceDiagram
     B->>B: eval_row own mut Value slice
 ```
 
-## 8. IR — what `lower` produces
+## 8. IR - what `lower` produces
 
 ```mermaid
 flowchart TD
@@ -283,11 +283,11 @@ flowchart TD
     Verify --> IrDone["Ir<br>data_dictionary derived_fields model"]
 ```
 
-* `TreeModel` flattened `Vec<NodeIr>` — root at 0, branchless traversal, `SmallVec<[Box<PredicateIr>;4]>`.
+* `TreeModel` flattened `Vec<NodeIr>` - root at 0, branchless traversal, `SmallVec<[Box<PredicateIr>;4]>`.
 * `DerivedFieldIr.bytecode: Vec<Op>` evaluated by `engine::transform::vm::eval` in topo order; `Op::JumpIfMissing` for `IF`.
 * All `FieldId`/`SymbolId` in `Ir` are interned via single `get_or_intern_field`.
 
-## 9. Engine — dispatch
+## 9. Engine - dispatch
 
 ```mermaid
 flowchart TD
@@ -317,7 +317,7 @@ flowchart TD
 ## 10. Storage & serialization boundaries
 
 | Boundary | Format | Notes |
-|---|---|---|
+| --- | --- | --- |
 | XML in | `quick-xml 0.37` pull reader | `trim_text(true)`, `expand_empty_elements`, depth 512, 100 MB, DTD ignored → XXE safe |
 | RawPmml | owned `String`/`Vec` | cold only, dropped after `lower` |
 | Ir | `Arc<Ir>` immutable | flat nodes, topo derived, dense symbol vec |
@@ -325,10 +325,10 @@ flowchart TD
 | Python | `pyo3 0.22` | `extension-module`, `allow_threads` for run (planned `InferenceSession`) |
 | C | `ffi` opaque `*mut PmmlEnv/Session` | `PmmlStatusCode Ok=0 Error=1`, `Send+Sync`, null-tolerant release |
 
-## 11. Performance — targets vs measured (i7-12700, release)
+## 11. Performance - targets vs measured (i7-12700, release)
 
 | Path | Target | Measured | Technique |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Cold `from_bytes` (Iris 2.9 KB, 5 nodes) | ≤80 µs | 68 µs | quick-xml + lower + verify |
 | Single `run` | ≤800 ns | 402 ns | stack `Value[64]` + `AHashMap` 3× + branchless tree |
 | Batch 1k row-major | ≤350 µs | 336 µs (2.97M rows/s) | serial loop, `with_value_buffer` reuse |
@@ -337,15 +337,15 @@ flowchart TD
 
 `STACK_VALUES_THRESHOLD=64` → `64×16B=1KB` on caller frame.
 
-## 12. Invariants — break these and `miri`/`fuzz` will tell you
+## 12. Invariants - break these and `miri`/`fuzz` will tell you
 
 * `Ir.field_names` contains every `FieldId` in `active_fields` + `target_field` + `DerivedFieldIr`.
 * `symbol_names` ↔ `symbol_names_vec` agree: `vec[max_id+1]` dense, `HashMap` for lookup.
-* `DerivedFieldIr` DAG is topo sorted — `eval_derived_fields` assumes order, no cycle check hot.
-* `Value::Missing` is a value, not absence — `Op::JumpIfMissing` is the only branching on it; equality/comparison on `Missing` → `false`.
+* `DerivedFieldIr` DAG is topo sorted - `eval_derived_fields` assumes order, no cycle check hot.
+* `Value::Missing` is a value, not absence - `Op::JumpIfMissing` is the only branching on it; equality/comparison on `Missing` → `false`.
 * `PmmlError::UnsupportedMarkup` only for `ModelComposition`/`CenterFields`; all 19 models are supported.
 * `max_field_id = max(FieldId)+1 max(16)`; `needed = max(max_field_id, num_fields+4)`; out-of-bounds `FieldId` ignored, never panic.
-* Hardenings: `MAX_DEPTH 512`, `MAX_XML_SIZE 100MB`, `LAG_BUFFER` cap 128 — `cargo test --test hardening` + `cargo fuzz` cover.
+* Hardenings: `MAX_DEPTH 512`, `MAX_XML_SIZE 100MB`, `LAG_BUFFER` cap 128 - `cargo test --test hardening` + `cargo fuzz` cover.
 
 ## 13. Extension points
 
@@ -360,14 +360,14 @@ flowchart LR
     G --> H["verify_raw not Unsupported"]
 ```
 
-* **New `BuiltinId`** — add variant `ir::BuiltinId`, map in `builtin_by_name`, dispatch in `eval_builtin` (`statrs`/`libm`/`chrono`).
-* **New `ResultFeature`** — `base::ResultFeature::FromStr` + `is_unsupported`, `engine::output::build_output` match, `Session` mapping.
-* **New provider** — implement `ExecutionProvider {eval_row, eval_batch, preferred_format}`, register in `Session::from_ir` via `SessionOptions`.
+* **New `BuiltinId`** - add variant `ir::BuiltinId`, map in `builtin_by_name`, dispatch in `eval_builtin` (`statrs`/`libm`/`chrono`).
+* **New `ResultFeature`** - `base::ResultFeature::FromStr` + `is_unsupported`, `engine::output::build_output` match, `Session` mapping.
+* **New provider** - implement `ExecutionProvider {eval_row, eval_batch, preferred_format}`, register in `Session::from_ir` via `SessionOptions`.
 
 ## 14. Trade-offs & rejected alternatives
 
 | Decision | Chosen | Rejected | Why |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | XML | `quick-xml 0.37` pull | `serde`/`XJC` generated | XSD 4490 lines, mixed Attr/Elem, `Extension` vendor payloads; serde can't express ordering; quick-xml gives hardening + 68 µs |
 | Interning | `lasso::Rodeo` cold only | `Rodeo` hot | `AHashMap::get` zero-alloc already 3×; `Rodeo` only helps Python `&str` without `String` |
 | Batch | `Batch` trait both layouts | Arrow only | single row `HashMap` 402 ns < Arrow >1 µs + schema friction; `dict`/`Collection` natural |

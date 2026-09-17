@@ -1,5 +1,38 @@
 name: cd
 
+# One tag publishes every artifact:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+#   crates.io     pmmlruntime (Rust)
+#   PyPI          pmmlruntime wheels for linux, macos, windows, plus sdist
+#   npm           pmmlruntime-node plus one package per platform
+#   npm           pmmlruntime-web (wasm)
+#   Maven Central com.pmmlruntime:pmmlruntime, jar with the JNI library inside
+#   GHCR          ghcr.io/<owner>/pmmlruntime:<version> and :latest
+#   GitHub        release with the C headers and libraries
+#
+# Registries that need an account are skipped until the repository
+# variable is set to true:
+#
+#   vars.PUBLISH_PYPI  -> PyPI trusted publishing, or secrets.PYPI_API_TOKEN
+#   vars.PUBLISH_NPM   -> secrets.NPM_TOKEN
+#   vars.PUBLISH_MAVEN -> secrets.MAVEN_CENTRAL_USERNAME,
+#                         secrets.MAVEN_CENTRAL_PASSWORD,
+#                         secrets.GPG_PRIVATE_KEY, secrets.GPG_PASSPHRASE
+#
+# crates.io needs secrets.CARGO_REGISTRY_TOKEN. GHCR and the GitHub release
+# use the default GITHUB_TOKEN.
+#
+# Every publish job waits on `verify`, which runs the version gate and the
+# four test suites, so a tag cannot ship an untested or mis-versioned build.
+# python3 scripts/check-versions.py is the same gate locally.
+#
+# A manual run (Actions, cd, Run workflow) is a DRY RUN: every build, every
+# artifact upload, and every download runs, and only the steps that write to a
+# registry are skipped, because they require a tag push. Use it to validate the
+# pipeline before the first release.
+
 on:
   push:
     tags: ["v*.*.*"]
@@ -8,29 +41,375 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  publish:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Verify package
-        run: cargo package -p pmmlruntime
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Versions agree with the tag
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            python3 scripts/check-versions.py "${GITHUB_REF_NAME}"
+          else
+            python3 scripts/check-versions.py
+          fi
+      - name: Rust tests and fixtures
+        run: |
+          cargo test --workspace -- --nocapture
+          cargo test -p pmmlruntime --test all_fixtures -- --nocapture
+      - name: Python binding tests
+        run: |
+          pip install "maturin>=1.7" "numpy>=1.21" "pyarrow>=12" "pytest>=7"
+          pip install -e python/
+          python -m pytest python/tests/ -q
+      - name: Java binding tests
+        run: |
+          cargo build --manifest-path java/native/Cargo.toml
+          mvn -f java/pom.xml -B test
+      - name: Node binding tests
+        working-directory: javascript/node
+        run: |
+          npx -y -p @napi-rs/cli napi build --platform --release
+          node test.js
+
+  crates:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo package -p pmmlruntime
       - name: Publish to crates.io
-        run: cargo publish -p pmmlruntime --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        if: github.event_name == 'push'
+        run: cargo publish -p pmmlruntime --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # Optional: create GitHub Release when tag is pushed
+  pypi:
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            manylinux: auto
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            manylinux: auto
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          working-directory: python
+          args: --release --out dist
+      - name: Build sdist
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          working-directory: python
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: python/dist/*
+
+  pypi-publish:
+    needs: pypi
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      # Configure the project once at
+      # https://pypi.org/manage/project/pmmlruntime/settings/publishing/
+      # with workflow cd.yml and environment pypi. For a token instead, drop
+      # the permissions block above and add
+      # password: ${{ secrets.PYPI_API_TOKEN }} here.
+      - name: Publish to PyPI
+        if: github.event_name == 'push' && vars.PUBLISH_PYPI == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  npm-node:
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install the cross linker
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Create platform package directories
+        working-directory: javascript/node
+        run: npx -y -p @napi-rs/cli napi create-npm-dirs
+      - name: Build native addon
+        working-directory: javascript/node
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          npx -y -p @napi-rs/cli napi build --platform --release \
+            --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.target }}
+          path: javascript/node/*.node
+
+  npm-publish:
+    needs: npm-node
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: node-*
+          merge-multiple: true
+          path: javascript/node/artifacts
+      - name: Create the platform packages
+        working-directory: javascript/node
+        run: |
+          npx -y -p @napi-rs/cli napi create-npm-dirs
+          npx -y -p @napi-rs/cli napi artifacts --npm-dir npm
+      - name: Fill in the optional dependencies
+        working-directory: javascript/node
+        run: |
+          npx -y -p @napi-rs/cli napi prepublish -t npm \
+            --skip-optional-publish
+      - name: Publish the platform packages
+        if: github.event_name == 'push' && vars.PUBLISH_NPM == 'true'
+        working-directory: javascript/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for dir in npm/*/; do
+            (cd "$dir" && npm publish --provenance --access public)
+          done
+      - name: Publish the main package
+        if: github.event_name == 'push' && vars.PUBLISH_NPM == 'true'
+        working-directory: javascript/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  npm-web:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Install wasm-pack
+        run: |
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - name: Build the wasm package
+        working-directory: javascript/web
+        run: wasm-pack build --target web --release
+      - name: Publish to npm
+        if: github.event_name == 'push' && vars.PUBLISH_NPM == 'true'
+        working-directory: javascript/web/pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  maven:
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            lib: libpmmlruntime_jni.so
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+            lib: libpmmlruntime_jni.so
+            runner: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            platform: macos-x86_64
+            lib: libpmmlruntime_jni.dylib
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            platform: macos-aarch64
+            lib: libpmmlruntime_jni.dylib
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            lib: pmmlruntime_jni.dll
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install the cross linker
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build the JNI library
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --manifest-path java/native/Cargo.toml \
+            --target ${{ matrix.target }}
+      - name: Place the library where the jar picks it up
+        shell: bash
+        run: |
+          dir="java/src/main/resources/native/${{ matrix.platform }}"
+          built="java/native/target/${{ matrix.target }}/release"
+          mkdir -p "$dir"
+          cp "$built/${{ matrix.lib }}" "$dir/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jni-${{ matrix.platform }}
+          path: java/src/main/resources/native/${{ matrix.platform }}/*
+
+  maven-publish:
+    needs: maven
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jni-*
+          merge-multiple: true
+          path: java/src/main/resources/native
+      - name: Deploy to Maven Central
+        if: github.event_name == 'push' && vars.PUBLISH_MAVEN == 'true'
+        run: mvn -f java/pom.xml -B -Prelease deploy
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+  container:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: publish
+    needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the C library
+        run: cargo build -p pmmlruntime --release
+      - name: Collect headers, libraries, and checksums
+        run: |
+          mkdir -p dist
+          cp include/pmml_runtime.h include/pmml_runtime.hpp dist/
+          cp target/release/libpmmlruntime.so dist/ 2>/dev/null || true
+          cp target/release/libpmmlruntime.a dist/ 2>/dev/null || true
+          cd dist && sha256sum * > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
         with:
           generate_release_notes: true
+          files: dist/*

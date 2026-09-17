@@ -1,8 +1,34 @@
 # Rust
 /target/
-/debug/
+**/target/
 **/*.rs.bk
-Cargo.lock
+/debug/
+# The root lockfile is committed: the Dockerfile copies it and `cargo publish
+# --locked` needs it. The binding crates resolve their own lockfiles.
+/java/native/Cargo.lock
+/python/_native/Cargo.lock
+/javascript/node/Cargo.lock
+/javascript/web/Cargo.lock
+/fuzz/Cargo.lock
+
+# Built libraries and addons
+*.node
+*.so
+*.dylib
+*.dll
+
+# Python
+__pycache__/
+.pytest_cache/
+*.whl
+python/pmmlruntime/*.so
+
+# Node
+node_modules/
+javascript/node/npm/
+javascript/web/pkg/
+javascript/node/artifacts/
+dist/
 
 # IDE
 .idea/
@@ -26,6 +52,8 @@ worktrees/
 # mdBook
 /docs/book/
 
+# Release build copies JNI libraries here; they ship inside the jar
+java/src/main/resources/native/
+
 # Secrets
 .env
-python/_native/target/

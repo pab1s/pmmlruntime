@@ -1,6 +1,6 @@
 [package]
 name = "pmmlruntime-native"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "pmmlruntime Python native extension — thin shim over include/pmml_runtime.h PmmlApi (like onnxruntime pybind over C API)"
 license = "Apache-2.0"
@@ -11,7 +11,7 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
 pmmlruntime = { path = "../../crates/pmmlruntime" }
 
 [profile.release]
