@@ -37,7 +37,7 @@ Cold is 68 µs for `DecisionTreeIris.pmml`; hot is 402 ns.
 
 ## Install and build
 
-Install with `rustc 1.78+`:
+Install with `rustc 1.85+`:
 
 ```bash
 cargo add pmmlruntime
@@ -55,7 +55,7 @@ The flags you pick change the hot path:
 | **Release** | `cargo build --release` | Every deploy | 402 ns single row, 61 ns/row batch |
 | **Release + SIMD** | `--features simd` | Columnar `Regression` | `wide::f64x4` kernels |
 
-> **Tip:** Pin `rustc 1.78+` and use `SessionOptions::default()` (`EnableBasic`). Add `features = ["simd"]` only for columnar `Regression`.
+> **Tip:** Pin `rustc 1.85+` and use `SessionOptions::default()` (`EnableBasic`). Add `features = ["simd"]` only for columnar `Regression`.
 
 ## Quickstart
 
@@ -236,7 +236,7 @@ One artifact runs on many targets.
 | Target | Runtime | Artifact | Scoring path | Scaling |
 | --- | --- | --- | --- | --- |
 | **Local** | `cargo run` | `rlib`, `Session::from_file` | `HashMap` single row | Single process |
-| **Docker** | `rust:1.78-slim` to `scratch` | Single binary | `RecordBatch` batch | K8s replicas |
+| **Docker** | `rust:1.85-slim` to `scratch` | Single binary | `RecordBatch` batch | K8s replicas |
 | **Lambda** | `provided.al2` | `bootstrap` under 10 MB | `from_bytes` from S3 | Concurrency |
 | **Edge** | `aarch64` or `x86_64` | `staticlib` | Stack `Value[64]` | Thread-local |
 | **Browser** | `wasm32` | `cdylib` (future) | `HashMap` single row | Single thread |

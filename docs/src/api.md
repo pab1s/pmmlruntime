@@ -8,7 +8,7 @@ Score `DecisionTreeIris.pmml` in one crate with one `Session`. The crate root re
 
 | Concept | Description |
 | --- | --- |
-| **Crate** | `pmmlruntime` `0.1.0`, `resolver = 2`, `edition = 2021`, `rust-version = 1.78`, `Apache-2.0` (`Cargo.toml`). |
+| **Crate** | `pmmlruntime` `0.1.1`, `resolver = 2`, `edition = 2021`, `rust-version = 1.85`, `Apache-2.0` (`Cargo.toml`). |
 | **Modules** | `base`, `xml`, `ir`, `engine`, `session`, `ffi`, `python` (`lib.rs:56`). |
 | **Re-exports** | `base::{FieldId, PmmlError, Result, SymbolId, Value}` and `session::{PmmlEnv, Session, SessionOptions}` (`lib.rs:65`). |
 | **Features** | `default = []`, `simd = ["dep:wide"]`, `python = ["dep:pyo3"]` (`Cargo.toml:46`). |
@@ -275,7 +275,7 @@ The provider picks serial or `rayon` on its own, so the choice you make is the i
 
 `simd` changes vector width, not results. `python` is off by default so `cargo test --workspace` needs no `libpython`.
 
-> **Attention:** Keep `rust-version = 1.78` in `Cargo.toml` in step with `rust-toolchain.toml`, or CI and local builds will disagree on the toolchain.
+> **Attention:** Keep `rust-version = 1.85` in `Cargo.toml` in step with `rust-toolchain.toml`, or CI and local builds will disagree on the toolchain.
 
 ## Next Steps
 

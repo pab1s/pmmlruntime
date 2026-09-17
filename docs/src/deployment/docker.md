@@ -2,7 +2,7 @@
 
 > This guide covers Docker and CI deployment for containers without a JVM. For the Rust library see [Rust: Library & Binary](./rust.md). For CLI batch see [CSV & CLI Workflows](./cli.md). For Python wheels see [Python Bindings](./python.md).
 
-One static binary under 10 MB scores any PMML file. Build it with a `rust:1.78` builder and a `scratch` or `distroless` runner, then deploy the same image to a laptop, Kubernetes, or Lambda. Cold load is 68 µs for Iris and batch scoring is 61 ns per row.
+One static binary under 10 MB scores any PMML file. Build it with a `rust:1.85` builder and a `scratch` or `distroless` runner, then deploy the same image to a laptop, Kubernetes, or Lambda. Cold load is 68 µs for Iris and batch scoring is 61 ns per row.
 
 ## Concepts
 
@@ -10,7 +10,7 @@ One static binary under 10 MB scores any PMML file. Build it with a `rust:1.78` 
 | --- | --- |
 | **Lean container** | `scratch` or `distroless` with one binary: no `openjdk`, no `python`, no classpath. |
 | **Single binary** | `cargo build --release` produces `score_file` or a service. Create `PmmlEnv::new()` once and cache the `Session`. |
-| **Multi-stage** | A `rust:1.78` builder stage feeds a `debian:bookworm-slim` or `scratch` runner stage. |
+| **Multi-stage** | A `rust:1.85` builder stage feeds a `debian:bookworm-slim` or `scratch` runner stage. |
 | **GitHub Actions** | `ci.yml` runs `fmt`, `clippy`, tests, `miri`, and `fuzz`. `cd.yml` publishes crates.io, PyPI, npm, Maven Central, the image, and the C libraries on a tag. See [Releasing & Registries](./release.md). |
 
 ## How it works
@@ -19,7 +19,7 @@ The builder compiles the binary. The runner copies only the binary and the PMML 
 
 ```mermaid
 flowchart TB
-    A["PMML bytes<br>bench/pmml/*.pmml"] --> B["Builder rust:1.78<br>cargo build --release"]
+    A["PMML bytes<br>bench/pmml/*.pmml"] --> B["Builder rust:1.85<br>cargo build --release"]
     B --> C["Binary score_file<br>402 ns single 16.5M/s"]
     C --> D["Runner scratch/distroless<br>COPY --from=builder binary<br>COPY model.pmml"]
     D --> E["docker run<br>Session::from_file<br>input.csv --output out.csv"]
@@ -38,7 +38,7 @@ This multi-stage `Dockerfile` produces an image under 20 MB:
 
 ```dockerfile
 # builder
-FROM rust:1.78-bookworm as builder
+FROM rust:1.85-bookworm as builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
@@ -81,13 +81,13 @@ zip lambda.zip bootstrap model.pmml && aws lambda update-function-code --functio
 
 | Approach | Dockerfile | Image size | When to use |
 | --- | --- | --- | --- |
-| **Single-stage** | `FROM rust:1.78` and `cargo run` in one layer | about 1.5 GB with the toolchain | Local debug only |
-| **Multi-stage lean** | `builder rust:1.78` into `distroless/cc-debian12` | **8 to 20 MB** | Production K8s, ECS |
+| **Single-stage** | `FROM rust:1.85` and `cargo run` in one layer | about 1.5 GB with the toolchain | Local debug only |
+| **Multi-stage lean** | `builder rust:1.85` into `distroless/cc-debian12` | **8 to 20 MB** | Production K8s, ECS |
 | **Multi-stage musl** | `builder` into `scratch` with `musl` | **about 5 MB**, static | Edge, minimal images |
 
 ```dockerfile
 # Multi-stage build: the builder keeps the toolchain out of the final image
-FROM rust:1.78-bookworm as builder
+FROM rust:1.85-bookworm as builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
@@ -179,7 +179,7 @@ Gate a release on the numbers below, measured on `i7-12650H`:
 - **Startup.** Cold load is **68 µs** against 8757 µs for JPMML. Gate on 20 loads.
 - **Throughput.** A batch reaches **61 ns/row** (16.5M/s) through `par_chunks(256)`.
 
-> **Attention:** Create `PmmlEnv` and `Session` once at startup and clone `Arc<Session>` per request. Never rebuild the session per row, because cold load is 68 µs. Pin the toolchain to `1.78`.
+> **Attention:** Create `PmmlEnv` and `Session` once at startup and clone `Arc<Session>` per request. Never rebuild the session per row, because cold load is 68 µs. Pin the toolchain to `1.85`.
 
 ## API surface
 

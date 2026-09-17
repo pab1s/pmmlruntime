@@ -136,7 +136,7 @@ jobs:
         with:
           command: sdist
           working-directory: python
-          args: --out dist
+          args: --manifest-path _native/Cargo.toml --out dist
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
@@ -198,6 +198,7 @@ jobs:
         working-directory: javascript/node
         run: npx -y -p @napi-rs/cli napi create-npm-dirs
       - name: Build native addon
+        shell: bash
         working-directory: javascript/node
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
@@ -319,6 +320,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
       - name: Build the JNI library
+        shell: bash
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |

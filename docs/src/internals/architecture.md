@@ -8,7 +8,7 @@ Load `DecisionTreeIris.pmml` once and score thousands of rows. One `HashMap` row
 
 | Concept | Description |
 | --- | --- |
-| **Crate** | One `pmmlruntime` crate (`resolver=2`, `edition=2021`, `rust-version=1.78`, `Apache-2.0`). |
+| **Crate** | One `pmmlruntime` crate (`resolver=2`, `edition=2021`, `rust-version=1.85`, `Apache-2.0`). |
 | **Cold path** | `bytes -> RawPmml -> verify_raw -> lower -> verify_ir -> Arc<Ir>`, once at 68 µs for Iris. |
 | **Hot path** | `Session::run` on `&dyn Batch` with `&mut [Value]` indexed by `FieldId`. |
 | **Value slice** | Dense `Value[FieldId]`, `Missing` included as a variant, one bounds check per read. |

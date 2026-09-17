@@ -19,7 +19,7 @@ cargo add pmmlruntime
 cargo build
 ```
 
-You need `rustc 1.78+` and no JDK. You now have the **Session** and **Batch** types in scope. Keep the default features: `arrow` ships with them and the columnar path in Step 6 uses it.
+You need `rustc 1.85+` and no JDK. You now have the **Session** and **Batch** types in scope. Keep the default features: `arrow` ships with them and the columnar path in Step 6 uses it.
 
 ## Step 2: Get a PMML file
 

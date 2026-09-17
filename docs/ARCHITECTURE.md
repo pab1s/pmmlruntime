@@ -34,7 +34,7 @@ graph TD
     style session fill:#e8590c,stroke:#a8450a,color:#fff
 ```
 
-Single crate `pmmlruntime` (`Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.78`, `Apache-2.0`):
+Single crate `pmmlruntime` (`Cargo.toml` `resolver=2`, `edition=2021`, `rust-version=1.85`, `Apache-2.0`):
 
 ```
 crates/pmmlruntime/src/

@@ -234,7 +234,7 @@ One CSV workflow runs everywhere. Only the runner changes.
 | Target | Runtime | Invocation | Input | Scaling |
 | --- | --- | --- | --- | --- |
 | **Local** | `cargo run` | `cargo run --example score_file -- model.pmml input.csv` | Local file | Single process |
-| **Docker** | `rust:1.78` to `scratch` | `docker run pmmlruntime model.pmml input.csv` | Mounted volume | K8s Jobs |
+| **Docker** | `rust:1.85` to `scratch` | `docker run pmmlruntime model.pmml input.csv` | Mounted volume | K8s Jobs |
 | **Lambda** | `provided.al2` | `bootstrap model.pmml /tmp/in.csv` | S3 into `/tmp` | Concurrency |
 | **Edge** | `aarch64` | `./score_file model.pmml input.csv` | SD card | Thread-local |
 | **Browser** | `wasm` | `score_file.wasm model.pmml csvStr` | `csv_str_to_record_batch` | Single thread |

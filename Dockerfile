@@ -5,7 +5,7 @@
 #
 # The runtime stage carries one binary and no toolchain, no JDK, and no Python.
 
-FROM rust:1.78-bookworm AS builder
+FROM rust:1.85-bookworm AS builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates

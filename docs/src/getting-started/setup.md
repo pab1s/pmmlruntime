@@ -10,7 +10,7 @@ Install one toolchain per binding and check the version before you continue.
 
 | Language | Version | Verify |
 | --- | --- | --- |
-| **Rust** | `1.78+` stable, edition `2021` | `rustc --version` |
+| **Rust** | `1.85+` stable, edition `2021` | `rustc --version` |
 | **Python** | `3.8+`, `maturin >=1.7`, `pyo3 0.22` | `python --version && maturin --version` |
 | **C** | `cbindgen 0.26+`, `cargo`, C11 compiler | `cbindgen --version && cc --version` |
 | **Docs** | `mdbook` with `mdbook-mermaid` | `mdbook --version` |
@@ -19,12 +19,12 @@ Install one toolchain per binding and check the version before you continue.
 
 ## Install rust
 
-Rust 1.78 or later, edition 2021. The `simd` feature pulls `wide 0.7` for vectorized evaluation, and `python` pulls `pyo3 0.22` for the binding.
+Rust 1.85 or later, edition 2021. The `simd` feature pulls `wide 0.7` for vectorized evaluation, and `python` pulls `pyo3 0.22` for the binding.
 
 ```bash
 # from your crate directory
 cargo add pmmlruntime --features simd
-rustc --version  # must print 1.78 or later
+rustc --version  # must print 1.85 or later
 cargo build
 ```
 
@@ -36,7 +36,7 @@ pmmlruntime = { version = "0.1", features = ["simd"] }
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.85"
 ```
 
 > **Attention:** `simd` requires SSE2, AVX2, or NEON. Build with `--features simd` on `x86_64` or `aarch64` and keep the default feature set everywhere else.
@@ -219,7 +219,7 @@ If `cargo test` fails while parsing, check that the file is UTF-8 and under 100 
 
 | Symptom | Cause | Fix | Verify |
 | --- | --- | --- | --- |
-| `rustc 1.78+ required` | Toolchain too old | `rustup update && rustc --version` | `1.78+` |
+| `rustc 1.85+ required` | Toolchain too old | `rustup update && rustc --version` | `1.85+` |
 | `maturin develop` fails | Missing `--features python` | `maturin develop --features python --manifest-path python/_native/Cargo.toml` | import works |
 | `PmmlGetApi` returns `NULL` | Wrong `PMML_API_VERSION` | Use `PMML_API_VERSION` from the header | header loads |
 | `mdbook serve` drops diagrams | `mdbook-mermaid` missing | `cargo install mdbook-mermaid && mdbook serve docs --open` | diagrams render |

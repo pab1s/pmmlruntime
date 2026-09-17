@@ -10,7 +10,7 @@
   <a href="https://crates.io/crates/pmmlruntime"><img alt="crates.io" src="https://img.shields.io/crates/v/pmmlruntime?style=flat-square&color=brightgreen"></a>
   <a href="https://docs.rs/pmmlruntime"><img alt="docs.rs" src="https://img.shields.io/docsrs/pmmlruntime?style=flat-square&label=docs.rs"></a>
   <a href="https://github.com/pab1s/pmmlruntime/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square"></a>
-  <img alt="rustc" src="https://img.shields.io/badge/rustc-1.78%2B-lightgrey?style=flat-square&logo=rust">
+  <img alt="rustc" src="https://img.shields.io/badge/rustc-1.85%2B-lightgrey?style=flat-square&logo=rust">
   <img alt="pmml" src="https://img.shields.io/badge/PMML-4.4-4B8BBE?style=flat-square">
 </p>
 
@@ -117,7 +117,7 @@ Create `PmmlEnv::new()` once per process and share it. Call `from_bytes` per mod
 
 ## Next Steps
 
-* [Setup](./getting-started/setup.md): add `pmmlruntime = "0.1"` and confirm `rustc 1.78+`.
+* [Setup](./getting-started/setup.md): add `pmmlruntime = "0.1"` and confirm `rustc 1.85+`.
 * [Quickstart](./getting-started/quickstart.md): load `DecisionTreeIris.pmml` and score rows and batches.
 * [Batch API: One Method, Two Layouts](./batch/batch.md): pick row-major or columnar for your workload.
 * [Migrating from JPMML](./production/migration.md): map `Evaluator` calls to `Session::run` and keep score parity.
