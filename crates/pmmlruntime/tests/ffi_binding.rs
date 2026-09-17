@@ -1,5 +1,9 @@
 // This test drives the C ABI by hand, so it casts raw pointers on purpose.
-#![allow(clippy::ptr_as_ptr, clippy::ptr_cast_constness)]
+#![allow(
+    clippy::borrow_as_ptr,
+    clippy::ptr_as_ptr,
+    clippy::ptr_cast_constness
+)]
 
 use pmmlruntime::ffi::{PmmlGetApi, PmmlLogLevel, PmmlValue};
 use std::ffi::CString;
