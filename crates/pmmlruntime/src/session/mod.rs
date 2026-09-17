@@ -1,9 +1,9 @@
 //! Session — ORT-style session API for PMML scoring.
 //!
-//! Owns an `Arc<Ir>` plan and exposes `PmmlEnv` + [`Session`] + [`SessionOptions`]
-//! + [`GraphOptimizationLevel`] + `Batch` for `HashMap`/`Vec<HashMap>`/`Arrow`.
-//! All scoring is via [`Session::run`] over `&dyn Batch`, thread-safe (`Send+Sync`)
-//! with `rayon` auto-parallel for batches. See `docs/ARCHITECTURE.md` §2.
+//! Owns an `Arc<Ir>` plan and exposes `PmmlEnv`, [`Session`], [`SessionOptions`],
+//! [`GraphOptimizationLevel`], and `Batch` for `HashMap`, `Vec<HashMap>`, and `Arrow`.
+//! All scoring goes through [`Session::run`] over `&dyn Batch`, sessions are `Send + Sync`,
+//! and `rayon` parallelizes batches. See `docs/ARCHITECTURE.md` §2.
 //!
 //! # Main types
 //!

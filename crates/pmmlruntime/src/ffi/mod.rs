@@ -27,7 +27,11 @@
 //! // C: const PmmlApi* api = PmmlGetApi(1); api->CreateEnv(...)
 //! ```
 
-#![allow(non_snake_case, clippy::not_unsafe_ptr_arg_deref, clippy::missing_safety_doc)]
+#![allow(
+    non_snake_case,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::missing_safety_doc
+)]
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -352,10 +356,18 @@ impl Default for SessionOptionsHandle {
 impl SessionOptionsHandle {
     fn to_rust(&self) -> SessionOptions {
         let lvl = match self.graph_level {
-            PmmlGraphOptimizationLevel::DisableAll => crate::session::GraphOptimizationLevel::DisableAll,
-            PmmlGraphOptimizationLevel::EnableBasic => crate::session::GraphOptimizationLevel::EnableBasic,
-            PmmlGraphOptimizationLevel::EnableExtended => crate::session::GraphOptimizationLevel::EnableExtended,
-            PmmlGraphOptimizationLevel::EnableAll => crate::session::GraphOptimizationLevel::EnableAll,
+            PmmlGraphOptimizationLevel::DisableAll => {
+                crate::session::GraphOptimizationLevel::DisableAll
+            }
+            PmmlGraphOptimizationLevel::EnableBasic => {
+                crate::session::GraphOptimizationLevel::EnableBasic
+            }
+            PmmlGraphOptimizationLevel::EnableExtended => {
+                crate::session::GraphOptimizationLevel::EnableExtended
+            }
+            PmmlGraphOptimizationLevel::EnableAll => {
+                crate::session::GraphOptimizationLevel::EnableAll
+            }
         };
         SessionOptions::default().graph_optimization_level(lvl)
     }
@@ -382,8 +394,12 @@ struct StatusHandle {
 // ---------------------------------------------------------------------------
 
 fn make_status(code: PmmlErrorCode, msg: impl Into<String>) -> *mut PmmlStatus {
-    let cstr = CString::new(msg.into()).unwrap_or_else(|_| CString::new("invalid status message").unwrap());
-    let h = Box::new(StatusHandle { code, message: cstr });
+    let cstr = CString::new(msg.into())
+        .unwrap_or_else(|_| CString::new("invalid status message").unwrap());
+    let h = Box::new(StatusHandle {
+        code,
+        message: cstr,
+    });
     Box::into_raw(h) as *mut PmmlStatus
 }
 
@@ -427,62 +443,181 @@ pub struct ArrowSchema {
 pub struct PmmlApi {
     pub version: u32,
 
-    pub CreateEnv: Option<unsafe extern "C" fn(PmmlLogLevel, *const c_char, *mut *mut PmmlEnv) -> *mut PmmlStatus>,
+    pub CreateEnv: Option<
+        unsafe extern "C" fn(PmmlLogLevel, *const c_char, *mut *mut PmmlEnv) -> *mut PmmlStatus,
+    >,
     pub ReleaseEnv: Option<unsafe extern "C" fn(*mut PmmlEnv)>,
 
-    pub CreateSessionOptions: Option<unsafe extern "C" fn(*mut *mut PmmlSessionOptions) -> *mut PmmlStatus>,
+    pub CreateSessionOptions:
+        Option<unsafe extern "C" fn(*mut *mut PmmlSessionOptions) -> *mut PmmlStatus>,
     pub ReleaseSessionOptions: Option<unsafe extern "C" fn(*mut PmmlSessionOptions)>,
-    pub SetGraphOptimizationLevel: Option<unsafe extern "C" fn(*mut PmmlSessionOptions, PmmlGraphOptimizationLevel) -> *mut PmmlStatus>,
-    pub SetIntraOpNumThreads: Option<unsafe extern "C" fn(*mut PmmlSessionOptions, i32) -> *mut PmmlStatus>,
-    pub SetInterOpNumThreads: Option<unsafe extern "C" fn(*mut PmmlSessionOptions, i32) -> *mut PmmlStatus>,
-    pub SetLogLevel: Option<unsafe extern "C" fn(*mut PmmlSessionOptions, PmmlLogLevel) -> *mut PmmlStatus>,
-    pub AddSessionConfigEntry: Option<unsafe extern "C" fn(*mut PmmlSessionOptions, *const c_char, *const c_char) -> *mut PmmlStatus>,
-    pub AppendExecutionProvider: Option<unsafe extern "C" fn(*mut PmmlSessionOptions, *const c_char, *const *const c_char, *const *const c_char, usize) -> *mut PmmlStatus>,
+    pub SetGraphOptimizationLevel: Option<
+        unsafe extern "C" fn(
+            *mut PmmlSessionOptions,
+            PmmlGraphOptimizationLevel,
+        ) -> *mut PmmlStatus,
+    >,
+    pub SetIntraOpNumThreads:
+        Option<unsafe extern "C" fn(*mut PmmlSessionOptions, i32) -> *mut PmmlStatus>,
+    pub SetInterOpNumThreads:
+        Option<unsafe extern "C" fn(*mut PmmlSessionOptions, i32) -> *mut PmmlStatus>,
+    pub SetLogLevel:
+        Option<unsafe extern "C" fn(*mut PmmlSessionOptions, PmmlLogLevel) -> *mut PmmlStatus>,
+    pub AddSessionConfigEntry: Option<
+        unsafe extern "C" fn(
+            *mut PmmlSessionOptions,
+            *const c_char,
+            *const c_char,
+        ) -> *mut PmmlStatus,
+    >,
+    pub AppendExecutionProvider: Option<
+        unsafe extern "C" fn(
+            *mut PmmlSessionOptions,
+            *const c_char,
+            *const *const c_char,
+            *const *const c_char,
+            usize,
+        ) -> *mut PmmlStatus,
+    >,
 
-    pub CreateSession: Option<unsafe extern "C" fn(*const PmmlEnv, *const c_char, *const PmmlSessionOptions, *mut *mut PmmlSession) -> *mut PmmlStatus>,
-    pub CreateSessionFromArray: Option<unsafe extern "C" fn(*const PmmlEnv, *const c_void, usize, *const PmmlSessionOptions, *mut *mut PmmlSession) -> *mut PmmlStatus>,
+    pub CreateSession: Option<
+        unsafe extern "C" fn(
+            *const PmmlEnv,
+            *const c_char,
+            *const PmmlSessionOptions,
+            *mut *mut PmmlSession,
+        ) -> *mut PmmlStatus,
+    >,
+    pub CreateSessionFromArray: Option<
+        unsafe extern "C" fn(
+            *const PmmlEnv,
+            *const c_void,
+            usize,
+            *const PmmlSessionOptions,
+            *mut *mut PmmlSession,
+        ) -> *mut PmmlStatus,
+    >,
     pub ReleaseSession: Option<unsafe extern "C" fn(*mut PmmlSession)>,
 
-    pub SessionGetInputCount: Option<unsafe extern "C" fn(*const PmmlSession, *mut usize) -> *mut PmmlStatus>,
-    pub SessionGetInputName: Option<unsafe extern "C" fn(*const PmmlSession, usize, *mut *const c_char) -> *mut PmmlStatus>,
-    pub SessionGetOutputCount: Option<unsafe extern "C" fn(*const PmmlSession, *mut usize) -> *mut PmmlStatus>,
-    pub SessionGetOutputName: Option<unsafe extern "C" fn(*const PmmlSession, usize, *mut *const c_char) -> *mut PmmlStatus>,
-    pub SessionGetModelType: Option<unsafe extern "C" fn(*const PmmlSession, *mut *const c_char) -> *mut PmmlStatus>,
+    pub SessionGetInputCount:
+        Option<unsafe extern "C" fn(*const PmmlSession, *mut usize) -> *mut PmmlStatus>,
+    pub SessionGetInputName: Option<
+        unsafe extern "C" fn(*const PmmlSession, usize, *mut *const c_char) -> *mut PmmlStatus,
+    >,
+    pub SessionGetOutputCount:
+        Option<unsafe extern "C" fn(*const PmmlSession, *mut usize) -> *mut PmmlStatus>,
+    pub SessionGetOutputName: Option<
+        unsafe extern "C" fn(*const PmmlSession, usize, *mut *const c_char) -> *mut PmmlStatus,
+    >,
+    pub SessionGetModelType:
+        Option<unsafe extern "C" fn(*const PmmlSession, *mut *const c_char) -> *mut PmmlStatus>,
     pub GetVersionString: Option<unsafe extern "C" fn() -> *const c_char>,
 
-    pub SessionGetFieldId: Option<unsafe extern "C" fn(*const PmmlSession, *const c_char, *mut u32, *mut i32) -> *mut PmmlStatus>,
-    pub SessionGetSymbolId: Option<unsafe extern "C" fn(*const PmmlSession, *const c_char, *mut u32, *mut i32) -> *mut PmmlStatus>,
+    pub SessionGetFieldId: Option<
+        unsafe extern "C" fn(
+            *const PmmlSession,
+            *const c_char,
+            *mut u32,
+            *mut i32,
+        ) -> *mut PmmlStatus,
+    >,
+    pub SessionGetSymbolId: Option<
+        unsafe extern "C" fn(
+            *const PmmlSession,
+            *const c_char,
+            *mut u32,
+            *mut i32,
+        ) -> *mut PmmlStatus,
+    >,
 
-    pub Run: Option<unsafe extern "C" fn(*mut PmmlSession, *const PmmlRunOptions, *const *const c_char, *const PmmlValue, usize, *const *const c_char, usize, *mut PmmlValue) -> *mut PmmlStatus>,
-    pub RunBatch: Option<unsafe extern "C" fn(*mut PmmlSession, *const PmmlRunOptions, *const *const c_char, *const PmmlValue, usize, usize, *mut PmmlValue, *mut usize) -> *mut PmmlStatus>,
-    pub RunArrow: Option<unsafe extern "C" fn(*mut PmmlSession, *const PmmlRunOptions, *const ArrowArray, *const ArrowSchema, *mut ArrowArray, *mut ArrowSchema) -> *mut PmmlStatus>,
+    pub Run: Option<
+        unsafe extern "C" fn(
+            *mut PmmlSession,
+            *const PmmlRunOptions,
+            *const *const c_char,
+            *const PmmlValue,
+            usize,
+            *const *const c_char,
+            usize,
+            *mut PmmlValue,
+        ) -> *mut PmmlStatus,
+    >,
+    pub RunBatch: Option<
+        unsafe extern "C" fn(
+            *mut PmmlSession,
+            *const PmmlRunOptions,
+            *const *const c_char,
+            *const PmmlValue,
+            usize,
+            usize,
+            *mut PmmlValue,
+            *mut usize,
+        ) -> *mut PmmlStatus,
+    >,
+    pub RunArrow: Option<
+        unsafe extern "C" fn(
+            *mut PmmlSession,
+            *const PmmlRunOptions,
+            *const ArrowArray,
+            *const ArrowSchema,
+            *mut ArrowArray,
+            *mut ArrowSchema,
+        ) -> *mut PmmlStatus,
+    >,
 
-    pub CreateIoBinding: Option<unsafe extern "C" fn(*mut PmmlSession, *mut *mut PmmlIoBinding) -> *mut PmmlStatus>,
+    pub CreateIoBinding:
+        Option<unsafe extern "C" fn(*mut PmmlSession, *mut *mut PmmlIoBinding) -> *mut PmmlStatus>,
     pub ReleaseIoBinding: Option<unsafe extern "C" fn(*mut PmmlIoBinding)>,
-    pub BindInput: Option<unsafe extern "C" fn(*mut PmmlIoBinding, *const c_char, PmmlValue) -> *mut PmmlStatus>,
-    pub BindInputArrow: Option<unsafe extern "C" fn(*mut PmmlIoBinding, *const c_char, *const ArrowArray, *const ArrowSchema) -> *mut PmmlStatus>,
-    pub BindOutput: Option<unsafe extern "C" fn(*mut PmmlIoBinding, *const c_char) -> *mut PmmlStatus>,
-    pub RunWithBinding: Option<unsafe extern "C" fn(*mut PmmlSession, *const PmmlRunOptions, *mut PmmlIoBinding) -> *mut PmmlStatus>,
-    pub CopyBindingOutputsToCpu: Option<unsafe extern "C" fn(*mut PmmlIoBinding, *mut PmmlValue, *mut usize) -> *mut PmmlStatus>,
+    pub BindInput: Option<
+        unsafe extern "C" fn(*mut PmmlIoBinding, *const c_char, PmmlValue) -> *mut PmmlStatus,
+    >,
+    pub BindInputArrow: Option<
+        unsafe extern "C" fn(
+            *mut PmmlIoBinding,
+            *const c_char,
+            *const ArrowArray,
+            *const ArrowSchema,
+        ) -> *mut PmmlStatus,
+    >,
+    pub BindOutput:
+        Option<unsafe extern "C" fn(*mut PmmlIoBinding, *const c_char) -> *mut PmmlStatus>,
+    pub RunWithBinding: Option<
+        unsafe extern "C" fn(
+            *mut PmmlSession,
+            *const PmmlRunOptions,
+            *mut PmmlIoBinding,
+        ) -> *mut PmmlStatus,
+    >,
+    pub CopyBindingOutputsToCpu: Option<
+        unsafe extern "C" fn(*mut PmmlIoBinding, *mut PmmlValue, *mut usize) -> *mut PmmlStatus,
+    >,
 
     pub CreateRunOptions: Option<unsafe extern "C" fn(*mut *mut PmmlRunOptions) -> *mut PmmlStatus>,
     pub ReleaseRunOptions: Option<unsafe extern "C" fn(*mut PmmlRunOptions)>,
-    pub SetRunTag: Option<unsafe extern "C" fn(*mut PmmlRunOptions, *const c_char) -> *mut PmmlStatus>,
-    pub SetRunLogLevel: Option<unsafe extern "C" fn(*mut PmmlRunOptions, PmmlLogLevel) -> *mut PmmlStatus>,
+    pub SetRunTag:
+        Option<unsafe extern "C" fn(*mut PmmlRunOptions, *const c_char) -> *mut PmmlStatus>,
+    pub SetRunLogLevel:
+        Option<unsafe extern "C" fn(*mut PmmlRunOptions, PmmlLogLevel) -> *mut PmmlStatus>,
 }
 
 // ---------------------------------------------------------------------------
 // Individual extern "C" impls
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn api_CreateEnv(level: PmmlLogLevel, log_id: *const c_char, out: *mut *mut PmmlEnv) -> *mut PmmlStatus {
+unsafe extern "C" fn api_CreateEnv(
+    level: PmmlLogLevel,
+    log_id: *const c_char,
+    out: *mut *mut PmmlEnv,
+) -> *mut PmmlStatus {
     if out.is_null() {
         return status_invalid_arg("CreateEnv: out is null");
     }
     let name = if log_id.is_null() {
         "pmml-runtime".to_string()
     } else {
-        unsafe { CStr::from_ptr(log_id) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(log_id) }
+            .to_string_lossy()
+            .into_owned()
     };
     // log_level currently only influences name prefix; future: logger callback
     let _ = level;
@@ -494,53 +629,95 @@ unsafe extern "C" fn api_CreateEnv(level: PmmlLogLevel, log_id: *const c_char, o
 }
 
 unsafe extern "C" fn api_ReleaseEnv(env: *mut PmmlEnv) {
-    if env.is_null() { return; }
-    unsafe { let _ = Box::from_raw(env as *mut EnvHandle); }
+    if env.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(env as *mut EnvHandle);
+    }
 }
 
-unsafe extern "C" fn api_CreateSessionOptions(out: *mut *mut PmmlSessionOptions) -> *mut PmmlStatus {
-    if out.is_null() { return status_invalid_arg("CreateSessionOptions: out is null"); }
+unsafe extern "C" fn api_CreateSessionOptions(
+    out: *mut *mut PmmlSessionOptions,
+) -> *mut PmmlStatus {
+    if out.is_null() {
+        return status_invalid_arg("CreateSessionOptions: out is null");
+    }
     let h = Box::new(SessionOptionsHandle::default());
     unsafe { *out = Box::into_raw(h) as *mut PmmlSessionOptions };
     ptr::null_mut()
 }
 
 unsafe extern "C" fn api_ReleaseSessionOptions(opts: *mut PmmlSessionOptions) {
-    if opts.is_null() { return; }
-    unsafe { let _ = Box::from_raw(opts as *mut SessionOptionsHandle); }
+    if opts.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(opts as *mut SessionOptionsHandle);
+    }
 }
 
-unsafe extern "C" fn api_SetGraphOptimizationLevel(opts: *mut PmmlSessionOptions, lvl: PmmlGraphOptimizationLevel) -> *mut PmmlStatus {
-    if opts.is_null() { return status_invalid_arg("SetGraphOptimizationLevel: opts is null"); }
+unsafe extern "C" fn api_SetGraphOptimizationLevel(
+    opts: *mut PmmlSessionOptions,
+    lvl: PmmlGraphOptimizationLevel,
+) -> *mut PmmlStatus {
+    if opts.is_null() {
+        return status_invalid_arg("SetGraphOptimizationLevel: opts is null");
+    }
     unsafe { (*(opts as *mut SessionOptionsHandle)).graph_level = lvl };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SetIntraOpNumThreads(opts: *mut PmmlSessionOptions, n: i32) -> *mut PmmlStatus {
-    if opts.is_null() { return status_invalid_arg("SetIntraOpNumThreads: opts null"); }
+unsafe extern "C" fn api_SetIntraOpNumThreads(
+    opts: *mut PmmlSessionOptions,
+    n: i32,
+) -> *mut PmmlStatus {
+    if opts.is_null() {
+        return status_invalid_arg("SetIntraOpNumThreads: opts null");
+    }
     unsafe { (*(opts as *mut SessionOptionsHandle)).intra_threads = n };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SetInterOpNumThreads(opts: *mut PmmlSessionOptions, n: i32) -> *mut PmmlStatus {
-    if opts.is_null() { return status_invalid_arg("SetInterOpNumThreads: opts null"); }
+unsafe extern "C" fn api_SetInterOpNumThreads(
+    opts: *mut PmmlSessionOptions,
+    n: i32,
+) -> *mut PmmlStatus {
+    if opts.is_null() {
+        return status_invalid_arg("SetInterOpNumThreads: opts null");
+    }
     unsafe { (*(opts as *mut SessionOptionsHandle)).inter_threads = n };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SetLogLevel(opts: *mut PmmlSessionOptions, lvl: PmmlLogLevel) -> *mut PmmlStatus {
-    if opts.is_null() { return status_invalid_arg("SetLogLevel: opts null"); }
+unsafe extern "C" fn api_SetLogLevel(
+    opts: *mut PmmlSessionOptions,
+    lvl: PmmlLogLevel,
+) -> *mut PmmlStatus {
+    if opts.is_null() {
+        return status_invalid_arg("SetLogLevel: opts null");
+    }
     unsafe { (*(opts as *mut SessionOptionsHandle)).log_level = lvl };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_AddSessionConfigEntry(opts: *mut PmmlSessionOptions, key: *const c_char, value: *const c_char) -> *mut PmmlStatus {
+unsafe extern "C" fn api_AddSessionConfigEntry(
+    opts: *mut PmmlSessionOptions,
+    key: *const c_char,
+    value: *const c_char,
+) -> *mut PmmlStatus {
     if opts.is_null() || key.is_null() || value.is_null() {
         return status_invalid_arg("AddSessionConfigEntry: null arg");
     }
-    let k = unsafe { CStr::from_ptr(key) }.to_string_lossy().into_owned();
-    let v = unsafe { CStr::from_ptr(value) }.to_string_lossy().into_owned();
-    unsafe { (*(opts as *mut SessionOptionsHandle)).configs.insert(k, v); }
+    let k = unsafe { CStr::from_ptr(key) }
+        .to_string_lossy()
+        .into_owned();
+    let v = unsafe { CStr::from_ptr(value) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe {
+        (*(opts as *mut SessionOptionsHandle)).configs.insert(k, v);
+    }
     ptr::null_mut()
 }
 
@@ -551,18 +728,30 @@ unsafe extern "C" fn api_AppendExecutionProvider(
     values: *const *const c_char,
     count: usize,
 ) -> *mut PmmlStatus {
-    if opts.is_null() || name.is_null() { return status_invalid_arg("AppendExecutionProvider: null"); }
-    let n = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    if opts.is_null() || name.is_null() {
+        return status_invalid_arg("AppendExecutionProvider: null");
+    }
+    let n = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     // only CPU is supported; others are stored but ignored (future plugin EPs)
     let mut map = HashMap::new();
     if !keys.is_null() && !values.is_null() {
         for i in 0..count {
-            let k = unsafe { CStr::from_ptr(*keys.add(i)) }.to_string_lossy().into_owned();
-            let v = unsafe { CStr::from_ptr(*values.add(i)) }.to_string_lossy().into_owned();
+            let k = unsafe { CStr::from_ptr(*keys.add(i)) }
+                .to_string_lossy()
+                .into_owned();
+            let v = unsafe { CStr::from_ptr(*values.add(i)) }
+                .to_string_lossy()
+                .into_owned();
             map.insert(k, v);
         }
     }
-    unsafe { (*(opts as *mut SessionOptionsHandle)).providers.push((n, map)); }
+    unsafe {
+        (*(opts as *mut SessionOptionsHandle))
+            .providers
+            .push((n, map));
+    }
     ptr::null_mut()
 }
 
@@ -601,9 +790,18 @@ fn build_session_handle(session: Session) -> SessionHandle {
     let output_names: Vec<String> = if session.ir.model.output_fields().is_empty() {
         vec!["predictedValue".to_string()]
     } else {
-        session.ir.model.output_fields().iter().map(|o| o.name.clone()).collect()
+        session
+            .ir
+            .model
+            .output_fields()
+            .iter()
+            .map(|o| o.name.clone())
+            .collect()
     };
-    let output_cstr: Vec<CString> = output_names.into_iter().map(|s| CString::new(s).unwrap()).collect();
+    let output_cstr: Vec<CString> = output_names
+        .into_iter()
+        .map(|s| CString::new(s).unwrap())
+        .collect();
     let output_ptrs: Vec<*const c_char> = output_cstr.iter().map(|c| c.as_ptr()).collect();
 
     let model_type = match &session.ir.model {
@@ -693,80 +891,129 @@ unsafe extern "C" fn api_CreateSessionFromArray(
 }
 
 unsafe extern "C" fn api_ReleaseSession(sess: *mut PmmlSession) {
-    if sess.is_null() { return; }
-    unsafe { let _ = Box::from_raw(sess as *mut SessionHandle); }
+    if sess.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(sess as *mut SessionHandle);
+    }
 }
 
-unsafe extern "C" fn api_SessionGetInputCount(sess: *const PmmlSession, out: *mut usize) -> *mut PmmlStatus {
-    if sess.is_null() || out.is_null() { return status_invalid_arg("SessionGetInputCount: null"); }
+unsafe extern "C" fn api_SessionGetInputCount(
+    sess: *const PmmlSession,
+    out: *mut usize,
+) -> *mut PmmlStatus {
+    if sess.is_null() || out.is_null() {
+        return status_invalid_arg("SessionGetInputCount: null");
+    }
     let h = unsafe { &*(sess as *const SessionHandle) };
     unsafe { *out = h.input_names.len() };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SessionGetInputName(sess: *const PmmlSession, idx: usize, out: *mut *const c_char) -> *mut PmmlStatus {
-    if sess.is_null() || out.is_null() { return status_invalid_arg("SessionGetInputName: null"); }
+unsafe extern "C" fn api_SessionGetInputName(
+    sess: *const PmmlSession,
+    idx: usize,
+    out: *mut *const c_char,
+) -> *mut PmmlStatus {
+    if sess.is_null() || out.is_null() {
+        return status_invalid_arg("SessionGetInputName: null");
+    }
     let h = unsafe { &*(sess as *const SessionHandle) };
-    if idx >= h.input_ptrs.len() { return status_invalid_arg("SessionGetInputName: index out of range"); }
+    if idx >= h.input_ptrs.len() {
+        return status_invalid_arg("SessionGetInputName: index out of range");
+    }
     unsafe { *out = h.input_ptrs[idx] };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SessionGetOutputCount(sess: *const PmmlSession, out: *mut usize) -> *mut PmmlStatus {
-    if sess.is_null() || out.is_null() { return status_invalid_arg("SessionGetOutputCount: null"); }
+unsafe extern "C" fn api_SessionGetOutputCount(
+    sess: *const PmmlSession,
+    out: *mut usize,
+) -> *mut PmmlStatus {
+    if sess.is_null() || out.is_null() {
+        return status_invalid_arg("SessionGetOutputCount: null");
+    }
     let h = unsafe { &*(sess as *const SessionHandle) };
     unsafe { *out = h.output_names.len() };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SessionGetOutputName(sess: *const PmmlSession, idx: usize, out: *mut *const c_char) -> *mut PmmlStatus {
-    if sess.is_null() || out.is_null() { return status_invalid_arg("SessionGetOutputName: null"); }
+unsafe extern "C" fn api_SessionGetOutputName(
+    sess: *const PmmlSession,
+    idx: usize,
+    out: *mut *const c_char,
+) -> *mut PmmlStatus {
+    if sess.is_null() || out.is_null() {
+        return status_invalid_arg("SessionGetOutputName: null");
+    }
     let h = unsafe { &*(sess as *const SessionHandle) };
-    if idx >= h.output_ptrs.len() { return status_invalid_arg("SessionGetOutputName: index out of range"); }
+    if idx >= h.output_ptrs.len() {
+        return status_invalid_arg("SessionGetOutputName: index out of range");
+    }
     unsafe { *out = h.output_ptrs[idx] };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SessionGetModelType(sess: *const PmmlSession, out: *mut *const c_char) -> *mut PmmlStatus {
-    if sess.is_null() || out.is_null() { return status_invalid_arg("SessionGetModelType: null"); }
+unsafe extern "C" fn api_SessionGetModelType(
+    sess: *const PmmlSession,
+    out: *mut *const c_char,
+) -> *mut PmmlStatus {
+    if sess.is_null() || out.is_null() {
+        return status_invalid_arg("SessionGetModelType: null");
+    }
     let h = unsafe { &*(sess as *const SessionHandle) };
     unsafe { *out = h.model_type.as_ptr() };
     ptr::null_mut()
 }
 
 static VERSION_CSTR: &str = env!("CARGO_PKG_VERSION");
-static mut VERSION_CSTRING: Option<CString> = None;
-static VERSION_INIT: std::sync::Once = std::sync::Once::new();
+static VERSION_CSTRING: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
 
 unsafe extern "C" fn api_GetVersionString() -> *const c_char {
-    VERSION_INIT.call_once(|| {
-        unsafe { VERSION_CSTRING = Some(CString::new(VERSION_CSTR).unwrap()) };
-    });
-    unsafe { VERSION_CSTRING.as_ref().unwrap().as_ptr() }
+    VERSION_CSTRING
+        .get_or_init(|| CString::new(VERSION_CSTR).unwrap())
+        .as_ptr()
 }
 
-unsafe extern "C" fn api_SessionGetFieldId(sess: *const PmmlSession, name: *const c_char, out: *mut u32, found: *mut i32) -> *mut PmmlStatus {
+unsafe extern "C" fn api_SessionGetFieldId(
+    sess: *const PmmlSession,
+    name: *const c_char,
+    out: *mut u32,
+    found: *mut i32,
+) -> *mut PmmlStatus {
     if sess.is_null() || name.is_null() || out.is_null() || found.is_null() {
         return status_invalid_arg("SessionGetFieldId: null");
     }
     let h = unsafe { &*(sess as *const SessionHandle) };
     let s = unsafe { CStr::from_ptr(name) }.to_string_lossy();
     if let Some(fid) = h.session.field_id(&s) {
-        unsafe { *out = fid.0; *found = 1 };
+        unsafe {
+            *out = fid.0;
+            *found = 1
+        };
     } else {
         unsafe { *found = 0 };
     }
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SessionGetSymbolId(sess: *const PmmlSession, s: *const c_char, out: *mut u32, found: *mut i32) -> *mut PmmlStatus {
+unsafe extern "C" fn api_SessionGetSymbolId(
+    sess: *const PmmlSession,
+    s: *const c_char,
+    out: *mut u32,
+    found: *mut i32,
+) -> *mut PmmlStatus {
     if sess.is_null() || s.is_null() || out.is_null() || found.is_null() {
         return status_invalid_arg("SessionGetSymbolId: null");
     }
     let h = unsafe { &*(sess as *const SessionHandle) };
     let st = unsafe { CStr::from_ptr(s) }.to_string_lossy();
     if let Some(sid) = h.session.symbol_id(&st) {
-        unsafe { *out = sid.0; *found = 1 };
+        unsafe {
+            *out = sid.0;
+            *found = 1
+        };
     } else {
         unsafe { *found = 0 };
     }
@@ -784,7 +1031,9 @@ unsafe extern "C" fn api_Run(
     output_count: usize,
     output_values: *mut PmmlValue,
 ) -> *mut PmmlStatus {
-    if sess.is_null() || output_values.is_null() { return status_invalid_arg("Run: null sess/output"); }
+    if sess.is_null() || output_values.is_null() {
+        return status_invalid_arg("Run: null sess/output");
+    }
     if input_count > 0 && (input_names.is_null() || input_values.is_null()) {
         return status_invalid_arg("Run: input null but count>0");
     }
@@ -792,12 +1041,13 @@ unsafe extern "C" fn api_Run(
     // Build HashMap<String, Value> from C inputs
     let mut map = HashMap::new();
     for i in 0..input_count {
-        let name = unsafe { CStr::from_ptr(*input_names.add(i)) }.to_string_lossy().into_owned();
+        let name = unsafe { CStr::from_ptr(*input_names.add(i)) }
+            .to_string_lossy()
+            .into_owned();
         let pv = unsafe { *input_values.add(i) };
         map.insert(name, pmml_value_to_value(pv));
     }
     // Use unified Batch: HashMap is Batch (1 row)
-    use crate::session::batch::Batch;
     let batch: &dyn crate::session::batch::Batch = &map as &dyn crate::session::batch::Batch;
     // Run
     let result = match h.session.run(batch) {
@@ -805,20 +1055,30 @@ unsafe extern "C" fn api_Run(
         Err(e) => return status_from_error(e),
     };
     let rows = result.into_rows();
-    if rows.is_empty() { return status_invalid_arg("Run: empty result"); }
+    if rows.is_empty() {
+        return status_invalid_arg("Run: empty result");
+    }
     let row = &rows[0];
     // If caller provided output_names, use them; else return all outputs (caller must have allocated enough)
     if !output_names.is_null() && output_count > 0 {
         for i in 0..output_count {
-            let oname = unsafe { CStr::from_ptr(*output_names.add(i)) }.to_string_lossy().into_owned();
+            let oname = unsafe { CStr::from_ptr(*output_names.add(i)) }
+                .to_string_lossy()
+                .into_owned();
             let v = row.get(&oname).copied().unwrap_or(Value::Missing);
             unsafe { *output_values.add(i) = value_to_pmml_value(v) };
         }
     } else {
         // No output_names: fill in order of session output_names
         let mut idx = 0usize;
-        for name in h.output_ptrs.iter().map(|p| unsafe { CStr::from_ptr(*p).to_string_lossy().into_owned() }) {
-            if idx >= output_count { break; }
+        for name in h
+            .output_ptrs
+            .iter()
+            .map(|p| unsafe { CStr::from_ptr(*p).to_string_lossy().into_owned() })
+        {
+            if idx >= output_count {
+                break;
+            }
             let v = row.get(&name).copied().unwrap_or(Value::Missing);
             unsafe { *output_values.add(idx) = value_to_pmml_value(v) };
             idx += 1;
@@ -848,19 +1108,26 @@ unsafe extern "C" fn api_RunBatch(
     }
     let h = unsafe { &mut *(sess as *mut SessionHandle) };
     let n_in = unsafe { *out_rows_inout };
-    if n_in < n_rows { return status_invalid_arg("RunBatch: out buffer too small"); }
+    if n_in < n_rows {
+        return status_invalid_arg("RunBatch: out buffer too small");
+    }
     // Build Vec<HashMap> from flat row-major [rows][cols]
-    let names: Vec<String> = (0..n_cols).map(|i| unsafe { CStr::from_ptr(*input_names.add(i)).to_string_lossy().into_owned() }).collect();
+    let names: Vec<String> = (0..n_cols)
+        .map(|i| unsafe {
+            CStr::from_ptr(*input_names.add(i))
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
     let mut batch: Vec<HashMap<String, Value>> = Vec::with_capacity(n_rows);
     for r in 0..n_rows {
         let mut m = HashMap::new();
-        for c in 0..n_cols {
+        for (c, name) in names.iter().enumerate() {
             let pv = unsafe { *flat_values.add(r * n_cols + c) };
-            m.insert(names[c].clone(), pmml_value_to_value(pv));
+            m.insert(name.clone(), pmml_value_to_value(pv));
         }
         batch.push(m);
     }
-    use crate::session::batch::Batch;
     let result = match h.session.run(&batch as &dyn crate::session::batch::Batch) {
         Ok(r) => r,
         Err(e) => return status_from_error(e),
@@ -884,50 +1151,97 @@ unsafe extern "C" fn api_RunArrow(
     _out_array: *mut ArrowArray,
     _out_schema: *mut ArrowSchema,
 ) -> *mut PmmlStatus {
-    if _sess.is_null() || _in_array.is_null() || _in_schema.is_null() || _out_array.is_null() || _out_schema.is_null() {
+    if _sess.is_null()
+        || _in_array.is_null()
+        || _in_schema.is_null()
+        || _out_array.is_null()
+        || _out_schema.is_null()
+    {
         return status_invalid_arg("RunArrow: null arg");
     }
-    make_status(PmmlErrorCode::UnsupportedMarkup, "RunArrow: Arrow columnar not yet in v1, use RunBatch")
+    make_status(
+        PmmlErrorCode::UnsupportedMarkup,
+        "RunArrow: Arrow columnar not yet in v1, use RunBatch",
+    )
 }
 
-unsafe extern "C" fn api_CreateIoBinding(sess: *mut PmmlSession, out: *mut *mut PmmlIoBinding) -> *mut PmmlStatus {
-    if sess.is_null() || out.is_null() { return status_invalid_arg("CreateIoBinding: null"); }
-    let h = Box::new(IoBindingHandle { inputs: HashMap::new(), outputs: Vec::new(), last: None });
+unsafe extern "C" fn api_CreateIoBinding(
+    sess: *mut PmmlSession,
+    out: *mut *mut PmmlIoBinding,
+) -> *mut PmmlStatus {
+    if sess.is_null() || out.is_null() {
+        return status_invalid_arg("CreateIoBinding: null");
+    }
+    let h = Box::new(IoBindingHandle {
+        inputs: HashMap::new(),
+        outputs: Vec::new(),
+        last: None,
+    });
     unsafe { *out = Box::into_raw(h) as *mut PmmlIoBinding };
     let _ = sess;
     ptr::null_mut()
 }
 
 unsafe extern "C" fn api_ReleaseIoBinding(b: *mut PmmlIoBinding) {
-    if b.is_null() { return; }
-    unsafe { let _ = Box::from_raw(b as *mut IoBindingHandle); }
+    if b.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(b as *mut IoBindingHandle);
+    }
 }
 
-unsafe extern "C" fn api_BindInput(b: *mut PmmlIoBinding, name: *const c_char, value: PmmlValue) -> *mut PmmlStatus {
-    if b.is_null() || name.is_null() { return status_invalid_arg("BindInput: null"); }
+unsafe extern "C" fn api_BindInput(
+    b: *mut PmmlIoBinding,
+    name: *const c_char,
+    value: PmmlValue,
+) -> *mut PmmlStatus {
+    if b.is_null() || name.is_null() {
+        return status_invalid_arg("BindInput: null");
+    }
     let h = unsafe { &mut *(b as *mut IoBindingHandle) };
-    let n = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let n = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     h.inputs.insert(n, pmml_value_to_value(value));
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_BindInputArrow(b: *mut PmmlIoBinding, _name: *const c_char, _array: *const ArrowArray, _schema: *const ArrowSchema) -> *mut PmmlStatus {
+unsafe extern "C" fn api_BindInputArrow(
+    b: *mut PmmlIoBinding,
+    _name: *const c_char,
+    _array: *const ArrowArray,
+    _schema: *const ArrowSchema,
+) -> *mut PmmlStatus {
     if b.is_null() || _name.is_null() || _array.is_null() || _schema.is_null() {
         return status_invalid_arg("BindInputArrow: null arg");
     }
-    make_status(PmmlErrorCode::UnsupportedMarkup, "BindInputArrow: Arrow columnar not yet in v1, use RunBatch")
+    make_status(
+        PmmlErrorCode::UnsupportedMarkup,
+        "BindInputArrow: Arrow columnar not yet in v1, use RunBatch",
+    )
 }
 
 unsafe extern "C" fn api_BindOutput(b: *mut PmmlIoBinding, name: *const c_char) -> *mut PmmlStatus {
-    if b.is_null() || name.is_null() { return status_invalid_arg("BindOutput: null"); }
+    if b.is_null() || name.is_null() {
+        return status_invalid_arg("BindOutput: null");
+    }
     let h = unsafe { &mut *(b as *mut IoBindingHandle) };
-    let n = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    let n = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
     h.outputs.push(n);
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_RunWithBinding(sess: *mut PmmlSession, _run_opts: *const PmmlRunOptions, binding: *mut PmmlIoBinding) -> *mut PmmlStatus {
-    if sess.is_null() || binding.is_null() { return status_invalid_arg("RunWithBinding: null"); }
+unsafe extern "C" fn api_RunWithBinding(
+    sess: *mut PmmlSession,
+    _run_opts: *const PmmlRunOptions,
+    binding: *mut PmmlIoBinding,
+) -> *mut PmmlStatus {
+    if sess.is_null() || binding.is_null() {
+        return status_invalid_arg("RunWithBinding: null");
+    }
     let h = unsafe { &mut *(sess as *mut SessionHandle) };
     let b = unsafe { &mut *(binding as *mut IoBindingHandle) };
     let map = b.inputs.clone();
@@ -939,14 +1253,22 @@ unsafe extern "C" fn api_RunWithBinding(sess: *mut PmmlSession, _run_opts: *cons
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_CopyBindingOutputsToCpu(binding: *mut PmmlIoBinding, out_flat: *mut PmmlValue, out_count: *mut usize) -> *mut PmmlStatus {
-    if binding.is_null() || out_flat.is_null() || out_count.is_null() { return status_invalid_arg("CopyBindingOutputsToCpu: null"); }
+unsafe extern "C" fn api_CopyBindingOutputsToCpu(
+    binding: *mut PmmlIoBinding,
+    out_flat: *mut PmmlValue,
+    out_count: *mut usize,
+) -> *mut PmmlStatus {
+    if binding.is_null() || out_flat.is_null() || out_count.is_null() {
+        return status_invalid_arg("CopyBindingOutputsToCpu: null");
+    }
     let b = unsafe { &*(binding as *mut IoBindingHandle) };
     let rows = match b.last.as_ref() {
         Some(r) => r,
         None => return status_invalid_arg("CopyBindingOutputsToCpu: no run yet"),
     };
-    if rows.is_empty() { return status_invalid_arg("CopyBindingOutputsToCpu: empty result"); }
+    if rows.is_empty() {
+        return status_invalid_arg("CopyBindingOutputsToCpu: empty result");
+    }
     let row = &rows[0];
     let want: Vec<String> = if b.outputs.is_empty() {
         row.keys().cloned().collect()
@@ -954,7 +1276,9 @@ unsafe extern "C" fn api_CopyBindingOutputsToCpu(binding: *mut PmmlIoBinding, ou
         b.outputs.clone()
     };
     let capacity = unsafe { *out_count };
-    if capacity < want.len() { return status_invalid_arg("CopyBindingOutputsToCpu: buffer too small"); }
+    if capacity < want.len() {
+        return status_invalid_arg("CopyBindingOutputsToCpu: buffer too small");
+    }
     for (i, name) in want.iter().enumerate() {
         let v = row.get(name).copied().unwrap_or(Value::Missing);
         unsafe { *out_flat.add(i) = value_to_pmml_value(v) };
@@ -964,27 +1288,48 @@ unsafe extern "C" fn api_CopyBindingOutputsToCpu(binding: *mut PmmlIoBinding, ou
 }
 
 unsafe extern "C" fn api_CreateRunOptions(out: *mut *mut PmmlRunOptions) -> *mut PmmlStatus {
-    if out.is_null() { return status_invalid_arg("CreateRunOptions: null"); }
-    let h = Box::new(RunOptionsHandle { tag: None, log_level: PmmlLogLevel::Warning });
+    if out.is_null() {
+        return status_invalid_arg("CreateRunOptions: null");
+    }
+    let h = Box::new(RunOptionsHandle {
+        tag: None,
+        log_level: PmmlLogLevel::Warning,
+    });
     unsafe { *out = Box::into_raw(h) as *mut PmmlRunOptions };
     ptr::null_mut()
 }
 
 unsafe extern "C" fn api_ReleaseRunOptions(opts: *mut PmmlRunOptions) {
-    if opts.is_null() { return; }
-    unsafe { let _ = Box::from_raw(opts as *mut RunOptionsHandle); }
+    if opts.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Box::from_raw(opts as *mut RunOptionsHandle);
+    }
 }
 
-unsafe extern "C" fn api_SetRunTag(opts: *mut PmmlRunOptions, tag: *const c_char) -> *mut PmmlStatus {
-    if opts.is_null() || tag.is_null() { return status_invalid_arg("SetRunTag: null"); }
-    let s = unsafe { CStr::from_ptr(tag) }.to_string_lossy().into_owned();
+unsafe extern "C" fn api_SetRunTag(
+    opts: *mut PmmlRunOptions,
+    tag: *const c_char,
+) -> *mut PmmlStatus {
+    if opts.is_null() || tag.is_null() {
+        return status_invalid_arg("SetRunTag: null");
+    }
+    let s = unsafe { CStr::from_ptr(tag) }
+        .to_string_lossy()
+        .into_owned();
     let c = CString::new(s).unwrap();
     unsafe { (*(opts as *mut RunOptionsHandle)).tag = Some(c) };
     ptr::null_mut()
 }
 
-unsafe extern "C" fn api_SetRunLogLevel(opts: *mut PmmlRunOptions, lvl: PmmlLogLevel) -> *mut PmmlStatus {
-    if opts.is_null() { return status_invalid_arg("SetRunLogLevel: null"); }
+unsafe extern "C" fn api_SetRunLogLevel(
+    opts: *mut PmmlRunOptions,
+    lvl: PmmlLogLevel,
+) -> *mut PmmlStatus {
+    if opts.is_null() {
+        return status_invalid_arg("SetRunLogLevel: null");
+    }
     unsafe { (*(opts as *mut RunOptionsHandle)).log_level = lvl };
     ptr::null_mut()
 }
@@ -1004,7 +1349,9 @@ unsafe extern "C" fn api_SetRunLogLevel(opts: *mut PmmlRunOptions, lvl: PmmlLogL
 /// `status` if non-null must be a valid `*const PmmlStatus` from `make_status`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlGetErrorCode(status: *const PmmlStatus) -> PmmlErrorCode {
-    if status.is_null() { return PmmlErrorCode::Ok; }
+    if status.is_null() {
+        return PmmlErrorCode::Ok;
+    }
     let h = &*(status as *const StatusHandle);
     h.code
 }
@@ -1019,7 +1366,9 @@ pub unsafe extern "C" fn PmmlGetErrorCode(status: *const PmmlStatus) -> PmmlErro
 /// `status` if non-null must be valid `*const PmmlStatus`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlGetErrorMessage(status: *const PmmlStatus) -> *const c_char {
-    if status.is_null() { return ptr::null(); }
+    if status.is_null() {
+        return ptr::null();
+    }
     let h = &*(status as *const StatusHandle);
     h.message.as_ptr()
 }
@@ -1035,7 +1384,9 @@ pub unsafe extern "C" fn PmmlGetErrorMessage(status: *const PmmlStatus) -> *cons
 /// be used after this call.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlReleaseStatus(status: *mut PmmlStatus) {
-    if status.is_null() { return; }
+    if status.is_null() {
+        return;
+    }
     let _ = Box::from_raw(status as *mut StatusHandle);
 }
 
@@ -1119,9 +1470,13 @@ pub extern "C" fn PmmlGetApi(version: u32) -> *const PmmlApi {
 /// Use `PmmlApi::CreateEnv` via `PmmlGetApi`.
 #[no_mangle]
 pub unsafe extern "C" fn PmmlCreateEnv(env_out: *mut *mut PmmlEnv) -> i32 {
-    if env_out.is_null() { return PmmlErrorCode::InvalidArgument as i32; }
+    if env_out.is_null() {
+        return PmmlErrorCode::InvalidArgument as i32;
+    }
     let api = PmmlGetApi(1);
-    if api.is_null() { return PmmlErrorCode::Unknown as i32; }
+    if api.is_null() {
+        return PmmlErrorCode::Unknown as i32;
+    }
     let mut env: *mut PmmlEnv = ptr::null_mut();
     let status = ((*api).CreateEnv.unwrap())(PmmlLogLevel::Warning, ptr::null(), &mut env);
     if !status.is_null() {
@@ -1142,8 +1497,12 @@ pub unsafe extern "C" fn PmmlCreateEnv(env_out: *mut *mut PmmlEnv) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
     let api = PmmlGetApi(1);
-    if api.is_null() || env.is_null() { return; }
-    if let Some(f) = (*api).ReleaseEnv { f(env) }
+    if api.is_null() || env.is_null() {
+        return;
+    }
+    if let Some(f) = (*api).ReleaseEnv {
+        f(env)
+    }
 }
 
 /// Creates a `PmmlSession` from file — deprecated shim.
@@ -1156,11 +1515,20 @@ pub unsafe extern "C" fn PmmlReleaseEnv(env: *mut PmmlEnv) {
 /// `env`, `path`, `session_out` must be valid non-null pointers; `path`
 /// must be NUL-terminated.
 #[no_mangle]
-pub unsafe extern "C" fn PmmlCreateSession(env: *mut PmmlEnv, path: *const c_char, session_out: *mut *mut PmmlSession) -> i32 {
-    if env.is_null() || path.is_null() || session_out.is_null() { return PmmlErrorCode::InvalidArgument as i32; }
+pub unsafe extern "C" fn PmmlCreateSession(
+    env: *mut PmmlEnv,
+    path: *const c_char,
+    session_out: *mut *mut PmmlSession,
+) -> i32 {
+    if env.is_null() || path.is_null() || session_out.is_null() {
+        return PmmlErrorCode::InvalidArgument as i32;
+    }
     let api = PmmlGetApi(1);
-    if api.is_null() { return PmmlErrorCode::Unknown as i32; }
-    let status = ((*api).CreateSession.unwrap())(env as *const PmmlEnv, path, ptr::null(), session_out);
+    if api.is_null() {
+        return PmmlErrorCode::Unknown as i32;
+    }
+    let status =
+        ((*api).CreateSession.unwrap())(env as *const PmmlEnv, path, ptr::null(), session_out);
     if !status.is_null() {
         PmmlReleaseStatus(status);
         return PmmlErrorCode::Unknown as i32;
@@ -1178,8 +1546,12 @@ pub unsafe extern "C" fn PmmlCreateSession(env: *mut PmmlEnv, path: *const c_cha
 #[no_mangle]
 pub unsafe extern "C" fn PmmlReleaseSession(session: *mut PmmlSession) {
     let api = PmmlGetApi(1);
-    if api.is_null() || session.is_null() { return; }
-    if let Some(f) = (*api).ReleaseSession { f(session) }
+    if api.is_null() || session.is_null() {
+        return;
+    }
+    if let Some(f) = (*api).ReleaseSession {
+        f(session)
+    }
 }
 
 // ---------------------------------------------------------------------------
