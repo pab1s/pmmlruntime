@@ -6,7 +6,7 @@ One tag publishes every artifact: `git tag v0.1.1 && git push origin v0.1.1`. Th
 
 `v0.1.0` is already published on crates.io, so the next release is `v0.1.1`. Bump `VERSION_NUMBER`, run the gate, then tag.
 
-A manual run of the workflow (Actions, cd, Run workflow) is a dry run. Every build, artifact upload, and download runs, and only the steps that write to a registry are skipped. Use it to validate the pipeline before the first tag.
+A manual run of the workflow (Actions, cd, Run workflow) is a dry run. Every build, artifact upload, and download runs, and only the steps that write to a registry are skipped. Use it to validate the pipeline before the first tag. A passing dry run means the artifacts are sound; the only thing left is credentials.
 
 ## What a tag publishes
 
